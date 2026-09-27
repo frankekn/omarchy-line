@@ -3608,6 +3608,7 @@ Panel {
       } else if (ev.kind === "read") next = root.applyRead(next, ev.upTo, ev.by)
       else if (ev.kind === "reaction") next = root.applyReaction(next, ev.messageId, ev.reactions)
       else if (ev.kind === "unsend") next = root.applyUnsend(next, ev.messageId)
+      else if (ev.kind === "edit") next = root.applyEdit(next, ev.message)
     }
     // 下面四支沒改到東西時原封不動回傳同一份，所以參考沒變就是這一輪什麼都沒發生。
     // 照樣呼叫 setMessages 的話，每一次心跳都會把捲動位置重算一遍。
@@ -3670,6 +3671,21 @@ Panel {
       }
     }
     return list.concat([m])
+  }
+
+  // 編輯跟新訊息的差別就在這裡：清單裡沒有這則（不在這一頁、被收回過）就什麼都
+  // 不做，不能像 mergeMessage 那樣補到尾端 —— 一則舊訊息被編輯，把它插在最後面
+  // 等於畫出一個順序錯的假新訊息。
+  function applyEdit(list, m) {
+    if (!m || String(m.id || "").length === 0) return list
+    var id = String(m.id)
+    for (var i = 0; i < list.length; i++) {
+      if (String(list[i].id || "") !== id) continue
+      var out = list.slice()
+      out[i] = m
+      return out
+    }
+    return list
   }
 
   // 已讀。事件只說「這個人讀到 upTo」，位置就從清單裡找：upTo（含）以前自己傳的
@@ -6094,6 +6110,7 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.clockText(modelData.time) + "  "
                   + (modelData.from === root.myMid ? "我" : (modelData.fromName || "?"))
+                  + (modelData.edited === true ? "  已編輯" : "")
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: root.fontBody

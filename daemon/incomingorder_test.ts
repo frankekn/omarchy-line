@@ -123,6 +123,26 @@ Deno.test("message conversion starts before ordered publication", async () => {
   assertEquals(published, ["first", "second"]);
 });
 
+Deno.test("a pushed edit joins the same publication chain after its message", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./modules/login.ts", import.meta.url),
+  );
+  const listener = source.indexOf('c.on("message:edit", (msg: TalkMsg) => {');
+  assert(listener >= 0, "the message:edit event must be subscribed");
+  const chained = source.indexOf(
+    "incomingPublication = incomingPublication.then(() =>",
+    listener,
+  );
+  const publish = source.indexOf(
+    "onEditedMessage(prepared, c, generation)",
+    listener,
+  );
+  assert(
+    listener < chained && chained < publish,
+    "an edit converting while its message is still in flight must apply after it",
+  );
+});
+
 Deno.test("a recall tombstone suppresses a queued message publication", async () => {
   // finishIncomingMessage and friends moved into modules/caches.ts; the
   // ordering pins span both files, so read them joined (caches first, the

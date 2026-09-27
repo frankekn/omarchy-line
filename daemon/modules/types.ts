@@ -55,6 +55,8 @@ interface PluginMessage {
   fromAvatar?: string;
   /** Stable panel request token echoed through LINE content metadata. */
   requestId?: string;
+  /** The sender rewrote this message after sending (LINE's edit feature). */
+  edited?: boolean;
 }
 
 /** A Mention with the display name resolved, which is what the panel gets. */
@@ -93,9 +95,9 @@ interface PluginReadBy {
 interface PluginEvent {
   seq: number;
   at: number;
-  kind: "message" | "read" | "reaction" | "unsend";
+  kind: "message" | "read" | "reaction" | "unsend" | "edit";
   chat: string;
-  /** kind=message: exactly what `history` would have returned for it. */
+  /** kind=message|edit: exactly what `history` would have returned for it. */
   message?: PluginMessage;
   /** kind=read: who read, and the newest message id they have read. */
   by?: string;

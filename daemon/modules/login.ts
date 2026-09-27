@@ -72,7 +72,12 @@ import {
   setForceFullRefresh,
 } from "./refresh.ts";
 import { lastNotified, notify } from "./notify.ts";
-import { onIncomingMessage, onTalkOp, prepareIncomingMessage } from "./push.ts";
+import {
+  onEditedMessage,
+  onIncomingMessage,
+  onTalkOp,
+  prepareIncomingMessage,
+} from "./push.ts";
 import { resetStickerCache } from "./stickers.ts";
 import { avatarPending, avatars, avatarTokens, noteAvatar } from "./avatars.ts";
 import {
@@ -319,6 +324,18 @@ async function onLoggedIn(c: Client): Promise<void> {
     );
     void incomingPublication;
     scheduleRefresh();
+  });
+  // The sender rewrote a message (LINE's edit). Same conversion and the same
+  // publication chain: an edit landing while its message is still being
+  // prepared must apply after the original lands, not before.
+  c.on("message:edit", (msg: TalkMsg) => {
+    if (!sessionIsCurrent(c, generation)) return;
+    markPushAlive();
+    const prepared = prepareIncomingMessage(msg, c, generation);
+    incomingPublication = incomingPublication.then(() =>
+      onEditedMessage(prepared, c, generation)
+    );
+    void incomingPublication;
   });
   markPushAlive();
   const abort = setListenAbort(new AbortController());

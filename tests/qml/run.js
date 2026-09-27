@@ -202,6 +202,7 @@ const B = {
   applyRead: body("  function applyRead(list, upTo, by) {"),
   applyReaction: body("  function applyReaction(list, id, rows) {"),
   applyUnsend: body("  function applyUnsend(list, id) {"),
+  applyEdit: body("  function applyEdit(list, m) {"),
   readText: body("  function readText(m) {"),
   reactionEmoji: body("  function reactionEmoji(type) {"),
   myReaction: body("  function myReaction(m) {"),
@@ -588,6 +589,7 @@ function makeEnv(opts) {
     applyRead(l, u, by) { return api.applyRead(l, u, by); },
     applyReaction(l, id, rows) { return api.applyReaction(l, id, rows); },
     applyUnsend(l, id) { return api.applyUnsend(l, id); },
+    applyEdit(l, m) { return api.applyEdit(l, m); },
     readText(m) { return api.readText(m); },
     reactionEmoji(t) { return api.reactionEmoji(t); },
     myReaction(m) { return api.myReaction(m); },
@@ -925,6 +927,7 @@ function makeEnv(opts) {
   const fApplyRead = mk("applyRead", ["list", "upTo", "by"]);
   const fApplyReaction = mk("applyReaction", ["list", "id", "rows"]);
   const fApplyUnsend = mk("applyUnsend", ["list", "id"]);
+  const fApplyEdit = mk("applyEdit", ["list", "m"]);
   const fReadText = mk("readText", ["m"]);
   const fReactionEmoji = mk("reactionEmoji", ["type"]);
   const fMyReaction = mk("myReaction", ["m"]);
@@ -1104,6 +1107,7 @@ function makeEnv(opts) {
     applyRead: (l, u, by) => q((...a) => fApplyRead(...a, l, u, by)),
     applyReaction: (l, id, rows) => q((...a) => fApplyReaction(...a, l, id, rows)),
     applyUnsend: (l, id) => q((...a) => fApplyUnsend(...a, l, id)),
+    applyEdit: (l, m) => q((...a) => fApplyEdit(...a, l, m)),
     readText: (m) => q((...a) => fReadText(...a, m)),
     reactionEmoji: (t) => q((...a) => fReactionEmoji(...a, t)),
     myReaction: (m) => q((...a) => fMyReaction(...a, m)),
@@ -4861,6 +4865,18 @@ ok(gone.mentions === undefined,
    "the mention offsets go too: they describe the old sentence, and painting them "
    + "over 已收回訊息 colours the wrong characters");
 
+list = [MSG("m1", "THEM", "a"), MSG("m2", "ME", "b")];
+let edited = e.applyEdit(list, MSG("m1", "THEM", "edited-a", { edited: true }));
+ok(edited !== list && edited.length === 2
+   && edited[0].text === "edited-a" && edited[0].edited === true && edited[1] === list[1],
+   "an edit swaps the row in place: same length, same position, new object");
+ok(e.applyEdit(list, MSG("m9", "THEM", "ghost", { edited: true })) === list,
+   "an edit for a message this page does not hold changes nothing -- appending it "
+   + "would park an old message at the tail in the wrong order");
+ok(e.applyEdit(list, {}) === list && e.applyEdit(list, undefined) === list
+   && e.applyEdit(list, { id: "" }) === list,
+   "and an edit carrying no id to match on is ignored");
+
 group("(t7) applyEvents routes each kind, and does nothing when nothing changed");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.members = [{ mid: "A" }];
@@ -4870,10 +4886,18 @@ e.applyEvents([EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") }),
                EV(2, "read", "C1", { by: "A", upTo: "m1" }),
                EV(3, "reaction", "C1", { messageId: "m2",
                                          reactions: [{ type: "OMG", count: 1, mine: true }] }),
-               EV(4, "unsend", "C1", { messageId: "m1" })]);
+               EV(4, "unsend", "C1", { messageId: "m1" }),
+               EV(5, "edit", "C1", { message: MSG("m2", "THEM", "b-edited",
+                                                  // 真實路徑上 reactions 是 daemon 從 cache
+                                                  // 重新掛回來的，所以換回來的這份照樣帶著。
+                                                  { edited: true,
+                                                    reactions: [{ type: "OMG", count: 1,
+                                                                  mine: true }] }) })]);
 ok(e.root.messages.length === 2, "the message event appended");
 ok(e.root.messages[0].unsent === true, "the unsend landed on the first");
 ok(e.root.messages[1].reactions[0].type === "OMG", "the reaction landed on the new one");
+ok(e.root.messages[1].text === "b-edited" && e.root.messages[1].edited === true,
+   "the edit replaced it in place afterwards");
 ok(e.root.messages[0].readBy === undefined,
    "and the read that arrived before the unsend is wiped by it, not left dangling");
 ok(e.sent.filter(r => r.markRead === true).length === 1,

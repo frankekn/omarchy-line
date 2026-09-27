@@ -254,6 +254,66 @@ async function onIncomingMessage(
   }
 }
 
+/**
+ * A pushed message the sender rewrote. Conversion is the same work an
+ * incoming message gets -- the panel needs the full replacement, mentions
+ * and all. What is different is everything around it: an edit carries no
+ * unread change, never creates a chat row, and must not move the row's
+ * lastTime (the list is sorted by it and the message kept its own
+ * createdTime), so the summary is repainted only when the row is showing
+ * this very message.
+ */
+async function onEditedMessage(
+  preparedWork: ReturnType<typeof prepareIncomingMessage>,
+  owner: Client | null = client,
+  generation: number = sessionGeneration,
+): Promise<void> {
+  try {
+    const result = await preparedWork;
+    if (result.error) throw result.error;
+    if (!result.prepared || !owner || !sessionIsCurrent(owner, generation)) {
+      return;
+    }
+    const { raw, chat, message } = result.prepared;
+    // The ordered fields finalizeMessageState derives were deferred during
+    // conversion, so an edit has to run it too. The reaction bar it rebuilds
+    // rides on raw.reactions, though, and nothing says an edit op echoes the
+    // bar -- snapshot the one already cached so a bare payload cannot wipe
+    // reactions that did not change.
+    const knownBar = reactionsByMessage.get(message.id);
+    finalizeMessageState(message, raw, chat);
+    if (!raw.reactions && knownBar?.size) {
+      reactionsByMessage.set(message.id, knownBar);
+      const bar = summariseReactions(knownBar, String(me.mid ?? ""));
+      if (bar.length) message.reactions = bar;
+    }
+    // The op is itself the edit; belt for a payload whose marker was dropped.
+    message.edited = true;
+    const at = chats.findIndex((row) => row.mid === chat);
+    if (
+      at >= 0 &&
+      (chatSummaryStore.chatSummaryMessageIds.get(chat) === message.id ||
+        chats[at].lastTime === message.time)
+    ) {
+      const lastText = pushedPreviewText(message, raw);
+      if (chats[at].lastText !== lastText) {
+        const rows = chats.slice();
+        rows[at] = { ...rows[at], lastText };
+        setChats(rows);
+        bumpChatsRevision();
+      }
+      chatSummaryStore.summaryCache.delete(chat);
+      chatSummaryStore.chatSummaryEpoch++;
+      chatSummaryVersions.delete(chat);
+      chatSummaryVersions.set(chat, chatSummaryStore.chatSummaryEpoch);
+      chatSummaryStore.capChatSummaryVersions();
+    }
+    pushEvent({ kind: "edit", chat, message });
+  } catch (e) {
+    console.error("[event] edit:", errorLine(e));
+  }
+}
+
 // The block between the enil:readop markers is sliced out verbatim by
 // daemon/reaction_test.ts on top of stub state; asMessageId comes from the
 // readrange block, which the test loads next to it for the same reason talkop
@@ -459,4 +519,10 @@ async function loadReadRange(
   }
 }
 
-export { loadReadRange, onIncomingMessage, onTalkOp, prepareIncomingMessage };
+export {
+  loadReadRange,
+  onEditedMessage,
+  onIncomingMessage,
+  onTalkOp,
+  prepareIncomingMessage,
+};

@@ -88,6 +88,8 @@ async function toPluginMessage(
     hasMedia: hasContents && mediaState !== "unsent",
     unsent: mediaState === "unsent",
     mediaState,
+    // UPDATED_TIME / updatedTime both count -- the getter already checks both.
+    edited: tm.isEdited === true || undefined,
   };
   const requestId = messageRequestId(meta);
   if (requestId) out.requestId = requestId;
