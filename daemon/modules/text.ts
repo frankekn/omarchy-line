@@ -260,8 +260,11 @@ function classifyLoginError(
   const text = parts.join(" ");
   // RefreshError means the access token asked to be refreshed and no refresh
   // token was stored -- there is nothing left to renew with, only a new scan.
+  // V3_TOKEN_CLIENT_LOGGED_OUT has only ever been seen nested inside a
+  // NOT_AUTHORIZED_DEVICE code's `reason`, which the marker left of it already
+  // catches; listing it anyway covers the day LINE promotes it to the code.
   if (
-    /RefreshError|MUST_REFRESH_V3_TOKEN|NOT_AUTHORIZED_DEVICE|AUTHENTICATION_FAILED/
+    /RefreshError|MUST_REFRESH_V3_TOKEN|NOT_AUTHORIZED_DEVICE|AUTHENTICATION_FAILED|V3_TOKEN_CLIENT_LOGGED_OUT/
       .test(text)
   ) return "token_expired";
   // Checked second so a server refusal that happens to mention a socket still

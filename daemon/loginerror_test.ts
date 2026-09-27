@@ -143,6 +143,34 @@ Deno.test("a RequestError carrying a dead-token code is an expired token", async
   }
 });
 
+Deno.test("a server-side logout is an expired token, nested or bare", async () => {
+  const { classifyLoginError } = await load();
+  // The real 2026-09-27 shape, recorded by the heartbeat: the death reason
+  // nests inside a NOT_AUTHORIZED_DEVICE code. The code alone already
+  // classifies; this pins that the pair together still does.
+  assertEquals(
+    classifyLoginError({
+      name: "RequestError",
+      message:
+        'Request internal failed, getProfile(/S4) -> {"code":"NOT_AUTHORIZED_DEVICE","reason":"V3_TOKEN_CLIENT_LOGGED_OUT"}',
+      data: { code: "NOT_AUTHORIZED_DEVICE" },
+    }),
+    "token_expired",
+  );
+  // Defensive: if a future wire shape surfaces the reason as the code
+  // itself, it must still be terminal. Before the marker was listed this
+  // came out "unknown" -- creds kept, generic advice, no revoke.
+  assertEquals(
+    classifyLoginError({
+      name: "RequestError",
+      message:
+        'Request internal failed, getProfile(/S4) -> {"code":"V3_TOKEN_CLIENT_LOGGED_OUT"}',
+      data: { code: "V3_TOKEN_CLIENT_LOGGED_OUT" },
+    }),
+    "token_expired",
+  );
+});
+
 Deno.test("the code is found even when only the message carries it", async () => {
   // The `hasError` branch of linejs' requestCore stringifies `res.data`, not
   // `res.data.e`, so the code sits one level deeper than `data.code` and the
