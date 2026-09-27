@@ -95,10 +95,16 @@ interface PluginReadBy {
 interface PluginEvent {
   seq: number;
   at: number;
-  kind: "message" | "read" | "reaction" | "unsend" | "edit";
+  kind: "message" | "read" | "reaction" | "unsend" | "edit" | "history";
   chat: string;
   /** kind=message|edit: exactly what `history` would have returned for it. */
   message?: PluginMessage;
+  /**
+   * kind=history: the revalidated head page, oldest first. Emitted when a
+   * locally served history page disagreed with LINE -- the panel splices it
+   * over whatever it is showing, keeping entries the page does not cover.
+   */
+  messages?: PluginMessage[];
   /** kind=read: who read, and the newest message id they have read. */
   by?: string;
   upTo?: string;

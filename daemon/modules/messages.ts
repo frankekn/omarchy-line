@@ -21,6 +21,7 @@ import {
   reactionsBeforePublication,
   reactionsByMessage,
   readIndexFor,
+  rememberRaw,
   REPLY_SOURCE_MAX,
   REPLY_TEXT_MAX,
   replySources,
@@ -91,6 +92,9 @@ async function toPluginMessage(
     // UPDATED_TIME / updatedTime both count -- the getter already checks both.
     edited: tm.isEdited === true || undefined,
   };
+  // Every converted message deposits its wire struct so preview/download can
+  // wrap() it back instead of re-fetching it from LINE.
+  rememberRaw(out.id, raw);
   const requestId = messageRequestId(meta);
   if (requestId) out.requestId = requestId;
 

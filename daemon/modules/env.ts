@@ -13,6 +13,7 @@ import { createClipboardStages } from "../clipboard.ts";
 import { ImageCache } from "../imagecache.ts";
 import { LatencyTracker, SizeTracker, WorkLane } from "../runtime.ts";
 import { errorLine } from "./text.ts";
+import { createMessageStore } from "./store.ts";
 
 const HOME = Deno.env.get("HOME")!;
 const STATE_DIR = `${
@@ -56,6 +57,12 @@ const {
 const AVATAR_DIR = `${MEDIA_DIR}/avatars`;
 const AVATAR_INDEX_PATH = `${STATE_DIR}/avatars.json`;
 const STORAGE_PATH = `${STATE_DIR}/storage.json`;
+/**
+ * One JSONL file per chat under messages/<myMid>/ -- the persistent message
+ * store that lets history, paging and media previews answer locally instead
+ * of paying a LINE round trip for every look.
+ */
+const messageStore = createMessageStore(`${STATE_DIR}/messages`);
 // Which conversations this machine keeps out of the list. Ours alone: LINE's
 // updateChat has no attribute for it, so there is nowhere to put it server
 // side and nothing to sync -- see the enil:hidden block.
@@ -216,6 +223,7 @@ export {
   imageCache,
   INCREMENTAL_REFRESH,
   MEDIA_DIR,
+  messageStore,
   panelMediaLane,
   POLL_MS,
   PUSH_REINIT_GRACE_MS,

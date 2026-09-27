@@ -203,6 +203,7 @@ const B = {
   applyReaction: body("  function applyReaction(list, id, rows) {"),
   applyUnsend: body("  function applyUnsend(list, id) {"),
   applyEdit: body("  function applyEdit(list, m) {"),
+  applyHistory: body("  function applyHistory(list, fresh) {"),
   readText: body("  function readText(m) {"),
   reactionEmoji: body("  function reactionEmoji(type) {"),
   myReaction: body("  function myReaction(m) {"),
@@ -590,6 +591,7 @@ function makeEnv(opts) {
     applyReaction(l, id, rows) { return api.applyReaction(l, id, rows); },
     applyUnsend(l, id) { return api.applyUnsend(l, id); },
     applyEdit(l, m) { return api.applyEdit(l, m); },
+    applyHistory(l, fresh) { return api.applyHistory(l, fresh); },
     readText(m) { return api.readText(m); },
     reactionEmoji(t) { return api.reactionEmoji(t); },
     myReaction(m) { return api.myReaction(m); },
@@ -928,6 +930,7 @@ function makeEnv(opts) {
   const fApplyReaction = mk("applyReaction", ["list", "id", "rows"]);
   const fApplyUnsend = mk("applyUnsend", ["list", "id"]);
   const fApplyEdit = mk("applyEdit", ["list", "m"]);
+  const fApplyHistory = mk("applyHistory", ["list", "fresh"]);
   const fReadText = mk("readText", ["m"]);
   const fReactionEmoji = mk("reactionEmoji", ["type"]);
   const fMyReaction = mk("myReaction", ["m"]);
@@ -1108,6 +1111,7 @@ function makeEnv(opts) {
     applyReaction: (l, id, rows) => q((...a) => fApplyReaction(...a, l, id, rows)),
     applyUnsend: (l, id) => q((...a) => fApplyUnsend(...a, l, id)),
     applyEdit: (l, m) => q((...a) => fApplyEdit(...a, l, m)),
+    applyHistory: (l, fresh) => q((...a) => fApplyHistory(...a, l, fresh)),
     readText: (m) => q((...a) => fReadText(...a, m)),
     reactionEmoji: (t) => q((...a) => fReactionEmoji(...a, t)),
     myReaction: (m) => q((...a) => fMyReaction(...a, m)),
@@ -4876,6 +4880,24 @@ ok(e.applyEdit(list, MSG("m9", "THEM", "ghost", { edited: true })) === list,
 ok(e.applyEdit(list, {}) === list && e.applyEdit(list, undefined) === list
    && e.applyEdit(list, { id: "" }) === list,
    "and an edit carrying no id to match on is ignored");
+
+list = [MSG("m1", "THEM", "old-a"), MSG("m2", "ME", "b"), MSG("m3", "THEM", "old-c")];
+let rebased = e.applyHistory(list, [MSG("m2", "ME", "b"), MSG("m3", "THEM", "new-c")]);
+ok(rebased.map(m => m.id).join() === "m1,m2,m3"
+   && rebased[2].text === "new-c" && rebased[0] === list[0],
+   "a rebase swaps the covered span and keeps what it never saw");
+rebased = e.applyHistory(
+  [MSG("m1", "THEM", "a"), MSG("pending-1-1", "ME", "draft", { pending: true }),
+   MSG("m9", "THEM", "gone")],
+  [MSG("m1", "THEM", "a2")]);
+ok(rebased.map(m => m.id).join() === "m1,m9,pending-1-1"
+   && rebased[2].pending === true,
+   "a pending bubble outlives the rebase, and even an unmentioned row stays put");
+let drifted = e.applyHistory([MSG("m1", "THEM", "a")], [MSG("m5", "THEM", "x")]);
+ok(drifted.map(m => m.id).join() === "m1,m5",
+   "a page with no overlap still merges by time instead of dropping the old row");
+ok(e.applyHistory(list, []) === list && e.applyHistory(list, null) === list,
+   "and an empty rebase changes nothing");
 
 group("(t7) applyEvents routes each kind, and does nothing when nothing changed");
 e = makeEnv({ activeChat: { mid: "C1" } });

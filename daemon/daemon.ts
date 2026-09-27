@@ -17,6 +17,7 @@ import {
   AVATAR_DIR,
   HEARTBEAT_MS,
   IMAGE_DIR,
+  messageStore,
   POLL_MS,
   recoverClipboardStages,
   SOCK_PATH,
@@ -86,7 +87,11 @@ async function main() {
       sleepMonitor?.kill("SIGTERM");
     } catch { /* already gone */ }
     Deno.removeSync(SOCK_PATH);
-    Deno.exit(0);
+    // Store appends coalesce for 150ms; a signal inside that window would
+    // drop records the daemon already confirmed it had seen. The timer caps
+    // the wait so a stalled write cannot hold the process past it.
+    void messageStore.flush().finally(() => Deno.exit(0));
+    setTimeout(() => Deno.exit(0), 2_000);
   };
   Deno.addSignalListener("SIGINT", stop);
   Deno.addSignalListener("SIGTERM", stop);

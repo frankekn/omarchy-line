@@ -43,3 +43,32 @@ therefore a rolling recent-history window, not a full archive.
 - **Back off on risk-control error codes**: on ABUSE_BLOCK / BANNED /
   EXCESSIVE_ACCESS / NOT_AUTHORIZED_DEVICE, stop the related operation
   immediately and report to the user.
+
+## 3. Local message persistence — what lands on disk
+
+The daemon keeps a permanent local copy of messages it has seen, so that
+reopening a chat or previewing media never re-asks LINE for data the user
+already received:
+
+- **Where**: `~/.local/state/enil/messages/<your-mid>/<chatMid>.jsonl` —
+  one append-only JSONL per chat, namespaced by account mid. Same layout as
+  the CLI backup's `archiveLine` records.
+- **What**: raw wire messages (text, metadata, media references), plus
+  unsend tombstones and reaction overlays. `storage.json`, media files and
+  avatars already lived under the same directory.
+- **Encryption at rest**: letter-sealed (E2EE) chats store *ciphertext* —
+  the raw wire form, which LINE's servers see too. Chats LINE does not
+  letter-seal store readable text, the same data `state.json` snapshots and
+  `media/` thumbnails already keep on this disk.
+- **Access**: everything sits under `~/.local/state/enil`, which is `0700`
+  — no other local account can traverse it. Nothing is shared, synced or
+  uploaded.
+- **Deleting**: `rm -rf ~/.local/state/enil/messages` drops every cached
+  message; the daemon simply falls back to fetching from LINE and starts
+  caching anew. Uninstall flows that already remove the state directory
+  remove it too.
+
+This is a deliberate trade: the plugin behaves like a desktop client
+(history survives restarts, media metadata is local), in exchange for
+keeping message content on the same disk that already holds the session
+keys able to fetch it.

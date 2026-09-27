@@ -89,6 +89,7 @@ import {
   nameCacheEpoch,
   paginationCursors,
   pendingIncomingMessages,
+  rawsById,
   reactionsBeforePublication,
   reactionsByMessage,
   readIndex,
@@ -646,6 +647,9 @@ async function logoutClaimed(
   pendingIncomingMessages.clear();
   reactionsBeforePublication.clear();
   paginationCursors.clear();
+  // Wire structs carry this account's ciphertext and metadata; same LINE-global
+  // id collision reasoning as cursors above.
+  rawsById.clear();
   // Same reason, and one more: the list is filtered against `me`, so keeping
   // it would offer the new account a picker with itself in it.
   memberCache.clear();

@@ -15,7 +15,7 @@ import { MEDIA_DIR } from "./env.ts";
 import { readIndexOf } from "./protocol.ts";
 import { me } from "./state.ts";
 import { sessionIsCurrent } from "./session.ts";
-import type { Client } from "@evex/linejs";
+import type { Client, TalkMessage } from "@evex/linejs";
 import type { MessageCursor, PluginMember } from "./types.ts";
 
 function midKind(mid: string): "user" | "chat" {
@@ -51,6 +51,24 @@ const replySources = new Map<string, { fromName: string; text: string }>();
 
 const REACTION_CACHE_MAX = 1000;
 const reactionsByMessage = new Map<string, Map<string, string>>();
+
+type RawWireMessage = TalkMessage["raw"];
+/**
+ * Wire structs are a few KB each; the cap below bounds the total. A preview
+ * or download asks LINE for the whole message again just to reconstruct a
+ * TalkMessage whose getData() can run -- the id is enough to look the same
+ * struct up here.
+ */
+const RAW_CACHE_MAX = 4_000;
+const rawsById = new Map<string, RawWireMessage>();
+
+/** Recently converted ids stay reachable; evicted ones refetch like before. */
+function rememberRaw(id: string, raw: RawWireMessage): void {
+  if (!id) return;
+  rawsById.delete(id);
+  rawsById.set(id, raw);
+  capMap(rawsById, RAW_CACHE_MAX);
+}
 /** Recalls that arrived while an earlier message conversion held the queue. */
 const unsentBeforePublication = new Map<string, true>();
 const pendingIncomingMessages = new Map<string, number>();
@@ -284,6 +302,8 @@ export {
   nameCacheEpoch,
   paginationCursors,
   pendingIncomingMessages,
+  RAW_CACHE_MAX,
+  rawsById,
   REACTION_CACHE_MAX,
   reactionsBeforePublication,
   reactionsByMessage,
@@ -292,6 +312,7 @@ export {
   readRanges,
   rememberBoxCursor,
   rememberPaginationCursor,
+  rememberRaw,
   REPLY_SOURCE_MAX,
   REPLY_TEXT_MAX,
   replySources,

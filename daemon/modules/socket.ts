@@ -27,10 +27,12 @@ import {
   errorLine,
   errorText,
   EXPIRED_ERROR,
+  expiresAtOf,
   mediaStateFrom,
   NET_DOWN_TEXT,
   TOKEN_EXPIRED_TEXT,
   UNSENT_ERROR,
+  unsentOf,
 } from "./text.ts";
 import {
   claimClipboardStageBinding,
@@ -43,6 +45,7 @@ import {
   expireClipboardStage,
   imageCache,
   MEDIA_DIR,
+  messageStore,
   panelMediaLane,
   panelMediaRetirementSignal,
   sendClipboardImageRequest,
@@ -55,14 +58,18 @@ import {
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
+  rawsById,
   readRanges,
   rememberPaginationCursor,
+  rememberRaw,
   unsentBeforePublication,
 } from "./caches.ts";
 import { cacheMedia, toPluginMessage } from "./messages.ts";
 import {
   bumpChatsRevision,
   login,
+  me,
+  pushEvent,
   saveHidden,
   setHidden,
   writeState,
@@ -72,7 +79,13 @@ import { refreshChats, setForceFullRefresh } from "./refresh.ts";
 import { notePanelClosed, notePanelOpened } from "./notify.ts";
 import type { Client } from "@evex/linejs";
 import { TalkMessage } from "@evex/linejs";
-import type { Json, PluginMember, PluginMessage, TalkMsg } from "./types.ts";
+import type {
+  Json,
+  MessageCursor,
+  PluginMember,
+  PluginMessage,
+  TalkMsg,
+} from "./types.ts";
 import { resolveName, warmNames } from "./names.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import {
@@ -217,10 +230,7 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     const chatMid = String(req.chat ?? "");
     const count = historyCount(req.count);
     const before = req.before ? String(req.before) : "";
-    const end = before ? cursors.get(before) : cursors.get(`box:${chatMid}`);
-    if (!end || end.chat !== chatMid) {
-      return { ok: false, error: "沒有這個聊天室的游標" };
-    }
+    const myMid = String(me.mid ?? "");
 
     // Once per open, not once per page: this is the only moment 已讀 can be
     // put on a bubble, and after it the read ops keep it current -- paging
@@ -232,56 +242,60 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       return { ok: false, error: "尚未登入" };
     }
 
-    const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
-      request: {
-        messageBoxId: chatMid,
-        endMessageId: {
-          messageId: end.messageId,
-          deliveredTime: end.deliveredTime,
-        },
-        messagesCount: count,
-      },
-    });
-    if (!sessionIsCurrent(owner, generation)) {
-      return { ok: false, error: "尚未登入" };
+    let out: PluginMessage[] | null = null;
+    let pageRaws: unknown[] | null = null;
+    // The local store answers first: an open or a page-back it covers never
+    // pays a round trip. A head-page serve revalidates in the background and
+    // quietly rebases the open view if LINE disagrees; a page-back miss simply
+    // falls through to the network path below.
+    if (before) {
+      const stored = await messageStore.pageBefore(
+        myMid,
+        chatMid,
+        before,
+        count,
+      );
+      if (stored && stored.length) {
+        pageRaws = stored;
+        out = await convertHistoryPage(stored, chatMid, owner, generation);
+      }
+    } else {
+      const tail = await messageStore.tail(myMid, chatMid, count);
+      if (tail && tail.length) {
+        pageRaws = tail;
+        out = await convertHistoryPage(tail, chatMid, owner, generation);
+        void revalidateHistory(chatMid, count, owner, generation, out);
+      }
     }
 
-    const out: PluginMessage[] = [];
-    // LINE returns newest-first; the panel renders oldest at the top. Reversed
-    // here rather than after the loop so the loop itself runs oldest-first: a
-    // reply is always newer than what it quotes, and replySources is filled as
-    // it goes, so the other order would leave every same-page reply with an id
-    // and no quoted line.
-    raws.reverse();
-    if (raws.length) {
-      rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
-    }
-    // The decrypt-heavy wraps run through a bounded pool: fromRawTalk does
-    // the E2EE work itself (no manual decryptE2EEMessage -- decrypting twice
-    // just redoes the same work off the still-present chunks), and the items
-    // are independent. The conversion below stays sequential on purpose:
-    // toPluginMessage reads replySources that earlier same-page messages
-    // write, so a reply's quoted line only exists once its target has been
-    // converted. A dead session stops admitting wraps via the guard, and
-    // the loop's check turns that into the same 尚未登入 refusal.
-    const wrapped = await pooledMap(
-      raws,
-      DECRYPT_WIDTH,
-      (raw) => wrap(raw, owner),
-      () => sessionIsCurrent(owner, generation),
-    );
-    if (wrapped === null) {
-      return { ok: false, error: "尚未登入" };
-    }
-    for (const tm of wrapped) {
-      // Return text and metadata before any media transfer. Visible image
-      // delegates request their thumbnail separately.
+    if (out === null) {
+      const end = before ? cursors.get(before) : cursors.get(`box:${chatMid}`);
+      if (!end || end.chat !== chatMid) {
+        return { ok: false, error: "沒有這個聊天室的游標" };
+      }
+      const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
+        request: {
+          messageBoxId: chatMid,
+          endMessageId: {
+            messageId: end.messageId,
+            deliveredTime: end.deliveredTime,
+          },
+          messagesCount: count,
+        },
+      });
       if (!sessionIsCurrent(owner, generation)) {
         return { ok: false, error: "尚未登入" };
       }
-      out.push(
-        await toPluginMessage(tm, chatMid, false, owner, generation),
-      );
+      // LINE returns newest-first; the store and the panel both want
+      // oldest-first.
+      raws.reverse();
+      if (raws.length) {
+        rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
+        messageStore.append(myMid, chatMid, raws);
+      }
+      pageRaws = raws;
+      out = await convertHistoryPage(raws, chatMid, owner, generation);
+      if (out === null) return { ok: false, error: "尚未登入" };
     }
 
     if (req.markRead && out.length) {
@@ -308,6 +322,8 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       refreshChats();
     }
 
+    // Thumbnails land behind the answer, not in front of it.
+    if (pageRaws?.length) warmPagePreviews(pageRaws, owner, generation);
     return { ok: true, data: out };
   }
 
@@ -564,22 +580,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     );
     if (state === "unsent") return { ok: false, error: UNSENT_ERROR };
     if (state === "expired") return { ok: false, error: EXPIRED_ERROR };
-    const raws = await c.base.talk.getPreviousMessagesV2WithRequest({
-      request: {
-        messageBoxId: String(req.chat ?? ""),
-        endMessageId: {
-          messageId: cursor.messageId,
-          deliveredTime: cursor.deliveredTime,
-        },
-        messagesCount: 1,
-      },
-    });
-    if (!sessionIsCurrent(c, generation)) {
-      return { ok: false, error: "尚未登入" };
-    }
-    if (!raws.length) return { ok: false, error: "找不到訊息" };
-    const wrapped = await wrap(raws[0], c);
-    const cached = await cacheMedia(wrapped, id, false, false, signal);
+    const source = await mediaSource(id, cursor, c, generation);
+    if ("error" in source) return { ok: false, error: source.error };
+    const cached = await cacheMedia(source.tm, id, false, false, signal);
     if (!sessionIsCurrent(c, generation)) {
       return { ok: false, error: "尚未登入" };
     }
@@ -612,21 +615,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       Date.now(),
     );
     if (state !== "ok") return { ok: false, error: "縮圖不可用" };
-    const raws = await c.base.talk.getPreviousMessagesV2WithRequest({
-      request: {
-        messageBoxId: String(req.chat ?? ""),
-        endMessageId: {
-          messageId: cursor.messageId,
-          deliveredTime: cursor.deliveredTime,
-        },
-        messagesCount: 1,
-      },
-    });
-    if (!sessionIsCurrent(c, generation)) {
-      return { ok: false, error: "尚未登入" };
-    }
-    if (!raws.length) return { ok: false, error: "找不到訊息" };
-    const wrapped = await wrap(raws[0], c);
+    const source = await mediaSource(id, cursor, c, generation);
+    if ("error" in source) return { ok: false, error: source.error };
+    const wrapped = source.tm;
     const raw = wrapped.raw;
     // An E2EE video has no cheap preview: asking for one downloads the whole
     // clip. The panel keeps its attachment placeholder for those.
@@ -674,6 +665,188 @@ async function wrap(
     return await TalkMessage.fromRawTalk(raw, owner);
   } catch {
     return new TalkMessage({ client: owner, raw });
+  }
+}
+
+/**
+ * preview/download need the TalkMessage an id came from. The lookup ladder is
+ * memory (rawsById) -> disk (messageStore) -> LINE; only an entry neither
+ * layer has seen pays the getPreviousMessages round trip to get it back.
+ */
+async function mediaSource(
+  id: string,
+  cursor: MessageCursor,
+  owner: Client,
+  generation: number,
+): Promise<{ tm: TalkMsg } | { error: string }> {
+  const cached = rawsById.get(id);
+  if (cached) return { tm: await wrap(cached, owner) };
+  // The store outlives the memory cache: a hit skips the wire and re-warms
+  // rawsById for the next media action in the same chat.
+  const myMid = String(me.mid ?? "");
+  const stored = await messageStore.get(myMid, cursor.chat, id);
+  if (stored) {
+    const raw = stored as unknown as TalkMessage["raw"];
+    rememberRaw(id, raw);
+    return { tm: await wrap(raw, owner) };
+  }
+  const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
+    request: {
+      messageBoxId: cursor.chat,
+      endMessageId: {
+        messageId: cursor.messageId,
+        deliveredTime: cursor.deliveredTime,
+      },
+      messagesCount: 1,
+    },
+  });
+  if (!sessionIsCurrent(owner, generation)) return { error: "尚未登入" };
+  if (!raws.length) return { error: "找不到訊息" };
+  // A fetched raw goes into the store too, so the next preview/download for
+  // this chat answers locally even after the memory cache evicts it.
+  messageStore.append(myMid, cursor.chat, raws);
+  return { tm: await wrap(raws[0], owner) };
+}
+
+/**
+ * Once a history page is answered, pull the newest few thumbnails in before
+ * their delegates ask -- the open already paid one round trip, and each
+ * visible image paying another is what makes a photo chat feel slow. Capped
+ * and pooled so warming never competes with a request the user actually
+ * issued; cacheMedia itself skips files already on disk.
+ */
+const PREVIEW_WARM_MAX = 12;
+
+function warmPagePreviews(
+  raws: unknown[],
+  owner: Client,
+  generation: number,
+): void {
+  const eligible: TalkMessage["raw"][] = [];
+  for (
+    let i = raws.length - 1;
+    i >= 0 && eligible.length < PREVIEW_WARM_MAX;
+    i--
+  ) {
+    const raw = raws[i] as TalkMessage["raw"];
+    if (!previewableMessage(raw)) continue;
+    const meta = (raw.contentMetadata ?? {}) as Json;
+    if (
+      mediaStateFrom(unsentOf(meta), expiresAtOf(meta), Date.now()) !== "ok"
+    ) continue;
+    eligible.push(raw);
+  }
+  void pooledMap(
+    eligible,
+    2,
+    async (raw) => {
+      try {
+        const tm = await wrap(raw, owner);
+        await cacheMedia(tm, String(raw.id ?? ""), true, false);
+      } catch { /* warming is best-effort */ }
+    },
+    () => sessionIsCurrent(owner, generation),
+  );
+}
+
+/**
+ * The convert step shared by wire-fetched and store-served pages. Callers
+ * hand raws oldest-first -- LINE serves newest-first and the store keeps
+ * ascending id order, so both arrive already shaped. The decrypt-heavy wraps
+ * run through a bounded pool while toPluginMessage stays sequential: it reads
+ * replySources that earlier same-page messages write, so a reply's quoted
+ * line only exists once its target has been converted. null means the
+ * session died mid-conversion; callers answer 尚未登入.
+ */
+async function convertHistoryPage(
+  raws: unknown[],
+  chatMid: string,
+  owner: Client,
+  generation: number,
+): Promise<PluginMessage[] | null> {
+  const wrapped = await pooledMap(
+    raws,
+    DECRYPT_WIDTH,
+    (raw) => wrap(raw as TalkMessage["raw"], owner),
+    () => sessionIsCurrent(owner, generation),
+  );
+  if (wrapped === null) return null;
+  const out: PluginMessage[] = [];
+  for (const tm of wrapped) {
+    // Return text and metadata before any media transfer. Visible image
+    // delegates request their thumbnail separately.
+    if (!sessionIsCurrent(owner, generation)) return null;
+    out.push(await toPluginMessage(tm, chatMid, false, owner, generation));
+  }
+  return out;
+}
+
+/**
+ * What `history` served against what LINE just said -- same ids in the same
+ * order, each carrying the same visible content. readBy is compared too: a
+ * read op is exactly the kind of thing that lands between two opens.
+ */
+function sameHistoryPage(a: PluginMessage[], b: PluginMessage[]): boolean {
+  if (a.length !== b.length) return false;
+  const shape = (m: PluginMessage) =>
+    `${m.id}|${m.text}|${m.unsent === true}|${m.edited === true}|${
+      m.reactions?.length ?? 0
+    }|${m.readBy?.count ?? -1}`;
+  for (let i = 0; i < a.length; i++) {
+    if (shape(a[i]) !== shape(b[i])) return false;
+  }
+  return true;
+}
+
+/** A head page being re-fetched; one in flight per chat at most. */
+const historyRevalidations = new Set<string>();
+
+/**
+ * The background half of a store-served head page: fetch what LINE says the
+ * head is now, fold it into the store, and only when it disagrees with what
+ * the panel just got does a `history` event carry the real page over. The
+ * common case -- nothing changed while the panel was away -- sends nothing.
+ */
+async function revalidateHistory(
+  chatMid: string,
+  count: number,
+  owner: Client,
+  generation: number,
+  served: PluginMessage[] | null,
+): Promise<void> {
+  if (historyRevalidations.has(chatMid)) return;
+  historyRevalidations.add(chatMid);
+  try {
+    const myMid = String(me.mid ?? "");
+    if (!served?.length) return;
+    // The box cursor, not the served page's tail: it is what refresh/push keep
+    // pointed at LINE's newest delivery, so the fetch below includes whatever
+    // arrived while nobody was looking.
+    const cursor = cursors.get(`box:${chatMid}`);
+    if (!cursor || cursor.chat !== chatMid) return;
+    const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
+      request: {
+        messageBoxId: chatMid,
+        endMessageId: {
+          messageId: cursor.messageId,
+          deliveredTime: cursor.deliveredTime,
+        },
+        messagesCount: count,
+      },
+    });
+    if (!sessionIsCurrent(owner, generation)) return;
+    raws.reverse();
+    if (raws.length) {
+      rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
+      messageStore.append(myMid, chatMid, raws);
+    }
+    const fresh = await convertHistoryPage(raws, chatMid, owner, generation);
+    if (fresh === null || sameHistoryPage(served, fresh)) return;
+    pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+  } catch (e) {
+    console.error(`[history] revalidate ${chatMid}:`, errorLine(e));
+  } finally {
+    historyRevalidations.delete(chatMid);
   }
 }
 

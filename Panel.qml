@@ -3609,6 +3609,7 @@ Panel {
       else if (ev.kind === "reaction") next = root.applyReaction(next, ev.messageId, ev.reactions)
       else if (ev.kind === "unsend") next = root.applyUnsend(next, ev.messageId)
       else if (ev.kind === "edit") next = root.applyEdit(next, ev.message)
+      else if (ev.kind === "history") next = root.applyHistory(next, ev.messages)
     }
     // 下面四支沒改到東西時原封不動回傳同一份，所以參考沒變就是這一輪什麼都沒發生。
     // 照樣呼叫 setMessages 的話，每一次心跳都會把捲動位置重算一遍。
@@ -3686,6 +3687,38 @@ Panel {
       return out
     }
     return list
+  }
+
+  // daemon 本地庫先回了舊頁、對帳後發現 LINE 說的不一樣時送來的頭版。
+  // 它是那個區段的權威：同 id 換新；清單裡它沒涵蓋的（往上翻到的舊頁、
+  // 還沒送出的 pending 泡泡）原樣保留，靠 (time, id) 併回正確位置 ——
+  // 不整份替換，使用者捲上去讀的東西就不會被抽走。
+  function applyHistory(list, fresh) {
+    if (!Array.isArray(fresh) || fresh.length === 0) return list
+    var freshIds = {}
+    for (var i = 0; i < fresh.length; i++) freshIds[String(fresh[i].id || "")] = true
+    // 本地才有的東西（送出中、送失敗留下的泡泡）永遠不會出現在 wire 頁面裡，
+    // 所以先抽出來、最後放尾巴 —— 對帳換頁不能把它們連帶抹掉。其餘沒被這一頁
+    // 涵蓋的（往上翻到的舊頁）也保留，靠 (time, id) 併回各自的位置。
+    var pending = []
+    var kept = []
+    for (var k = 0; k < list.length; k++) {
+      var m = list[k]
+      if (freshIds[String(m.id || "")]) continue
+      if (m.pending || m.failed) pending.push(m)
+      else kept.push(m)
+    }
+    var merged = kept.concat(fresh)
+    merged.sort(function (a, b) {
+      var ta = Number(a.time || 0), tb = Number(b.time || 0)
+      if (ta !== tb) return ta - tb
+      // 同毫秒的平手用訊息 id 定序：LINE id 是 i64，數字會溢出、字串會把
+      // "123" 排在 "45" 前面 —— 先比長度（長者大）再比字典序才是對的次序。
+      var ia = String(a.id || ""), ib = String(b.id || "")
+      if (ia.length !== ib.length) return ia.length - ib.length
+      return ia < ib ? -1 : ia > ib ? 1 : 0
+    })
+    return merged.concat(pending)
   }
 
   // 已讀。事件只說「這個人讀到 upTo」，位置就從清單裡找：upTo（含）以前自己傳的

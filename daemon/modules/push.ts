@@ -34,6 +34,7 @@ import {
   pushedPreviewText,
   toPluginMessage,
 } from "./messages.ts";
+import { messageStore } from "./env.ts";
 import { invalidateName } from "./names.ts";
 import {
   bumpChatsRevision,
@@ -162,6 +163,9 @@ async function onIncomingMessage(
       return;
     }
     finalizeMessageState(message, raw, chat);
+    // The persistent store sees everything the wire hands us: this message
+    // now answers locally instead of paying a round trip on the next open.
+    messageStore.append(String(me.mid ?? ""), chat, [raw]);
     const pushedCursor = cursors.get(message.id);
     if (pushedCursor) rememberBoxCursor(chat, pushedCursor);
     // Push already tells us enough to update the visible summary immediately.
@@ -289,6 +293,9 @@ async function onEditedMessage(
     }
     // The op is itself the edit; belt for a payload whose marker was dropped.
     message.edited = true;
+    // The edit op carries the whole rewritten message -- last line wins, so
+    // an append is all the store needs.
+    messageStore.append(String(me.mid ?? ""), chat, [raw]);
     const at = chats.findIndex((row) => row.mid === chat);
     if (
       at >= 0 &&
@@ -432,6 +439,14 @@ function onTalkOp(op: RawOperationFields): void {
       } else {
         reactionsByMessage.delete(ev.messageId);
       }
+      // Ops carry deltas, not the bar; the overlay is the only way a stored
+      // page can rebuild what LINE would have answered later.
+      messageStore.reactions(
+        String(me.mid ?? ""),
+        ev.chat,
+        ev.messageId,
+        byUser,
+      );
       pushEvent({
         kind: "reaction",
         chat: ev.chat,
@@ -448,6 +463,8 @@ function onTalkOp(op: RawOperationFields): void {
     reactionsBeforePublication.delete(ev.messageId);
     replySources.delete(ev.messageId);
     chatSummaryStore.summaryCache.delete(ev.chat);
+    // The store keeps the row's position and sender; content goes away.
+    messageStore.tombstone(String(me.mid ?? ""), ev.chat, ev.messageId);
     unsentBeforePublication.delete(ev.messageId);
     unsentBeforePublication.set(ev.messageId, true);
     capUnsentBeforePublication();

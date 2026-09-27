@@ -47,6 +47,14 @@ let eventSeq = 0;
 /** Appends one event, drops what falls off the ring, and asks for a write. */
 function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   const full: PluginEvent = { seq: ++eventSeq, at: Date.now(), ...e };
+  // A history event carries a whole page; only the newest one per chat has
+  // any meaning, so its predecessors leave the ring instead of piling up
+  // sixty-message payloads in it.
+  if (full.kind === "history") {
+    events = events.filter((ev) =>
+      !(ev.kind === "history" && ev.chat === full.chat)
+    );
+  }
   events.push(full);
   // Slice rather than shift-in-a-loop: the array is replaced wholesale on
   // every write anyway, and this keeps the trim O(1) in statements.
