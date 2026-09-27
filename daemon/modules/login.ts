@@ -756,9 +756,6 @@ async function syncNow(): Promise<Json> {
       }
       return { ok: false, error: `同步失敗：${refreshErrorHint()}` };
     }
-    if (
-      chatSummaryStore.lastRefreshSummaryEpoch < requiredEpoch
-    ) void refreshChats(true);
   }
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "登入狀態已變更，請再試一次" };

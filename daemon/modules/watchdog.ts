@@ -341,10 +341,24 @@ function startSleepMonitor(): void {
     }
     console.error("[push] dbus-monitor exited, watchdog only");
     sleepMonitor = null;
+    respawnSleepMonitor();
   })().catch((e) => {
     console.error("[push] dbus-monitor:", (e as Error).message);
     sleepMonitor = null;
+    respawnSleepMonitor();
   });
+}
+
+/**
+ * A monitor that was running and died is a host event (dbus restart), not a
+ * negotiation problem, so retry on a delay -- the staleness watchdog covers
+ * push health across the gap either way. A spawn failure gets no retry: a
+ * missing binary does not come back, and logging it once is enough.
+ */
+function respawnSleepMonitor(): void {
+  setTimeout(() => {
+    if (!sleepMonitor) startSleepMonitor();
+  }, 30_000);
 }
 
 export {

@@ -15,7 +15,7 @@
     "curve25519-js": "npm:curve25519-js@^0.0.4",
     "node-bignumber": "npm:node-bignumber@^1.2.2",
     "tweetnacl": "npm:tweetnacl@^1.0.3",
-    "node-types": "npm:@types/node@latest",
+    "node-types": "npm:@types/node@26.4.1",
     "node-int64": "npm:node-int64@^0.4.0",
     "undici": "npm:undici@^7",
     "@noble/ciphers": "npm:@noble/ciphers@^2.2",
