@@ -509,8 +509,18 @@ const PREVIEW_LABEL: Record<string, string> = {
   CHATEVENT: "[系統事件]",
   POSTNOTIFICATION: "[貼文通知]",
   IMAGE: "[圖片]",
+  EXIMAGE: "[圖片]",
   VIDEO: "[影片]",
   AUDIO: "[語音]",
+  LOCATION: "[位置]",
+  CONTACT: "[聯絡資訊]",
+  CALL: "[通話]",
+  LINK: "[連結]",
+  APPLINK: "[連結]",
+  GIFT: "[禮物]",
+  MUSIC: "[音樂]",
+  PAYMENT: "[付款]",
+  PDF: "[檔案]",
 };
 
 // LINE often delivers CHATEVENT / POSTNOTIFICATION with text set to the event
@@ -566,7 +576,7 @@ function previewText(
   if (isSystemEventName(text, contentType)) return PREVIEW_LABEL[contentType];
   if (text) return text;
   const meta: Json = raw.contentMetadata ?? {};
-  if (contentType === "FILE") {
+  if (contentType === "FILE" || contentType === "PDF") {
     return fileNameOf(meta, decrypted) || "[檔案]";
   }
   // Layout messages carry LINE's own plain-text fallback; the panel's bodyText

@@ -53,11 +53,41 @@ Deno.test("plain text is printed verbatim", async () => {
 
 Deno.test("no ContentType code ever reaches the chat list", async () => {
   const m = await mod();
-  for (const t of ["STICKER", "IMAGE", "VIDEO", "AUDIO", "CHATEVENT"]) {
+  for (
+    const t of [
+      "STICKER",
+      "IMAGE",
+      "EXIMAGE",
+      "VIDEO",
+      "AUDIO",
+      "CHATEVENT",
+      "LOCATION",
+      "CONTACT",
+      "CALL",
+      "LINK",
+      "APPLINK",
+      "GIFT",
+      "MUSIC",
+      "PAYMENT",
+      "PDF",
+    ]
+  ) {
     const out = m.previewText("", { contentType: t });
     assertEquals(out, m.PREVIEW_LABEL[t]);
     assertEquals(out.includes(t), false, `${t} leaked into "${out}"`);
   }
+});
+
+Deno.test("a PDF takes the file name branch, then the label", async () => {
+  const m = await mod();
+  assertEquals(
+    m.previewText("", {
+      contentType: "PDF",
+      contentMetadata: { FILE_NAME: "簡報.pdf" },
+    }),
+    "簡報.pdf",
+  );
+  assertEquals(m.previewText("", { contentType: "PDF" }), "[檔案]");
 });
 
 Deno.test("a system event named after its own type gets the label, not the code", async () => {
