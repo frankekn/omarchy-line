@@ -155,6 +155,35 @@ function endLogin(): void {
 }
 // enil:logingate-end
 
+// The block between the enil:storageguard markers is sliced out verbatim by
+// storageguard_test.ts, with FileStorage and STORAGE_PATH stubbed.
+// enil:storageguard-begin
+/**
+ * Opens the session store, quarantining a file that no longer parses.
+ * FileStorage persists with a plain writeFile -- a crash mid-write leaves
+ * half a JSON document, and every get/set afterwards throws on the parse,
+ * wedging resume and the next login on a corpse nobody can read. Rename it
+ * aside once: the stored token is equally lost either way, this just keeps
+ * the store usable. Any other read failure stays the caller's to report --
+ * "cannot open" is not proof the file is corrupt, and tryResume already has
+ * words for a store it cannot read.
+ */
+async function sessionStorage(): Promise<FileStorage> {
+  try {
+    JSON.parse(await Deno.readTextFile(STORAGE_PATH));
+  } catch (e) {
+    if (e instanceof SyntaxError) {
+      const quarantined = `${STORAGE_PATH}.corrupt-${Date.now()}`;
+      await Deno.rename(STORAGE_PATH, quarantined).catch(() => {});
+      console.error(`[storage] corrupt session moved to ${quarantined}`);
+    } else if (!(e instanceof Deno.errors.NotFound)) {
+      throw e;
+    }
+  }
+  return new FileStorage(STORAGE_PATH);
+}
+// enil:storageguard-end
+
 /** True if this call started a login; false if the gate refused it. */
 async function startLogin(): Promise<boolean> {
   // First statement, before any await: see beginLogin(). Returning is the same
@@ -162,7 +191,7 @@ async function startLogin(): Promise<boolean> {
   // The boolean is what handle() needs: a refusal used to be silent, so a
   // click landing during a resume retry left the panel with nothing to show.
   if (!beginLogin("manual")) return false;
-  const storage = new FileStorage(STORAGE_PATH);
+  const storage = await sessionStorage();
   let candidate: Client | null = null;
   try {
     await setLogin("starting", { attempt: "manual" });
@@ -317,7 +346,7 @@ async function tryResume(): Promise<"ok" | "none" | "error" | "busy"> {
   const cancelled = () =>
     logoutRequested || cancellation !== resumeCancelGeneration;
   try {
-    const storage = new FileStorage(STORAGE_PATH);
+    const storage = await sessionStorage();
     let token: unknown;
     try {
       token = await storage.get(".auth");
@@ -556,7 +585,11 @@ async function logoutClaimed(
   // The client's own storage instance, when we have it: FileStorage
   // serialises writes per instance, so sharing it avoids racing a set() the
   // library still has in flight.
-  const storage = c?.base?.storage ?? new FileStorage(STORAGE_PATH);
+  // Falling back to a bare FileStorage when the guard itself cannot open the
+  // file keeps this path as quiet as it was: the per-key catch below already
+  // answers "delete failed", and a logout is no place to surface one more.
+  const storage = c?.base?.storage ??
+    await sessionStorage().catch(() => new FileStorage(STORAGE_PATH));
   // e2ee*/qrCert are kept: they are inert without a token, and a re-login as
   // the same account reuses them instead of re-negotiating.
   if (revokeCredentials) {
