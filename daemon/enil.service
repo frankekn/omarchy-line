@@ -1,0 +1,17 @@
+[Unit]
+Description=enil LINE daemon
+After=graphical-session.target
+# Plugin uninstalled: skip the unit instead of restart-looping on a missing daemon.ts.
+ConditionPathExists=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/daemon.ts
+
+[Service]
+# The installed plugin dir, not a dev checkout: `omarchy plugin update` then
+# updates the widget and the daemon together. Copy this file to
+# ~/.config/systemd/user/ and `systemctl --user enable --now enil`.
+WorkingDirectory=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon
+ExecStart=/usr/bin/deno run -A daemon.ts
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

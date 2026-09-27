@@ -1,0 +1,13 @@
+# Local probe/experiment scripts — never commit session-adjacent tooling.
+*.local.*
+
+# Local git worktrees and editor/agent scratch dirs.
+.wt/
+.pi-glla/
+node_modules/
+
+# Regenerated; committed snapshots live in releases, not the tree.
+deno.lock
+
+# Python bytecode from stub_test.py runs.
+__pycache__/

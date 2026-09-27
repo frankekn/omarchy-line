@@ -1,0 +1,3 @@
+[submodule "daemon/vendor/linejs"]
+	path = daemon/vendor/linejs
+	url = https://github.com/frankekn/linejs.git

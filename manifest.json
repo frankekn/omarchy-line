@@ -1,0 +1,95 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.frankekn.line",
+  "name": "LINE",
+  "version": "2.13.0",
+  "author": "Frank Yang",
+  "license": "MIT",
+  "description": "Unread LINE messages in the bar, read from a local daemon's state file.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "LINE",
+    "description": "One bar icon with the unread count, and a panel listing the chats waiting on you.",
+    "category": "Communication",
+    "aliases": [
+      "line",
+      "line-messages"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "textScale": 100,
+      "placement": "Below the bar",
+      "windowWidth": 1040,
+      "windowHeight": 720,
+      "scrollSpeed": 100,
+      "historyPage": 60
+    },
+    "schema": [
+      {
+        "key": "placement",
+        "type": "enum",
+        "label": "Panel position",
+        "options": [
+          "Below the bar",
+          "Center of screen",
+          "App window"
+        ],
+        "defaultValue": "Below the bar",
+        "description": "Where the LINE panel opens. Center of screen puts it in the middle of the monitor instead of hanging off the bar icon. App window opens it as a normal Hyprland window (class org.quickshell, title LINE) that tiles, alt-tabs and keeps external viewers on top."
+      },
+      {
+        "key": "windowWidth",
+        "type": "integer",
+        "label": "App window width (px)",
+        "min": 560,
+        "max": 4096,
+        "defaultValue": 1040,
+        "description": "Remembered size of the App window placement. Updated automatically when you resize the window."
+      },
+      {
+        "key": "windowHeight",
+        "type": "integer",
+        "label": "App window height (px)",
+        "min": 480,
+        "max": 4096,
+        "defaultValue": 720,
+        "description": "Remembered size of the App window placement. Updated automatically when you resize the window."
+      },
+      {
+        "key": "textScale",
+        "type": "integer",
+        "label": "Text size (%)",
+        "min": 80,
+        "max": 160,
+        "step": 10,
+        "defaultValue": 100,
+        "description": "Scales the text inside the LINE panel. The bar icon follows your bar settings."
+      },
+      {
+        "key": "scrollSpeed",
+        "type": "integer",
+        "label": "Scroll speed (%)",
+        "min": 50,
+        "max": 300,
+        "defaultValue": 100,
+        "description": "How far one wheel notch scrolls the chat list, the conversation and the sticker grid. 100 is the default feel; the button in the panel steps through 50, 75, 100, 150, 200 and 300."
+      },
+      {
+        "key": "historyPage",
+        "type": "integer",
+        "label": "Messages per page",
+        "min": 20,
+        "max": 200,
+        "defaultValue": 60,
+        "description": "How many messages are fetched when a chat opens and each time the conversation pages back. The button in the panel steps through 30, 60, 100 and 150. A bigger page means fewer round trips while reading back, at the cost of a slower first paint."
+      }
+    ]
+  }
+}

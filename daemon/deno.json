@@ -1,0 +1,54 @@
+{
+  "imports": {
+    "@evex/linejs": "./vendor/linejs/packages/linejs/client/mod.ts",
+    "@evex/linejs/storage": "./vendor/linejs/packages/linejs/base/storage/mod.ts",
+    "@evex/linejs/base": "./vendor/linejs/packages/linejs/base/mod.ts",
+    "@evex/linejs/thrift": "./vendor/linejs/packages/linejs/base/thrift/mod.ts",
+    "@evex/linejs-types": "./vendor/linejs/packages/types/line_types.ts",
+    "@std/assert": "jsr:@std/assert@^1.0.14",
+    "@std/streams": "jsr:@std/streams@^1.1.2",
+    "qrcode": "npm:qrcode@^1.5.4",
+    "@evex/loose-types": "jsr:@evex/loose-types@^1.0.1",
+    "thrift": "npm:thrift@^0.20.0",
+    "thrift-types": "npm:@types/thrift@^0.10.17",
+    "crypto-js": "npm:crypto-js@^4.2.0",
+    "curve25519-js": "npm:curve25519-js@^0.0.4",
+    "node-bignumber": "npm:node-bignumber@^1.2.2",
+    "tweetnacl": "npm:tweetnacl@^1.0.3",
+    "node-types": "npm:@types/node@latest",
+    "node-int64": "npm:node-int64@^0.4.0",
+    "undici": "npm:undici@^7",
+    "@noble/ciphers": "npm:@noble/ciphers@^2.2",
+    "opusscript": "npm:opusscript@^0.1.1"
+  },
+  "nodeModulesDir": "none",
+  "compilerOptions": {
+    "types": [
+      "node-types"
+    ]
+  },
+  "lint": {
+    "rules": {
+      "include": [
+        "no-explicit-any"
+      ]
+    }
+  },
+  "fmt": {
+    "lineWidth": 80,
+    "singleQuote": false,
+    "semiColons": true
+  },
+  "tasks": {
+    "check": "deno check daemon.ts",
+    "no-any": "deno test -A no_any_test.ts",
+    "fmt": "deno fmt --check",
+    "lint": "deno lint",
+    "test": "deno test -A",
+    "bench:startup": "deno run -A bench/startup_bench.ts",
+    "bench:thrift": "deno run -A bench/thrift_decode_bench.ts"
+  },
+  "exclude": [
+    "vendor"
+  ]
+}
