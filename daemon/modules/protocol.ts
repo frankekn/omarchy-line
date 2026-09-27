@@ -395,6 +395,15 @@ function talkOpEvent(op: RawOperationFields, selfMid: string): TalkOp | null {
 }
 
 /**
+ * Op 42: the server declares our view of the boxes inconsistent and carries
+ * nothing to reconcile by -- the same authority problem as an own-device
+ * read, which is why the caller answers it with the full round.
+ */
+function talkOpNeedsFullSync(op: RawOperationFields): boolean {
+  return String(op.type ?? "") === "NOTIFIED_FORCE_SYNC";
+}
+
+/**
  * Which box the panel files a message under. `toType` is USER only in a 1:1,
  * where `to` is whoever received it -- so our own message points at the peer
  * and theirs points at us, and the box is keyed by the peer either way.
@@ -554,5 +563,6 @@ export {
   summariseReactions,
   talkMetadataChange,
   talkOpEvent,
+  talkOpNeedsFullSync,
 };
 export type { Mention, TalkMetadataChange, TalkOp };

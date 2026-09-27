@@ -32,7 +32,7 @@ export {
 `;
 
 const OP_PRELUDE = PRELUDE + `
-export { talkOpEvent, talkMetadataChange, chatMidOf };
+export { talkOpEvent, talkMetadataChange, talkOpNeedsFullSync, chatMidOf };
 `;
 
 const ME = "u" + "0".repeat(31) + "1";
@@ -68,6 +68,7 @@ interface OperationModule extends ReactionModule {
     op: Record<string, unknown>,
     self: string,
   ): Record<string, unknown> | null;
+  talkOpNeedsFullSync(op: Record<string, unknown>): boolean;
   chatMidOf(raw: Record<string, unknown>, self: string): string;
 }
 let R: ReactionModule | undefined;
@@ -377,6 +378,24 @@ Deno.test("ops we do not draw, and broken ones, map to nothing", async () => {
   ) {
     assertEquals(m.talkOpEvent(op, ME), null, JSON.stringify(op));
   }
+});
+
+Deno.test("a force-sync op asks for the full round and nothing else does", async () => {
+  const m = await ops();
+  assertEquals(m.talkOpNeedsFullSync({ type: "NOTIFIED_FORCE_SYNC" }), true);
+  for (
+    const type of [
+      "RECEIVE_MESSAGE",
+      "NOTIFIED_READ_MESSAGE",
+      "NOTIFIED_DESTROY_MESSAGE",
+      "EDIT_MESSAGE",
+      "NOTIFIED_TYPING",
+      "FAILED_SEND_MESSAGE",
+    ]
+  ) {
+    assertEquals(m.talkOpNeedsFullSync({ type }), false, type);
+  }
+  assertEquals(m.talkOpNeedsFullSync({}), false);
 });
 
 Deno.test("a 1:1 box is keyed by the peer, whoever spoke", async () => {

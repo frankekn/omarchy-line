@@ -56,6 +56,7 @@ import {
   summariseReactions,
   talkMetadataChange,
   talkOpEvent,
+  talkOpNeedsFullSync,
 } from "./protocol.ts";
 import type { RawOperationFields } from "./protocol.ts";
 import type { Client } from "@evex/linejs";
@@ -318,6 +319,14 @@ function onTalkOp(op: RawOperationFields): void {
       chatSummaryStore.chatMetadataEpoch++;
       setForceFullRefresh(true);
       scheduleRefresh();
+    }
+    // The server says our view is inconsistent. Only the full round's
+    // box.unreadCount can settle what it saw -- the same answer an
+    // own-device read gets below.
+    if (talkOpNeedsFullSync(op)) {
+      setForceFullRefresh(true);
+      scheduleRefresh();
+      return;
     }
     const ev = talkOpEvent(op, String(me.mid ?? ""));
     if (!ev) return;
