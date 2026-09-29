@@ -5,12 +5,12 @@
 Unread LINE count in the bar. Click it to search chats, read messages, reply,
 and send files.
 
-| ![Chinese conversation — mentions, reactions, read receipts, an unsent message and an expired file](docs/screenshot-zh.png) | ![English chat content — a FLEX deploy card, quote replies, file and video attachments](docs/screenshot-en.png) |
+| ![Chinese conversation — mentions, reactions, read receipts, an unsent message and an expired file](docs/screenshot-zh.png) | ![English UI — a FLEX deploy card, quote replies, file and video attachments](docs/screenshot-en.png) |
 | :-: | :-: |
-| 中文對話 — mention、表情、已讀、收回、過期檔案 | English chat content — FLEX card, quote replies, file & video attachments |
+| 中文介面與對話 — mention、表情、已讀、收回、過期檔案 | English interface — FLEX card, quote replies, file & video attachments |
 
-*UI strings are Traditional Chinese (the shell is zh-TW); message content in
-any language renders fine, as shown above.*
+*The panel speaks Traditional Chinese or English (see Language under
+Settings); message content in any language renders fine either way.*
 
 This repo has two halves:
 
@@ -645,6 +645,17 @@ carrying a path **go only to the panel, never the journal**: a missing
 while the journal only gets "找不到檔案".
 
 ## Settings
+
+Panel language (`language`) is `System`, `繁體中文` or `English`. `System`
+follows your OS locale — zh* gets 繁體中文, everything else gets English —
+so an English system still gets 繁體中文 by picking it explicitly:
+
+```bash
+omarchy bar set io.github.frankekn.line language "繁體中文"
+```
+
+Daemon-reported errors and message placeholders follow the same setting at
+display time; the wire protocol stays unchanged.
 
 `A−` `A+` next to the search box adjust text scale directly (80–160, steps of
 10). Written back to shell.json, so it survives reboots.
@@ -1290,7 +1301,7 @@ single Deno file) — with these additions:
 - One chat-list refresh per send (was two)
 - Esc in the `twoPane` layout keeps the right pane instead of closing all
 - Reopened chats serve the history cache — no network wait
-- UI strings localized to Traditional Chinese
+- UI strings localized — Traditional Chinese and English
 - Search also matches message previews, not just chat names
 - Video thumbnails (non-E2EE)
 - Media cache capped at 14 days / 500 MB, auto-swept
@@ -1353,7 +1364,7 @@ map back at `jsr:@evex/linejs`.
 ## Known limits
 
 - Unofficial client — account risk (see above)
-- Panel UI strings are Traditional Chinese only — no English UI yet
+- Panel UI is Traditional Chinese or English; message content is untranslated
 - Multi-person rooms (`r…` mids) can't take files — linejs's
   `uploadMediaByE2EE` only accepts `u`/`c`
 - E2EE videos show 📎 rather than a thumbnail: the thumbnail is encrypted

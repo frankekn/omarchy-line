@@ -4,9 +4,9 @@
 
 Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息、傳檔案。
 
-| ![中文對話——mention、表情、已讀、收回、過期檔案](docs/screenshot-zh.png) | ![英文訊息內容——FLEX 部署卡、引言回覆、檔案與影片附件](docs/screenshot-en.png) |
+| ![中文介面與對話——mention、表情、已讀、收回、過期檔案](docs/screenshot-zh.png) | ![英文介面——FLEX 部署卡、引言回覆、檔案與影片附件](docs/screenshot-en.png) |
 | :-: | :-: |
-| 中文對話 — mention、表情、已讀、收回、過期檔案 | English chat content — FLEX card, quote replies, file & video attachments |
+| 中文介面與對話 — mention、表情、已讀、收回、過期檔案 | 英文介面 — FLEX 部署卡、引言回覆、檔案與影片附件 |
 
 這個 repo 有兩半：
 
@@ -491,6 +491,17 @@ contentType 仍是 `FILE`／`IMAGE`，只是沒有內容 —— daemon 把它標
 `找不到檔案: <路徑>`（路徑是使用者自己選的），journal 只有「找不到檔案」。
 
 ## 設定
+
+介面語言（`language`）有 `System`、`繁體中文`、`English` 三個值。`System` 跟著
+系統語系走 —— zh* 是繁體中文，其他是英文 —— 所以英文系統要用繁中，明確選
+`繁體中文` 就好：
+
+```bash
+omarchy bar set io.github.frankekn.line language "English"
+```
+
+daemon 回來的錯誤訊息和訊息佔位字在顯示時也會跟著這個設定換；線上協定的
+字串本身不變。
 
 面板搜尋框右邊的 `A−` `A+` 直接調字級（80–160，每次 10）。它會寫回 shell.json，
 所以重開機也還在。
@@ -1029,7 +1040,7 @@ daemon 原本是另一個 repo，現在收進來（改寫成單檔 Deno），並
 - 每次送出只 refresh 一次聊天室清單（原本兩次）
 - `twoPane` 版面按 Esc 保留右邊那欄，不會整個收掉
 - 重開聊天室吃 history 快取，不用等網路
-- 介面字串中文化
+- 介面字串雙語化 —— 繁體中文與英文
 - 搜尋同時比對訊息預覽，不只聊天室名稱
 - 影片縮圖（非 E2EE）
 - 媒體快取上限 14 天／500 MB，自動掃
