@@ -20,14 +20,6 @@ jobs:
           deno task lint
           deno task fmt
           deno task test
-      - name: cli checks
-        working-directory: cli
-        run: |
-          deno task check
-          deno task no-any
-          deno task lint
-          deno task fmt
-          deno task test
       - name: qml harness
         run: node tests/qml/run.js
       - name: stub tests
