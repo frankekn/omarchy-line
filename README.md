@@ -5,7 +5,9 @@
 Unread LINE count in the bar. Click it to search chats, read messages, reply,
 and send files.
 
-![Chat list and a conversation — mentions, reactions, read receipts, an unsent message and an expired file, all on stub data](docs/screenshot.png)
+| ![Chinese conversation — mentions, reactions, read receipts, an unsent message and an expired file](docs/screenshot-zh.png) | ![English-leaning conversation — a FLEX deploy card, a quote reply, a file and video attachments](docs/screenshot-en.png) |
+| :-: | :-: |
+| 中文對話 — mention、表情、已讀、收回、過期檔案 | English content — FLEX card, quote reply, file & video attachments |
 
 This repo has two halves:
 
