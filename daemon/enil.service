@@ -1,5 +1,5 @@
 [Unit]
-Description=enil LINE daemon for omarchy-line-app
+Description=enil LINE daemon for omarchy-line
 After=graphical-session.target
 # Plugin uninstalled: skip the unit instead of restart-looping on a missing daemon.ts.
 ConditionPathExists=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/daemon.ts

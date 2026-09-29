@@ -23,7 +23,7 @@ daemon 沒在跑的時候，面板顯示 `DAEMON OFFLINE`（判準是 `state.jso
 外掛：
 
 ```bash
-omarchy plugin add https://github.com/frankekn/omarchy-line-app.git --enable
+omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable
 ```
 
 裝好之後 repo 就在 `~/.config/omarchy/plugins/io.github.frankekn.line/`，daemon 在
@@ -38,7 +38,7 @@ git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemo
 git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init
 ```
 
-第一行會把已安裝 submodule 的 remote 同步到 repo 指定的私有來源；第二行才抓取固定版本。
+第一行同步 submodule 的 remote 設定；第二行抓取 pin 住的版本（公開 fork `frankekn/linejs`）。
 沒補的話 daemon 一起手就是 `Module not found ".../vendor/linejs/..."`。
 `omarchy plugin update` 同樣只 fast-forward 主 repo，所以每次更新後都要再跑這兩行。
 
@@ -113,7 +113,7 @@ journalctl --user -u enil -f
    Omarchy 不會預裝。順便（可裝可不裝）：`ffmpegthumbnailer` 或 `ffmpeg` 讓送出的
    影片有預覽圖，`wl-clipboard` 讓剪貼簿裡的圖片可以直接送。兩者都是沒裝就少那個
    功能，不會擋住任何東西。
-4. `omarchy plugin add https://github.com/frankekn/omarchy-line-app.git --enable`。
+4. `omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable`。
 5. `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs`，接著執行
    `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init`
    —— 這步要連得上 GitHub。做完 `daemon/vendor/linejs/packages/` 底下要有檔案，
@@ -1009,10 +1009,10 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 ## 這個 repo 的改動
 
-原始外掛作者 Unayung（MIT）；本 repo 為私有 fork，已與上游分離。逐版的完整清單在
+原始外掛作者 Unayung（MIT）；本 repo 為 fork，已與上游分離。逐版的完整清單在
 [CHANGELOG.md](CHANGELOG.md)。
 
-daemon 原本是另一個私有 repo，現在收進來（改寫成單檔 Deno），並加了：
+daemon 原本是另一個 repo，現在收進來（改寫成單檔 Deno），並加了：
 
 - 多行訊息：Shift+Enter 換行
 - 面板關著時發桌面通知
@@ -1036,8 +1036,7 @@ daemon 原本是另一個私有 repo，現在收進來（改寫成單檔 Deno）
 ### linejs 用自己的 fork
 
 daemon 不吃 `jsr:@evex/linejs`，吃 `daemon/vendor/linejs` 這個 submodule。
-來源是私有的 `frankekn/omarchy-linejs` mirror，實際版本由 submodule pin 固定；
-安裝與更新時需要有該私有 repo 的讀取權限。理由是這幾個修的都是**上游有、我們天天踩**的 bug，而且都在協定層，
+來源是公開 fork `frankekn/linejs`，實際版本由 submodule pin 固定。理由是這幾個修的都是**上游有、我們天天踩**的 bug，而且都在協定層，
 在 daemon 這邊繞不過去：
 
 | commit | 修了什麼 |
@@ -1071,7 +1070,7 @@ git submodule update --init daemon/vendor/linejs
 cd daemon/vendor/linejs
 git remote add upstream https://github.com/evex-dev/linejs.git   # 只需一次
 git fetch upstream
-git rebase upstream/main main         # 私有 mirror 的維護分支
+git rebase upstream/main main         # fork 的維護分支
 deno test -A                          # 先在 fork 裡確認補丁還成立
 git push --force-with-lease origin main
 cd ../../..
@@ -1121,8 +1120,7 @@ python3 daemon/stub_test.py
 cd daemon && deno task fmt && deno task check && deno task no-any && deno task lint && deno task test
 ```
 
-這些檢查全部在本機跑。submodule 位於另一個私有 repo，不把跨 repo 憑證交給
-GitHub Actions；`omarchy plugin validate` 和 `qmllint` 也需要本機的 omarchy shell
+這些檢查全部在本機跑。submodule 是公開 fork，CI 直接 `submodules: true` 取得；`omarchy plugin validate` 和 `qmllint` 也需要本機的 omarchy shell
 QML modules。實機驗證：
 
 ```bash
