@@ -7,7 +7,7 @@
  *
  *   deno test -A storageguard_test.ts
  */
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { loadBlock } from "./slice_test.ts";
 
 // The block opens the file itself, so the stub FileStorage only has to
