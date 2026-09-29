@@ -1009,8 +1009,7 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 ## 這個 repo 的改動
 
-原始外掛作者 Unayung（MIT）；本 repo 為 fork，已與上游分離。逐版的完整清單在
-[CHANGELOG.md](CHANGELOG.md)。
+原始外掛作者 Unayung（MIT）；本 repo 為 fork，已與上游分離。
 
 daemon 原本是另一個 repo，現在收進來（改寫成單檔 Deno），並加了：
 
