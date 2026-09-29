@@ -1,78 +1,93 @@
 # LINE for Omarchy
 
-Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息、傳檔案。
+[繁體中文](README.zh-TW.md)
 
-這個 repo 有兩半：
+Unread LINE count in the bar. Click it to search chats, read messages, reply,
+and send files.
 
-- **外掛**（`Panel.qml`、`LinePanel.qml`、`LineWindow.qml`、`manifest.json`，加上
-  `EventLog.js`／`PanelKit.js`／`DraftStore.js` 三個 `.pragma library`）—— omarchy
-  bar 的 QML widget，不碰 LINE，只讀一個本機 JSON 檔和連一個本機 unix socket。
-  事件/訊息合併邏輯在 `EventLog.js`，純 UI 輔助函式在 `PanelKit.js`，草稿存取在
-  `DraftStore.js`；`Panel.qml` 本身只剩狀態機、socket/FileView 接線和畫面。
-- **daemon**（`daemon/daemon.ts`）—— 真正登入 LINE 的那一半。LINE 的 refresh token
-  每次登入都會換，所以同時只能有一個 process 拿著它。
+This repo has two halves:
 
-daemon 沒在跑的時候，面板顯示 `DAEMON OFFLINE`（判準是 `state.json` 的 `updatedAt`
-超過 3 分鐘沒更新）。
+- **The plugin** (`Panel.qml`, `LinePanel.qml`, `LineWindow.qml`, `manifest.json`,
+  plus the three `.pragma library` files `EventLog.js` / `PanelKit.js` /
+  `DraftStore.js`) — a QML widget for the omarchy bar. It never touches LINE;
+  it only reads one local JSON file and talks to one local unix socket.
+  Event/message merging lives in `EventLog.js`, pure UI helpers in
+  `PanelKit.js`, draft persistence in `DraftStore.js`; `Panel.qml` itself is
+  just the state machine, the socket/FileView wiring, and the view.
+- **The daemon** (`daemon/daemon.ts`) — the half that actually logs into LINE.
+  LINE's refresh token rotates on every login, so exactly one process may hold
+  it at a time.
 
-> 這是非官方 client（走 `@evex/linejs`）。LINE 沒有開放個人帳號的 API，用它有帳號
-> 被限制的風險，自己斟酌。
+When the daemon is down, the panel shows `DAEMON OFFLINE` (the rule:
+`state.json`'s `updatedAt` hasn't moved in 3 minutes).
 
-## 安裝
+> This is an unofficial client (built on `@evex/linejs`). LINE does not offer a
+> personal-account API; using this carries a risk of account restriction.
+> Decide for yourself.
 
-外掛：
+## Install
+
+The plugin:
 
 ```bash
 omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable
 ```
 
-裝好之後 repo 就在 `~/.config/omarchy/plugins/io.github.frankekn.line/`，daemon 在
-它底下的 `daemon/`。
+The repo lands at `~/.config/omarchy/plugins/io.github.frankekn.line/`, with
+the daemon under `daemon/`.
 
-**接著一定要補這一行。** LINE 協定那半是本 repo 自己的 linejs fork，放在
-`daemon/vendor/linejs`（git submodule，理由見[這個 repo 的改動](#這個-repo-的改動)），
-而 `omarchy plugin add` 只是一次普通的 `git clone`，不帶 submodule：
+**Then you must run these two lines.** The LINE protocol half is this repo's
+own linejs fork, vendored at `daemon/vendor/linejs` as a git submodule (see
+[Changes in this repo](#changes-in-this-repo) for why), and
+`omarchy plugin add` is a plain `git clone` — no submodules:
 
 ```bash
 git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs
 git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init
 ```
 
-第一行同步 submodule 的 remote 設定；第二行抓取 pin 住的版本（公開 fork `frankekn/linejs`）。
-沒補的話 daemon 一起手就是 `Module not found ".../vendor/linejs/..."`。
-`omarchy plugin update` 同樣只 fast-forward 主 repo，所以每次更新後都要再跑這兩行。
+The first line syncs the submodule's remote config; the second fetches the
+pinned revision (the public fork `frankekn/linejs`). Skip it and the daemon
+dies on startup with `Module not found ".../vendor/linejs/..."`.
+`omarchy plugin update` is likewise a fast-forward of the main repo only —
+rerun these two lines after every update.
 
-貼圖、貼圖選擇器與 FLEX 圖片（含燈箱）由 daemon 下載到
-`$XDG_STATE_HOME/enil/media/public-images`（預設 `~/.local/state/enil/media/public-images`），
-QML 只讀本機圖片，避免這些圖片請求進入 quickshell 的 Qt TLS。
-同一網址的下載會合併，最多同時下載 4 張，每張上限 10 MiB、逾時 20 秒，
-快取沿用媒體的定期清理政策。下載失敗不退回 QML HTTPS。
-更新時須一併更新面板與 daemon，並重新啟動 daemon 及重新載入外掛。
+Stickers, the sticker picker, and FLEX images (including the lightbox) are
+downloaded by the daemon into
+`$XDG_STATE_HOME/enil/media/public-images` (default
+`~/.local/state/enil/media/public-images`); QML only ever reads local files, so
+those image requests never enter quickshell's Qt TLS. Downloads of the same URL
+merge, at most 4 in flight, each capped at 10 MiB with a 20 s timeout, and the
+cache shares the media sweep policy. Failed downloads never fall back to QML
+HTTPS. When updating, update the panel and the daemon together, then restart
+the daemon and reload the plugin.
 
-daemon 需要 [Deno](https://deno.com) 2（`sudo pacman -S deno`）。相依套件寫在
-`daemon/deno.json` 的 import map，第一次執行會自己抓：
+The daemon needs [Deno](https://deno.com) 2 (`sudo pacman -S deno`).
+Dependencies live in `daemon/deno.json`'s import map and fetch themselves on
+first run:
 
-| 套件 | 用途 |
+| Package | Purpose |
 |---|---|
-| `daemon/vendor/linejs`（submodule） | LINE 協定、登入、E2EE —— 本 repo 的 linejs fork |
-| `jsr:@std/streams` | socket 的逐行讀取 |
-| `npm:qrcode` | 把登入 QR 寫成 PNG |
-| `npm:thrift`、`npm:crypto-js`、`npm:tweetnacl` 等 | fork 自己的相依，版本照抄它的 `deno.json` |
+| `daemon/vendor/linejs` (submodule) | LINE protocol, login, E2EE — this repo's linejs fork |
+| `jsr:@std/streams` | line-based socket reads |
+| `npm:qrcode` | renders the login QR as PNG |
+| `npm:thrift`, `npm:crypto-js`, `npm:tweetnacl`, … | the fork's own deps, versions pinned to its `deno.json` |
 
-fork 的 bare import 是拿**進入點**的設定檔來解的，所以那串相依要寫在
-`daemon/deno.json` 裡，不是 fork 裡那份。`nodeModulesDir` 是 `"none"`：npm 那幾個直接
-從 deno 的全域快取解，外掛資料夾裡不會多出 `daemon/node_modules/`。fork 自己的設定寫
-`"auto"`，但那是給它的 workspace 用的，我們這邊不需要 —— 整包 client（含 thrift、
-crypto-js 那些 CommonJS）在 `"none"` 底下 import 得起來。
+The fork's bare imports are resolved by the **entry point's** config, so those
+deps belong in `daemon/deno.json`, not the fork's. `nodeModulesDir` is
+`"none"`: the npm packages resolve straight from Deno's global cache and no
+`daemon/node_modules/` appears inside the plugin folder. The fork's own config
+says `"auto"`, but that is for its workspace — the whole client (thrift,
+crypto-js, the other CommonJS bits) imports fine under `"none"`.
 
-先在前景跑一次確認能動：
+Run it in the foreground once to prove it works:
 
 ```bash
 cd ~/.config/omarchy/plugins/io.github.frankekn.line/daemon
 deno run -A daemon.ts
 ```
 
-沒問題就交給 systemd user unit：
+Then hand it to a systemd user unit:
 
 ```bash
 cp ~/.config/omarchy/plugins/io.github.frankekn.line/daemon/enil.service ~/.config/systemd/user/
@@ -80,768 +95,979 @@ systemctl --user daemon-reload
 systemctl --user enable --now enil
 ```
 
-unit 的 `WorkingDirectory` 指到**安裝目錄**底下的 `daemon/`，所以
+The unit's `WorkingDirectory` points at the `daemon/` **inside the installed
+plugin**, so
 
-`ExecStart` 跑的是 `enil-run.sh`：它先看同目錄有沒有 `deno task build`
-產生的 `enil` 執行檔，而且 `enil.rev` 裡的 commit 要跟現在的 checkout 一致、
-`daemon.ts` 不能比 binary 新，才用編譯好的那隻；否則一律退回
-`deno run -A daemon.ts`。所以 `omarchy plugin update` 之後絕對不會吃到舊
-binary —— 它只是退回解譯模式，等你下次 build 再快起來。
+`ExecStart` runs `enil-run.sh`: it uses the `enil` binary produced by
+`deno task build` only when `enil.rev`'s commit matches this checkout and
+`daemon.ts` is not newer than the binary; otherwise it falls back to
+`deno run -A daemon.ts`. An `omarchy plugin update` can therefore never strand
+a stale binary — it just drops back to interpreted mode until you build again.
 
-編譯是**選配**（機器上還是要有 Deno 才能 build）：
+Compiling is **optional** (Deno still has to be installed to build):
 
 ```bash
 cd ~/.config/omarchy/plugins/io.github.frankekn.line/daemon
-deno task build    # 產生 ./enil（約 114MB）+ ./enil.rev
+deno task build    # produces ./enil (~114 MB) + ./enil.rev
 ```
 
-好處是重啟快 ~20ms、跑起來後不依賴 Deno runtime；不 build 也完全能用，行為
-一模一樣。
-`omarchy plugin update` 會一起更新外掛和 daemon，不必再複製一次。日誌：
+It shaves ~20 ms off restarts and runs without a Deno runtime; not building is
+completely fine and behaves identically.
+`omarchy plugin update` updates the plugin and the daemon together — no need
+to copy anything again. Logs:
 
 ```bash
 journalctl --user -u enil -f
 ```
 
-### 從零安裝 checklist
+### Fresh-install checklist
 
-一台乾淨的機器照這個順序走，中間任何一步失敗都不要跳過：
+On a clean machine, walk this list in order and never skip a failed step:
 
-1. Omarchy 的 bar 在跑，而且你人在圖形 session 裡 —— systemd **user** unit 要有它才起得來。
-2. `deno --version` 有輸出（Deno 2）。沒有就 `sudo pacman -S deno`。
-3. `command -v zenity` 有輸出。沒有就 `sudo pacman -S zenity` —— 傳檔用的檔案選擇器，
-   Omarchy 不會預裝。順便（可裝可不裝）：`ffmpegthumbnailer` 或 `ffmpeg` 讓送出的
-   影片有預覽圖，`wl-clipboard` 讓剪貼簿裡的圖片可以直接送。兩者都是沒裝就少那個
-   功能，不會擋住任何東西。
-4. `omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable`。
-5. `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs`，接著執行
-   `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init`
-   —— 這步要連得上 GitHub。做完 `daemon/vendor/linejs/packages/` 底下要有檔案，
-   空的就是沒抓到，別往下走。
-6. `omarchy plugin validate ~/.config/omarchy/plugins/io.github.frankekn.line` exit 0。
-7. 第一次 `deno run -A daemon.ts` 需要連得上網 —— 相依套件是那時候才從 JSR／npm 抓的。
-8. 前景跑起來後確認 `~/.local/state/enil/` 出現了，`state.json` 的 `updatedAt` 在動。
-9. 目錄權限：state 目錄 700、`storage.json` 600。不對就 `chmod 700 ~/.local/state/enil`、
-   `chmod 600 ~/.local/state/enil/storage.json`。
-10. 手機拿在手上，再按面板的「登入 LINE」—— QR 有時效，沒人掃就只是留下沒用的憑證。
-11. 掃完輸入面板顯示的 PIN，`login.status` 變 `ok`，bar 圖示的 `!` 消失。
-12. Ctrl-C 收掉前景那隻，改用 systemd unit（上面那三行），`journalctl --user -u enil` 看一次沒有紅字。
+1. The Omarchy bar is running and you are inside a graphical session — a
+   systemd **user** unit needs that to start.
+2. `deno --version` prints something (Deno 2). If not, `sudo pacman -S deno`.
+3. `command -v zenity` prints something. If not, `sudo pacman -S zenity` — it is
+   the file picker used for sending files, and Omarchy does not preinstall it.
+   Optional extras: `ffmpegthumbnailer` or `ffmpeg` gives sent videos a preview
+   image, and `wl-clipboard` lets you send an image straight from the
+   clipboard. Missing either just loses that one feature; nothing is blocked.
+4. `omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable`.
+5. `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs`,
+   then `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init`
+   — this step needs GitHub reachable. Afterwards `daemon/vendor/linejs/packages/`
+   must contain files; an empty tree means the fetch failed — do not continue.
+6. `omarchy plugin validate ~/.config/omarchy/plugins/io.github.frankekn.line`
+   exits 0.
+7. The first `deno run -A daemon.ts` needs network access — that is when the
+   JSR/npm dependencies are fetched.
+8. Once it runs in the foreground, confirm `~/.local/state/enil/` exists and
+   `state.json`'s `updatedAt` is moving.
+9. Permissions: state dir 700, `storage.json` 600. Fix with
+   `chmod 700 ~/.local/state/enil` and
+   `chmod 600 ~/.local/state/enil/storage.json` if wrong.
+10. Have your phone in hand, then press the panel's "登入 LINE" — the QR has a
+    TTL and an unscanned attempt only leaves a dead credential behind.
+11. Type the PIN the panel shows; `login.status` becomes `ok` and the `!` on
+    the bar icon disappears.
+12. Ctrl-C the foreground process and switch to the systemd unit (the three
+    lines above); `journalctl --user -u enil` shows no red lines.
 
-### 解除安裝
+### Uninstall
 
 ```bash
 systemctl --user disable --now enil
 rm ~/.config/systemd/user/enil.service && systemctl --user daemon-reload
-rm -rf ~/.local/state/enil          # 憑證、快取、state 都在這裡
+rm -rf ~/.local/state/enil          # credentials, caches and state live here
 omarchy plugin remove io.github.frankekn.line
 ```
 
-刪掉 state 目錄等於在這台機器上登出，下次要重掃 QR。手機端的「登入中的裝置」清單
-要另外自己去移除。
+Deleting the state directory logs you out on this machine — the next login
+needs a fresh QR scan. Remove the entry in your phone's "logged-in devices"
+list separately.
 
-## 睡醒與斷線
+## Sleep and disconnects
 
-筆電睡著時 LINE 的 push 連線會半開，核心那邊還是 ESTAB，daemon 卻再也收不到訊息。
-所以 daemon 一邊聽 logind 的 `PrepareForSleep`（睡醒後三秒重連），一邊每分鐘檢查
-push 有沒有超過三分鐘沒動靜，有就自己重建連線，失敗則以 1 秒起跳、最多 60 秒的
-間隔一直重試。另外每五分鐘會保底重抓一次聊天列表。push 連線自己丟出、沒人接的錯誤
-會記成 `[unhandled]`：判定是網路問題就當成斷線交給上面的重連流程，daemon 不會因此
-被 systemd 重啟；其他錯誤同樣記一行，但照樣讓 daemon 結束、由 systemd 重啟——那是
-程式自己的 bug，繼續跑下去只會端出過期的狀態。
+While a laptop sleeps, LINE's push connection half-opens: the kernel still
+sees ESTABLISHED, but the daemon stops receiving anything. So the daemon both
+listens for logind's `PrepareForSleep` (reconnects 3 s after wake) and checks
+once a minute whether the push has been quiet for over three minutes —
+rebuilding it on its own, retrying with a backoff that starts at 1 s and caps
+at 60 s. A full chat-list refetch also runs every five minutes as a floor.
+Errors the push connection throws with nobody listening are journaled as
+`[unhandled]`: anything judged a network problem takes the reconnect path
+above and does not restart the daemon; anything else is journaled the same way
+but still lets the daemon exit for systemd to restart — that is the daemon's
+own bug, and running on would only serve stale state.
 
-**linejs 的 pusher 迴圈整個死掉是另一條路**：它連不上的時候會把兩條共用的 stream 一起
-error 掉，`listen()` 內部那個 `for await` 就此結束，之後再也不會有事件進來，除非有人
-再呼叫一次 `listen()`（上游 v3.4.1 明講這是呼叫端的事）。daemon 從 `log` 頻道的
-`LegyPusherError` 認出這一次，判準是 `poll.islisten`：linejs 在 `finally` 裡把它清掉，
-所以只有「迴圈真的結束了」那一次讀到 false。單則訊息解密失敗、或 `InitAndRead` 那種
-它自己睡 4 秒再重試的失敗，回報的型別一模一樣但迴圈還活著，跟著重建連線只會去搶
-`conns[0]`，所以那兩種只記一行、不動連線。真的死了就把 push 的時鐘歸零，交給上面同一套
-watchdog（沒有第二套退避）—— 同一次失敗會寫兩行 `LegyPusherError`（pusher 自己一行，
-stream 被 error 掉之後 `for await` 再一行），兩行走同一個退避閘門，加起來只重連一次。
-以前這條只能等三分鐘的沒動靜檢查才會被發現。
+**The linejs pusher loop dying outright is a different path**: when it cannot
+connect it errors both shared streams at once, the `for await` inside
+`listen()` ends, and no event arrives again until someone calls `listen()`
+once more (upstream v3.4.1 states that is the caller's job). The daemon spots
+this on the `log` channel via `LegyPusherError` and decides by `poll.islisten`:
+linejs clears it in `finally`, so only the pass where the loop truly ended
+reads false. A single message failing to decrypt, or an `InitAndRead` failure
+linejs itself sleeps 4 s and retries, reports the identical type while the
+loop is alive — reconnecting then would just fight over `conns[0]`, so those
+two are journaled and the connection left alone. A real death zeroes the push
+clock and hands back to the same watchdog above (no second backoff): one
+failure writes two `LegyPusherError` lines (one from the pusher, one from the
+`for await` after the streams errored) that share one backoff gate, so only
+one reconnect happens. Before this, the only detector was the three-minute
+quiet check.
 
-另外，每一個對 LINE 的請求都有「等回應標頭」的時間上限：一般 30 秒，上傳走的 obs
-主機 180 秒（上傳要整包送完才會有回應標頭）。上限只管標頭，不管內容，所以 push 連線
-和媒體下載那種一開好幾個小時的 body 不會被砍掉。這層是自己加的，因為 linejs 雖然
-自己設了 30 秒 timeout，加密傳輸層卻把請求重建了一次而漏掉那個 signal，等於沒設；
-筆電睡醒後那條連線早就死了但核心不知道，一個抓聊天列表的請求就這樣卡了十幾分鐘，
-順帶把後面每一次刷新都擋住。現在最多卡 30 秒就會失敗，並在 15 秒後自己重抓一次，
-不用等五分鐘的保底輪詢。上限可以用 `ENIL_REQUEST_TIMEOUT_MS`（毫秒）調整。逾時本身
-（`TimeoutError`／`AbortError`）算網路問題，跟連線被砍走同一條路：以前它被歸成不明
-錯誤，一個逾時的請求沒人接就足以讓 daemon 整個結束、由 systemd 重啟。
+Every request to LINE also has a header wait cap: 30 s normally, 180 s for the
+obs upload host (uploads answer headers only after the whole body is sent).
+The cap bounds headers, not bodies, so the push connection and media downloads
+with hours-long bodies are never cut. This layer is ours: linejs sets its own
+30 s timeout, but the encrypted transport rebuilt the request and dropped that
+signal — effectively no timeout at all. After a laptop woke, the keep-alive
+connection was long dead while the kernel disagreed, and one chat-list request
+sat there for ten minutes blocking every refresh behind it. Now the worst case
+is a 30 s failure plus an automatic refetch 15 s later, without waiting for
+the five-minute floor poll. Tune with `ENIL_REQUEST_TIMEOUT_MS` (milliseconds).
+The timeout itself (`TimeoutError`/`AbortError`) counts as a network problem
+and takes the same path as a severed connection: previously it was classified
+as an unknown error, where a single timed-out request nobody answered was
+enough to kill the daemon for a systemd restart.
 
-上面那兩層都是自動的，但都要等：watchdog 一分鐘才看一次，保底輪詢是五分鐘。不想等就
-按清單搜尋框右邊那顆**「同步」**（鍵盤 `r`，或直接點標題下那行「LINE 連線中斷，重連中」）——
-它會重建 push 連線並立刻重抓聊天列表，正在看的那間對話也會一起重讀。按下去按鈕會變成
-「同步中…」，通常幾秒內變成「已同步 HH:MM」（剛好有一輪重抓在飛的話會多等它一輪，
-按鈕會一直維持在「同步中…」）；失敗的話寫的是原因（`同步失敗：連不上 LINE，
-稍後重試` 之類），不會默默沒反應。重建連線那段本身要八秒（要先讓 linejs 自己的 pusher
-有機會復原，不然兩個迴圈會搶同一條連線），但同步不等它 —— 重抓不需要新的連線，所以
-畫面先回來，連線在後面自己修好。
+Both layers above are automatic but both make you wait: the watchdog checks
+once a minute, the floor poll every five. To skip the wait, press the **同步**
+button right of the list search box (keyboard `r`, or click the "LINE 連線中斷，
+重連中" line under the title) — it rebuilds the push connection and refetches
+the chat list immediately, re-reading the open conversation too. The button
+reads "同步中…" while working, usually settling on "已同步 HH:MM" within
+seconds (if a refetch was already in flight it waits out that round and the
+button stays on "同步中…" meanwhile); a failure prints its reason
+(`同步失敗：連不上 LINE，稍後重試` and friends), never silence. The rebuild
+itself takes eight seconds (linejs's own pusher must get its recovery window
+first, or both loops fight over one connection) but the sync does not wait for
+it — the refetch needs no new connection, so the view comes back first and
+the link heals behind it.
 
-重連紀錄看這裡：
+Reconnect records live here:
 
 ```bash
 journalctl --user -u enil | grep '\[push\]'
 ```
 
-手動同步在 journal 裡是 `[sync] requested`。
+A manual sync appears in the journal as `[sync] requested`.
 
-平時推播到來的刷新也不再整份重抓：push 本身就指明了哪些聊天室有動，daemon 會把這幾間
-記下來，去抖後那一輪只對它們各打一次「取最近訊息」的請求、原列就地更新，不再為了幾列
-去掃整份 122+ 個 box。登入、重連、手動同步、已讀回執、改名、一輪爆量（超過 8 間）或
-增量輪自己失敗時，才退回完整的 `getMessageBoxes` 重抓——未讀數唯一的伺服端來源在那裡，
-全量輪永遠是校正者。這條路可以用環境變數 `ENIL_INCREMENTAL=0` 整條關掉（預設開啟），
-關掉之後每一輪都走原本的完整重抓。
+Push-driven refreshes no longer refetch the whole list either: the push itself
+says which chats moved, the daemon debounces them, then issues one
+"recent messages" request per affected chat and updates the rows in place —
+no sweeping 122+ boxes for a few rows. It falls back to the full
+`getMessageBoxes` only on login, reconnect, manual sync, a read receipt, a
+rename, a burst (more than 8 chats), or a failed incremental round — the only
+server-side source of unread counts lives there, and the full pass is always
+the corrector. Disable the whole path with `ENIL_INCREMENTAL=0` (on by
+default); with it off every round is the original full refetch.
 
-push 活著的時候不需要等這些：新訊息、已讀、表情和收回都會在一秒內進到事件環，
-面板開著時 daemon 從已連線的 socket 直接推過來（見「契約」的推播幀），連檔案
-寫入節流都不用等；socket 斷線時照舊靠 FileView 讀 `events.json` 補上。斷線
-期間發生的事只會留在 LINE
-那邊，重連之後靠重抓聊天列表和歷史補回來 —— `events` 只有最近 200 筆，而且 daemon
-一重啟就從頭算（`bootId` 會換），所以它是「快」的那條路，不是唯一的那條路。
+While push is alive none of this waiting applies: new messages, reads,
+reactions and unsends reach the event ring within a second, and with the panel
+open the daemon pushes each event over the already-connected socket (see the
+push frames in the contract below) — not even the file throttle stands in the
+way. When the socket drops, the panel still catches up through `events.json`.
+Things that happened while disconnected stay on LINE's side and come back via
+chat-list and history refetches — `events` only keeps the newest 200 entries,
+and a restarted daemon renumbers from scratch (`bootId` changes), so it is the
+fast path, not the only path.
 
-## 登入與登出
+## Login and logout
 
-第一次登入不需要終端機。面板未登入時會出現「登入 LINE」按鈕 —— 按下去 daemon 才產生
-QR（QR 需要有人拿手機在旁邊，自動產生只會留下沒人掃的憑證），面板直接顯示 PNG，
-手機掃完再顯示要輸入的 PIN 碼。
+First login needs no terminal. While logged out the panel shows a "登入 LINE"
+button — pressing it makes the daemon mint a QR (a QR needs a human with a
+phone nearby; minting automatically would only leave unscanned credentials),
+the panel renders the PNG, and after the phone scans it shows the PIN to type.
 
-登出在面板裡按「登出」。它會關掉 session 並刪掉憑證，下次要重掃 QR。
+Log out from the panel's "登出". It closes the session and deletes the
+credentials, so next login scans a QR again.
 
-憑證與 E2EE 金鑰存在 `~/.local/state/enil/storage.json`（`chmod 600`，整個 state 目錄
-`chmod 700`）。**這個檔案等於你的 LINE 帳號，不要備份到任何地方。**
+Credentials and E2EE keys live in `~/.local/state/enil/storage.json`
+(`chmod 600`; the whole state dir `chmod 700`). **This file is your LINE
+account — never back it up anywhere.**
 
-## 功能
+## Features
 
-- Bar 圖示顯示未讀總數，顏色跟隨 bar 的其他圖示；未登入時顯示 `!`
-- 聊天室清單，未讀在前，**打字即搜尋**（開啟時焦點就在搜尋框），搜尋也比對訊息預覽
-- 對話檢視：E2EE 已解密、圖片直接顯示（點擊用 `xdg-open` 開原圖）、貼圖當圖片顯示、
-  影片縮圖、FLEX 版面顯示 `ALT_TEXT` 與 carousel 圖片、系統事件與日期分隔線
-- **訊息可以選取、複製，連結可以點**：拖曳選字、Ctrl+C 複製選取的部分、右鍵選單複製
-  整則或複製／開啟連結，連結是強調色加底線、滑過去變成手指游標
-- 回訊息：Enter 送出、Shift+Enter 換行；`📎` 或 `/file <路徑>` 傳檔案，
-  `Ctrl+V` 把剪貼簿裡的圖片直接送出（裡面是文字就照樣貼進輸入框）
-- **群組裡打 `@` 會跳出成員選單**：邊打邊篩、↑↓ 選、Enter／Tab 或滑鼠點下去插入
-  `@顯示名稱`，Esc 收掉。送出時會帶上 LINE 的 mention metadata，被 @ 的人手機上是
-  真的通知。收到的訊息裡被 @ 到的名字（含 `@All`）用強調色標出來。1:1 沒有這個選單。
-- **新訊息會自己出現**（面板開著時是即時）：連著 socket 的面板直接收 daemon
-  推來的事件幀；離線追上靠讀 `events.json`，只吃比自己 watermark 新的那幾筆，
-  不再為了一則訊息重抓整頁歷史。daemon 重啟過、或事件多到把環狀緩衝繞過去了，
-  面板才會重抓一次補齊。
-- **自己傳的訊息底下會顯示已讀**：1:1 是「已讀」，群組是「已讀 3」，人都讀完了才變成
-  「已讀」。什麼都還不知道的時候那一行不存在 —— 不會把「不知道」畫成「沒人讀」。
-- **回覆某一則**：右鍵選單的「回覆」，輸入框上面會出現一條引言（✕ 或 Esc 收掉，
-  打到一半的字留著），送出時對方看到的就是帶引言的回覆。收到的回覆泡泡上面會有一行
-  灰色引言，點下去跳回原訊息（不在這一頁就說一聲）。
-- **表情反應**：右鍵選單最上面一排六個 emoji，對應 LINE 的
-  `NICE`／`LOVE`／`FUN`／`AMAZING`／`SAD`／`OMG`（👍 ❤️ 😆 😲 😢 😱）。點下去就送出，
-  訊息底下會出現一排「emoji 數字」；自己選的那個描邊，再點一次就是收回。一個人在同一則
-  訊息上只會有一個表情，換一個就是換掉。
-- **收回自己傳的**：右鍵選單的「收回」（只有自己的訊息才有這一項），收回後那一則當場
-  變成斜體的「已收回訊息」，附件、貼圖、表情一起消失。LINE 只讓收回 24 小時內的，
-  超過的話 daemon 的拒絕會顯示在橫幅上。
-- **面板關著的時候有新訊息會發桌面通知，而且長得像一則聊天通知**：圖示是對方（群組
-  就是群組）的大頭貼，**點下去會把面板打開並直接跳進那間聊天室**。同一間聊天室兩秒內
-  只發一則，自己送的訊息不發。面板認的是 `wanted` 的 `seq`：同一次點擊只跳一次
-  （心跳會把同一份 state 重寫很多遍），同一間連點兩次是兩次跳。寫檔通常比 shell 的
-  「開面板」早到，那一刻面板還沒開就先記著，等面板真的開了再跳。詳見下面的「通知」。
-- **清單和訊息泡泡有大頭貼**：daemon 抓聊天列表或訊息的時候順便把圖抓回本機快取，
-  欄位是 `avatarPath`／`fromAvatar`。畫成圓形；沒設大頭貼、還沒抓到（欄位整個不存在）
-  或檔案已經不在了，就退成一顆寫著名字第一個字的圓，底色照 mid 挑 —— 同一個人每次
-  都是同一個顏色。群組裡別人的訊息只有「同一個人連著講的那一串的第一則」旁邊有臉，
-  自己送的和 1:1 都不畫。
-- **隱藏聊天**：在清單那一列按右鍵 →「隱藏聊天」，那一列就從清單上消失；再要找它，
-  **在搜尋框打字**，它會出現在結果最後面並標一行「已隱藏」，同一個右鍵選單這時變成
-  「取消隱藏」。隱藏之後那間聊天**有新訊息也不會自己跑回來**、**不發桌面通知**、
-  未讀也不算進 bar 圖示上的數字 —— 要回到清單只有手動取消隱藏一條路。搜尋結果裡的
-  那一列**左鍵照樣點得開**，開了就待到自己離開為止（不然搜尋等於找得到打不開）；
-  「正在看的那間被隱藏會退回清單」指的是停在裡面的時候才被隱藏的那一種。
-  隱藏是**這台機器上的偏好**，不上傳 LINE：LINE 的 `updateChat` 沒有這一格
-  （ChatAttribute 只有名稱、圖片、通知設定、我的最愛），所以協定上根本沒有地方放它，
-  手機上不會跟著隱藏。daemon 記在 `~/.local/state/enil/hidden.json`。
-  （不是「退出聊天」—— 那是 `deleteSelfFromChat`，會真的離開群組，每台裝置都退。）
-- 進入聊天室自動標為已讀（正在看的聊天室收到新訊息也會即時標掉）
-- **貼圖選單**：輸入框旁邊的 `😊` 打開，上面一排是最近用過的 16 張，接著是自己
-  帳號的貼圖包分頁（照貼圖小舖給的順序），底下是那一包的貼圖格子（最多四列，
-  再多就在格子裡捲）。點一張就送出，選單跟著收起來，泡泡當場出現。`Esc` 或
-  點選單以外的地方收掉，`⟳` 叫 daemon 重抓一次清單（買了新貼圖包不必重開面板）。
-  五十幾個貼圖包一列放不下，所以**分頁列跟最近用過的那一排都吃滾輪**，垂直滾輪
-  橫著捲（橫向的 Flickable 自己不吃滾輪，滑鼠又沒有橫向手勢，2.7.0 只有用拖的
-  捲得動 —— 等於右邊那些貼圖包都點不到）。放不下的時候兩端會出現 `‹` `›`，按下去
-  捲一格，沒有滾輪的裝置走這條。換貼圖包（點分頁、`←`／`→`）之後那一格一定會被
-  捲進畫面裡。
-  動態貼圖一律畫靜態那張（選單、自己送出的泡泡、收到的那些都是）：APNG 在 Qt 裡
-  本來就只畫得出第一格，而一張要幾百 KB。會動的是收到的人那邊 —— daemon 送出時
-  帶 `STKOPT`。最近用過的那一排**記在 `~/.local/state/enil/panel-stickers.json`**
-  且照帳號分開，換帳號就是換一排。收到的貼圖一樣直接當圖片顯示
-  （`stickers`／`sendSticker` 兩個指令見「契約」）。
-- **捲到頂自動載入更舊的訊息**，捲動位置不會跳
-- 訊息用 `ListView` 畫，只生成看得見的那幾則，幾百則的聊天室也捲得順；日期分隔線是
-  「今天／昨天／9月5日／2025年12月31日」，開聊天室時還沒讀的那一則之上會有一條
-  **未讀訊息** 分隔線
+- Bar icon shows the total unread count, tinted like the bar's other icons;
+  shows `!` while logged out
+- Chat list, unread first, **type-to-search** (focus lands on the search box
+  when it opens); search matches message previews too
+- Conversation view: E2EE decrypted, images inline (click opens the original
+  via `xdg-open`), stickers rendered as images, video thumbnails, FLEX
+  messages show `ALT_TEXT` and carousel images, system events and date
+  separators
+- **Messages are selectable, copyable, and links clickable**: drag to select,
+  Ctrl+C copies the selection, the right-click menu copies a whole message or
+  copies/opens a link; links render in the accent color underlined with a
+  pointer cursor on hover
+- Reply: Enter sends, Shift+Enter newline; `📎` or `/file <path>` sends files;
+  `Ctrl+V` sends a clipboard image directly (text pastes into the input as
+  usual)
+- **Typing `@` in a group pops a member menu**: narrows as you type, ↑↓ pick,
+  Enter/Tab or click inserts `@name`, Esc dismisses. Sent messages carry the
+  real LINE mention metadata — the mentioned person's phone truly notifies.
+  Mentions you receive (including `@All`) render in the accent color. 1:1
+  chats have no menu.
+- **New messages arrive on their own** (instantly while the panel is open): a
+  socket-connected panel receives daemon-pushed event frames; catching up
+  offline reads `events.json` and only applies entries newer than its
+  watermark — no more full-page history refetches for one message. The panel
+  refetches once only when the daemon restarted or the ring wrapped past it.
+- **Own messages show read state below**: "已讀" in 1:1, "已讀 3" in groups
+  until everyone has read it. When nothing is known yet the line simply isn't
+  there — "unknown" never renders as "unread".
+- **Reply to a message**: "回覆" in the right-click menu puts a quote bar above
+  the input (✕ or Esc dismisses, typed text stays); the receiver sees a real
+  quote reply. Received replies show a grey quote line — click it to jump to
+  the original (or it says the message isn't in this page).
+- **Reactions**: the top row of the right-click menu holds six emoji mapped to
+  LINE's `NICE`/`LOVE`/`FUN`/`AMAZING`/`SAD`/`OMG` (👍 ❤️ 😆 😲 😢 😱). Click to
+  send, and a row of "emoji count" chips appears under the message; yours is
+  outlined, clicking it again undoes it. One person holds one reaction per
+  message — picking another swaps it.
+- **Unsend your own**: "收回" in the right-click menu (own messages only);
+  the bubble instantly becomes the italic "已收回訊息" and attachments,
+  stickers and reactions vanish. LINE only allows unsending within 24 hours —
+  beyond that, the daemon's refusal shows on the banner.
+- **With the panel closed, new messages fire desktop notifications that look
+  like chat notifications**: the icon is the chat's avatar, and **clicking one
+  opens the panel straight into that chat**. Same chat rate-limits to one per
+  two seconds; your own sends never notify. The panel keys on `wanted`'s
+  `seq`: one click jumps once (heartbeats rewrite the same state many times),
+  two clicks on the same chat jump twice. The file usually lands before the
+  shell's "open panel" call — if the panel isn't up yet the jump is remembered
+  and applied once it opens. See "Notifications" below.
+- **Avatars in the list and on message bubbles**: the daemon downloads them
+  into a local cache while fetching chats/messages, exposed as
+  `avatarPath`/`fromAvatar`. Drawn round; with no avatar set, not yet fetched
+  (the field absent), or the file gone, it degrades to a circle with the
+  name's first character on a color picked by mid — same person, same color,
+  every time. In groups, other people's messages show a face only beside the
+  first message of a consecutive run by one sender; your own sends and 1:1
+  never draw one.
+- **Hidden chats**: right-click a list row → "隱藏聊天" and it leaves the list;
+  to find it again, **type in the search box** — it appears at the bottom of
+  results with a "已隱藏" tag, and the same menu now offers "取消隱藏". A hidden
+  chat **does not come back on new messages**, **does not notify**, and does
+  not count toward the bar badge — unhiding is the only way back. The hidden
+  row in search results **still opens on left-click** and stays open until you
+  leave (otherwise search would find but never open); "hiding the chat you're
+  in returns you to the list" only applies to hiding it while inside.
+  Hidden is a **per-machine preference**, not uploaded: LINE's `updateChat`
+  has no slot for it (ChatAttribute only carries name, picture, notification
+  settings, favorite), so there is nowhere on the wire to put it — the phone
+  will not mirror it. The daemon records it in
+  `~/.local/state/enil/hidden.json`.
+  (Not "leave chat" — that is `deleteSelfFromChat`, which truly exits the
+  group on every device.)
+- Entering a chat marks it read (new messages in the open chat mark read
+  immediately)
+- **Sticker menu**: `😊` next to the input opens it. Top row is your 16 most
+  recent, then a tab strip of your account's sticker packs (in the order the
+  shop returns), then the pack's sticker grid (up to four rows, scrolling
+  inside the grid past that). Click one to send; the menu closes and the
+  bubble appears at once. `Esc` or clicking outside closes it; `⟳` makes the
+  daemon refetch the list (new packs don't need a panel restart).
+  Fifty-odd packs don't fit one row, so **the tab strip and the recent row
+  both take the wheel** — vertical wheel scrolls horizontally (a horizontal
+  Flickable ignores the wheel and mice have no horizontal gesture; in 2.7.0
+  only dragging worked — the packs on the right were unreachable). When
+  clipped, `‹` `›` appear at the ends and click-scroll one step for devices
+  without a wheel. After switching packs (tab click or `←`/`→`), the target
+  cell is always scrolled into view.
+  Animated stickers always render the static frame (menu, own bubbles,
+  received ones alike): Qt only draws an APNG's first frame and each one costs
+  hundreds of KB. The animated side is for the receiver — the daemon sends
+  `STKOPT`. The recents row **persists per account** in
+  `~/.local/state/enil/panel-stickers.json`; switching accounts switches rows.
+  Received stickers render as images too (`stickers`/`sendSticker` commands —
+  see the contract).
+- **Scrolling to the top auto-loads older messages**, without jumping the
+  scroll position
+- Messages render in a `ListView`, only creating visible delegates — chats
+  with hundreds scroll smoothly. Date separators read "今天／昨天／9月5日／
+  2025年12月31日", and opening a chat draws an **unread** divider above the
+  first unread message
 
-## 通知
+## Notifications
 
-面板**沒開**的時候才發（面板開著等於訊息已經在畫面上了），一間聊天室兩秒內只發一則
-（相簿、被拆開的長句都是一次進來一串），自己送的不發。
+Only sent while the panel is **closed** (an open panel already shows the
+message). One notification per chat per two seconds (albums and split long
+texts arrive in bursts), and your own sends never notify.
 
-通知長成這樣：
+What a notification looks like:
 
-- **標題**是聊天室（1:1 就是對方），**內文**在群組裡是「誰：說了什麼」，1:1 就直接是
-  內容；非文字的用 `[圖片]`／`[貼圖]`／`[影片]`／`[語音]`／`[檔案]` 代替。
-- **圖示**是那間聊天室的大頭貼。還沒抓到的話最多等三秒就先發出去，寧可沒有圖示也不要
-  讓通知遲到。
-- **點下去會開面板並跳進那間聊天室**。做法是 `notify-send --action=default=開啟`：
-  omarchy 的通知外掛在點擊時會去叫名字剛好是 `default` 的那個 libnotify action
-  （`shell/plugins/notifications/Service.qml:376`），叫不到才退回「用視窗 class 去
-  focus 送通知的程式」—— 而這個面板是 layer surface，根本沒有視窗可以 focus。
-  daemon 收到點擊之後寫一筆 `state.wanted`（見「契約」），再 `omarchy-shell
-  io.github.frankekn.line open`。
-- libnotify 的 action 只有在**送通知的行程還活著**的時候叫得動，所以 `notify-send`
-  會一直留著（`--action` 本來就隱含 `--wait`），直到通知被關掉為止；十分鐘沒動靜就
-  自己收掉，免得一則沒人理的通知留下一個永遠不死的行程。
+- **Title** is the chat (the person in 1:1); **body** is "who: what they said"
+  in groups, the content itself in 1:1. Non-text renders as `[圖片]`/`[貼圖]`/
+  `[影片]`/`[語音]`/`[檔案]`.
+- **Icon** is the chat's avatar. If it isn't cached yet the notification goes
+  out after at most three seconds anyway — better iconless than late.
+- **Clicking opens the panel and jumps into that chat.** Mechanism:
+  `notify-send --action=default=開啟` — omarchy's notification plugin invokes
+  the libnotify action literally named `default` on click
+  (`shell/plugins/notifications/Service.qml:376`), and falls back to focusing
+  the sender's window class — but this panel is a layer surface with no window
+  to focus. On click the daemon writes a `state.wanted` entry (see the
+  contract) and runs `omarchy-shell io.github.frankekn.line open`.
+- libnotify actions only work while the notifying process lives, so
+  `notify-send` stays resident (`--action` already implies `--wait`) until the
+  notification is dismissed; ten silent minutes and it reaps itself, so an
+  ignored notification never leaves an immortal process.
 
-`notify-send` 不在的話，第一次就會在 journal 留一行
-`[notify] notify-send not found; notifications disabled`，之後不再重複，其他功能不受
-影響（`libnotify` 套件，Omarchy 預設有）。通知的內容**不會**進 journal。
+With no `notify-send`, the first attempt writes
+`[notify] notify-send not found; notifications disabled` to the journal once
+and never repeats; everything else is unaffected (`libnotify` package,
+preinstalled on Omarchy). Notification **content never enters the journal**.
 
-## 鍵盤操作
+## Keyboard
 
 ```
-清單    打字搜尋   ↑↓ 選取   Enter 進入
-        Esc 清空搜尋，搜尋框空的時候 Esc 離開輸入框，再 Esc 關閉面板
-        離開輸入框後 L 選到「登出」，再 Enter／空白才真的登出
-        離開輸入框後 r 立刻同步（等同按「同步」，不用再確認）
-聊天室  焦點在輸入框   Enter 送出   Shift+Enter 換行   /file <路徑> 傳檔案
-        Ctrl+V 剪貼簿裡是圖片就直接送出，是文字才貼進輸入框
-        Esc 一層一層退：先關貼圖選單，再關 @選單，再收掉引言（草稿留著），再離開輸入框
-        離開輸入框後 / 回清單搜尋，或再 Esc 回清單；r 一樣可以同步
-@選單   在群組裡打 @ 就會跳出來，繼續打字就是篩選（比對顯示名稱，不分大小寫）
-        ↑↓ 選人   Enter 或 Tab 插入   Esc 收掉選單（打到一半的字留著）
-貼圖    😊 開關（再按一次收起來）   點一張就送出   Esc 或點選單以外的地方收掉
-        滾輪橫著捲分頁列（放不下時兩端有 ‹ ›，按了也是捲）   ⟳ 重新抓一次貼圖清單
-        離開輸入框後 ←→（或 h/l）換貼圖包，↑↓ 一樣是捲訊息的；焦點還在輸入框
-        的時候 ←→ 是移游標，選單只收 Esc
-訊息    在訊息上按住左鍵拖曳選字   Ctrl+C 複製選取   Ctrl+Shift+C 複製整則
-        Esc 焦點回到回訊息的框（反白跟著消失）
-燈箱    ←→（或 h/l）上一張／下一張   滾輪縮放   拖曳平移   雙擊 1×/2×
-        o 用外部程式開（面板會關掉；`App window` 模式不會）   Esc 或點空白處關閉燈箱
+List      type to search   ↑↓ select   Enter to open
+          Esc clears search; with the box empty, Esc leaves the input,
+          another Esc closes the panel
+          after leaving the input: L highlights "登出", Enter/Space confirms
+          after leaving the input: r syncs now (same as the 同步 button)
+Chat      input focused:   Enter sends   Shift+Enter newline   /file <path>
+          Ctrl+V sends a clipboard image, pastes text otherwise
+          Esc peels one layer at a time: sticker menu, then @ menu, then the
+          quote bar (draft stays), then leaves the input
+          after leaving the input: / back to list search, or Esc to the list;
+          r still syncs
+@ menu    opens on @ in a group, keeps typing to filter (display-name match,
+          case-insensitive)
+          ↑↓ pick   Enter or Tab inserts   Esc dismisses (typed text stays)
+Stickers  😊 toggles (again closes)   click one to send
+          Esc or click outside closes
+          wheel scrolls the tab strip sideways (‹ › appear when clipped)
+          ⟳ refetches the sticker list
+          after leaving the input: ←→ (or h/l) switch packs, ↑↓ still scroll
+          messages; with the input focused ←→ moves the cursor
+Message   hold left button and drag to select   Ctrl+C copies selection
+          Ctrl+Shift+C copies the whole message
+          Esc returns focus to the reply box (selection clears)
+Lightbox  ←→ (or h/l) previous/next   wheel zooms   drag pans   double-click 1×/2×
+          o opens externally (the panel closes; not in `App window` mode)
+          Esc or click the backdrop to close
 ```
 
-滑鼠：訊息上左鍵拖曳選字，點連結用預設瀏覽器開（`xdg-open`），右鍵開選單
-（六個表情排在最上面一列，然後是複製訊息／複製連結／開啟連結／回覆／收回；連結那兩項
-只有右鍵真的壓在連結上才出現，回覆只有真的指得到一則訊息才有，收回只有自己傳的才有）。
-圖片、貼圖、附件那幾種沒有文字泡泡的訊息，右鍵一樣按得出這個選單。訊息底下的表情點下去
-是加、點自己那個是收回；回覆泡泡上面的引言點下去跳回原訊息。點訊息以外的
-空白處會把反白清掉、焦點還給回訊息的框，所以選過字之後可以直接繼續打字。開連結跟開檔案
-同一條規則：貼齊 bar 和置中這兩種 overlay 會先把面板收掉（不然瀏覽器會被壓在下面），
-`App window` 模式不會。只有 `http://` 和 `https://` 會開，其他一律拒絕並顯示
-「這個連結打不開」。
+Mouse: drag on a message to select; links open in the default browser
+(`xdg-open`); right-click opens the menu (six reactions on the top row, then
+copy message / copy link / open link / reply / unsend — the link items only
+appear over a real link, reply only when one is actually pointed at, unsend
+only on your own messages). Messages without a text bubble — images, stickers,
+attachments — get the same menu. Reaction chips under a message add on click
+and undo your own; the quote line above a reply jumps to the original.
+Clicking empty space clears the selection and returns focus to the input, so
+you can keep typing right after selecting. Opening a link or a file follows
+one rule: the two overlay placements ("below the bar" and "center") close the
+panel first (otherwise the browser hides underneath); `App window` mode does
+not. Only `http://` and `https://` open — anything else is refused with
+"這個連結打不開".
 
-複製用的是 **wl-copy**（`wl-clipboard` 套件）：訊息內容只走 stdin，不會變成命令列的
-一部分。它不在 `omarchy` 的相依清單裡，但 omarchy 自己的剪貼簿外掛和網路面板都在用，
-所以正常環境都有；真的缺了的話按複製會顯示「複製失敗：系統裡找不到 wl-copy」，
-`sudo pacman -S wl-clipboard` 裝完立刻可用。
+Copying goes through **wl-copy** (the `wl-clipboard` package): content travels
+over stdin, never on a command line. It isn't in `omarchy`'s dependency list,
+but omarchy's own clipboard plugin and network panel use it, so any normal
+setup has it; genuinely missing it makes copy answer
+"複製失敗：系統裡找不到 wl-copy" — `sudo pacman -S wl-clipboard` and it works
+immediately.
 
-貼圖選單開著的時候 Esc 只收選單，聊天室不會跟著退回清單 —— 它是疊在最上面的
-那一塊（燈箱除外）。換聊天室、離開對話、登出都會把它收掉：挑到一半換了聊天室，
-下一張就會送錯間。
+With the sticker menu open, Esc only closes the menu — the chat does not fall
+back to the list; it is the topmost layer (except the lightbox). Switching
+chats, leaving the conversation, or logging out also closes it: picking half
+way and switching chats would send the next sticker to the wrong room.
 
-燈箱開著的時候 Esc 只關燈箱，聊天室不會跟著退回清單；關掉之後焦點會回到原本的
-輸入框（對話是回訊息的框，清單是搜尋框）。燈箱開著時只有 `o` 有作用，`r` 也不會穿透
-過去 —— 先關掉燈箱再同步。
+With the lightbox open, Esc only closes the lightbox — the chat does not fall
+back either; focus returns to wherever it was (the reply box in a chat, the
+search box in the list). While it is open only `o` does anything — not even
+`r` goes through; close it first to sync.
 
-`/`、`L` 和 `r` 只在焦點不在輸入框時有效（也就是按過 Esc 之後）—— 否則它們就只是一個字元。
-`r` 不像 `L` 要先選到再確認：同步壞不了東西，多按一次只是多抓一輪。
+`/`, `L` and `r` only work when the input box isn't focused (i.e. after Esc) —
+otherwise they're just characters. `r` needs no arm-and-confirm like `L`:
+syncing can't break anything, an extra press is just an extra round.
 
-## 媒體與傳檔
+## Media and files
 
-history 先回文字與媒體欄位；畫面上實際出現的圖片列再向 daemon 要縮圖。影片只有在
-LINE 提供真正的 preview URL，或不是加密 chunks 的路徑時才抓縮圖；加密影片不會為了
-一張預覽退化成下載整支影片，會維持 📎 附件列。
+`history` returns text and media fields first; the rows actually visible ask
+the daemon for thumbnails separately. Videos only fetch thumbnails when LINE
+offers a real preview URL or the path isn't encrypted chunks — an encrypted
+video never degrades into downloading the whole file for one preview and
+stays a 📎 attachment row.
 
-**大頭貼另外一個快取**：`media/avatars/`，檔名是 `sha1(mid + 那一版的 picture token)`。
-帶上 picture token 是因為換了照片就得換檔名，不然舊的會一直留在畫面上。抓的時候
-**最多同時四個**（一次冷啟動要一百多張，全部一起打 CDN 就是一場 fetch storm），其餘
-排隊；抓不到就是沒有這個欄位，不會擋住聊天列表或訊息 —— 圖是後來才補進 `state.json`
-的。哪一個 CDN 主機、要不要加 `/preview`，daemon 第一次抓的時候自己試出來並記在
-`avatars.json` 裡，之後就不用再試。這個快取**不看時間**（一個月沒聯絡的人，正是需要
-看臉才認得出來的那個），只有 20 MB 上限，滿了先掃最舊的。
+**Avatars get their own cache**: `media/avatars/`, filenames are
+`sha1(mid + that version's picture token)`. The token is included because a
+new photo must mean a new filename, or the old one would sit on screen
+forever. Fetches run **at most four at a time** (a cold start needs over a
+hundred — firing them all at the CDN is a fetch storm), the rest queue;
+failures simply leave the field absent and never block the chat list or
+messages — the avatar lands in `state.json` later. Which CDN host and whether
+to append `/preview` are probed once and recorded in `avatars.json`, never
+re-probed. This cache **ignores age** (the contact you haven't spoken to in a
+month is exactly the one whose face you need) with only a 20 MB cap, sweeping
+the oldest when full.
 
-**圖片點下去在面板裡放大**（燈箱）：先用縮圖立刻開起來，同時去要原圖，回來再換掉；
-原圖抓失敗就繼續顯示縮圖並在上面跳一行提示。滾輪以游標為中心縮放 1×–4×，放大後可以
-拖曳平移，雙擊在 1× 和 2× 之間切換；←/→（或 h/l）在同一間聊天室的圖之間走，標題會顯示
-「第幾張 / 共幾張」；`o` 用外部程式開這張，Esc 或點圖外的空白處關掉。FLEX（carousel）
-的圖是公開 CDN 網址，點下去一樣進燈箱，不必先 `download` 原檔 —— 那條路是給 LINE 的
-加密媒體走的，公開網址交給 `image` 抓進快取就好。
+**Clicking an image zooms inside the panel** (lightbox): it opens on the
+thumbnail instantly while the original is fetched and swapped in; a failed
+original keeps the thumbnail plus a hint line. Wheel zooms 1×–4× around the
+cursor, drag pans while zoomed, double-click toggles 1×/2×; ←/→ (or h/l)
+walks the same chat's images with a "n / N" title; `o` opens externally, Esc
+or a backdrop click closes. FLEX (carousel) images are public CDN URLs —
+clicking enters the lightbox without a `download` first; that path is for
+LINE's encrypted media, while public URLs are fetched into cache by `image`.
 
-**影片和檔案類（📎 那一行）點下去則是先關面板再開外部程式**：面板送一次 `download`，
-daemon 回原檔路徑，面板 `close()` 之後才 `xdg-open`。順序不能反 —— 面板是整片的
-`WlrLayer.Overlay`，外部視窗只是普通視窗，會被壓在面板底下，看起來像按了沒反應。
-開檔走 `Quickshell.execDetached`（argv，不經過 shell），所以第一個檢視器還開著時
-再點第二個檔案照樣開得起來。下載中途換到別間聊天室也沒關係，檔案照樣會開起來。
+**Videos and file attachments (the 📎 row) close the panel first, then open
+externally**: the panel issues one `download`, the daemon returns the original
+path, the panel `close()`s and only then `xdg-open`s. The order cannot flip —
+the panel is a fullscreen `WlrLayer.Overlay` and a normal viewer window would
+hide underneath, looking like the click did nothing. Files open through
+`Quickshell.execDetached` (argv, no shell), so a second file still opens while
+the first viewer lives. Switching chats mid-download is fine — the file opens
+anyway.
 
-`App window` 模式（見「設定」）不會關：那是一般視窗，不是 overlay，檢視器自己就疊在
-上面。所以在那個模式下開影片、開檔案、燈箱按 `o`，LINE 都留在原地。
+`App window` mode (see Settings) does not close: it is a normal window, not an
+overlay, so viewers stack on top. Opening videos, files, or the lightbox `o`
+there leaves LINE where it was.
 
-傳檔有兩條路：輸入框打 `/file <路徑>`，或按 `📎` 開系統檔案選擇器。選擇器用的是
-**zenity**，Omarchy 不會預裝 —— 沒裝的時候按 `📎` 會跳
-「找不到 zenity，請 sudo pacman -S zenity」，裝完立刻可用，不必重啟 shell。
-選了檔案又按取消不會有任何提示，這是刻意的。
+Two ways to send files: `/file <path>` in the input, or `📎` for a system file
+picker. The picker uses **zenity**, which Omarchy does not preinstall —
+without it `📎` answers "找不到 zenity，請 sudo pacman -S zenity"; installing
+makes it work immediately, no shell restart needed. Picking a file then
+cancelling shows no message — deliberate.
 
-多人聊天室（`r…` 開頭的 room）不能傳檔，送出前就會被擋下並給訊息。
+Multi-person rooms (mids starting `r…`) cannot send files — refused before
+send with a message.
 
-**送出去的圖片是圖片、影片是影片**，不是一律當附件。daemon 先看檔頭的 magic bytes，
-認不出來才看副檔名，然後挑 linejs 的 ObjType：`image`／`gif` 是 IMAGE、`video` 是
-VIDEO，其餘 `file`。所以手機那種 `.jpg` 其實是 mp4 的檔案照樣會以影片送出（LINE 只看
-我們送的 contentType，根本不看檔名），`.gif` 一樣走 `gif`（帶 `cat=original`，不然收到
-的是靜止的那一格），HEIC 與 mp4 都是 ISO 容器、靠 `ftyp` 的 brand 分。**聲音檔一律當
-檔案**：LINE 的語音訊息要有長度，而 daemon 沒有 demuxer 量不出來，送成語音就是一則
-0:00 的波形。
+**An image goes out as an image, a video as a video** — not everything as an
+attachment. The daemon reads magic bytes first, falls back to the extension,
+then picks linejs's ObjType: `image`/`gif` is IMAGE, `video` is VIDEO, the
+rest `file`. So a `.jpg` that is really an mp4 still goes out as video (LINE
+only reads the contentType we send, never the name), `.gif` keeps `gif` (with
+`cat=original`, or the receiver gets a frozen frame), and HEIC vs mp4 are both
+ISO containers split by the `ftyp` brand. **Audio is always `file`**: a LINE
+voice message needs a duration and the daemon has no demuxer — sending as one
+yields a 0:00 waveform.
 
-**太大的檔案在讀進來之前就會被擋**：圖片（含 gif）**20 MB**、影片和檔案**1 GB**，
-拒絕的話是「圖片太大（超過 20 MB）」／「影片太大（超過 1 GB）」／「檔案太大（超過
-1 GB）」—— 會把上限念出來，因為檔案是使用者自己挑的，只有他挑得出小一點的那個。
-上限是我們自己的：LINE 那邊要整包傳完才會拒絕，家用上傳頻寬等於白等好幾分鐘，然後
-換來一句沒人能處理的話。圖片的上限跟剪貼簿同一個數字，因為那條路最吃記憶體（整包讀
-進來、加密一份，沒給縮圖時 linejs 還會把原檔再上傳一次當 `__ud-preview`）；影片和檔案
-只上傳一次，所以放寬到 LINE 自己都不會收的程度。判型要看檔頭，所以 daemon 是先
-`Deno.stat` 拿大小、只讀開頭 16 個位元組判 ObjType、擋掉之後才真的把整個檔案讀進來。
-**送出的影片會帶預覽圖和長度。** 沒給 preview 的時候 linejs 會把加密後的原檔再上傳
-一份當 `__ud-preview`（`base/obs/mod.ts:389`）—— 圖片這樣剛好（它自己就是圖），影片
-在對方那邊就是一格空白：客戶端拿 mp4 當 JPEG 畫。所以影片多做兩件事：
+**Oversized files are refused before being read**: images (incl. gif) **20
+MB**, videos and files **1 GB**, refusing with "圖片太大（超過 20 MB）" /
+"影片太大（超過 1 GB）" / "檔案太大（超過 1 GB）" — the cap is spelled out
+because the user picked the file and only they can pick a smaller one. The
+caps are ours: LINE refuses only after the whole upload, which on home
+upstream means minutes wasted for an error nobody can act on. The image cap
+matches the clipboard's because that path is the memory-heaviest (read fully
+into memory, encrypt a copy, and linejs uploads the original again as
+`__ud-preview` when no thumbnail is given); video and files upload once, so
+the cap sits where LINE itself wouldn't accept. Type detection needs the
+header, so the daemon `Deno.stat`s for size, reads only the first 16 bytes
+for ObjType, and only reads the whole file after the checks pass.
+**Sent videos carry a preview image and a duration.** Without a preview,
+linejs uploads the encrypted original again as `__ud-preview`
+(`base/obs/mod.ts:389`) — fine for an image (it is one), but for video the
+receiver gets a blank square: the client draws an mp4 as a JPEG. So videos
+get two extra steps:
 
-- **長度**直接從容器的檔頭讀：ISO base media 的 `moov/mvhd`（version 0 是 32 bit、
-  version 1 是 64 bit）、Matroska 的 `Segment/Info/Duration`（乘上
-  `TimestampScale`）。只讀走到的那幾個 box 的檔頭 —— 手機常把 `moov` 寫在幾 GB 的
-  `mdat` **後面**，所以是照 box 宣告的大小跳過去，不是掃過去。讀不出來（例如 AVI）
-  就是沒有長度，不影響送出。
-- **預覽圖**要有 `ffmpegthumbnailer` 或 `ffmpeg`（照這個順序挑 PATH 上第一個有的，
-  Omarchy 兩個都不預裝）：抓第 1 秒的一格，存成寬 640 的 JPEG。不到兩秒的短片改抓
-  正中間 —— 抓超過長度那兩支都不會產生任何一格。**兩個都沒裝就跟以前一樣送出**，
-  只是沒有預覽圖；`journalctl --user -u enil | grep 'preview skipped'` 會說是哪一種
-  情形（沒裝、跑失敗、或是產出的不是完整的 JPEG）。整個縮圖步驟最多等 10 秒，
-  失敗絕不會讓送出失敗。
+- **Duration** is read straight from the container header: ISO base media's
+  `moov/mvhd` (version 0 is 32-bit, version 1 is 64-bit), Matroska's
+  `Segment/Info/Duration` (times `TimestampScale`). Only the headers of the
+  boxes on the path are read — phones routinely write `moov` **after** a
+  multi-GB `mdat`, so it seeks by declared box size rather than scanning.
+  Unreadable (AVI, say) means no duration — sending is unaffected.
+- **Preview** needs `ffmpegthumbnailer` or `ffmpeg` (first found on PATH, in
+  that order; Omarchy ships neither): grab the frame at second 1, save as a
+  640-wide JPEG. Clips under two seconds grab the middle instead — seeking
+  past the length produces no frame in either tool. **With neither installed
+  the send goes out as before, just without a preview**;
+  `journalctl --user -u enil | grep 'preview skipped'` says which case it was
+  (not installed, run failed, or output wasn't a complete JPEG). The whole
+  thumbnail step is capped at 10 s and can never fail the send.
 
-長度是加在訊息 contentMetadata 的 `DURATION`（毫秒）：那份 metadata 是
-`uploadMediaByE2EE` 自己組的，所以 fork 給它多開了一個 `durationMs` 參數（pin
-`fc0651d`），daemon 量到長度就一起交下去、量不到就整個不帶。走 E2EE 的時候 obs 只
-看得到加密後的 blob，容器裡的長度它自己讀不出來（一般的 `uploadObjTalk` 是自己讀的），
-所以非得由呼叫端給不可。
+The duration rides in the message's contentMetadata `DURATION` (ms): that
+metadata is assembled by `uploadMediaByE2EE` itself, so the fork gained a
+`durationMs` parameter (pin `fc0651d`) — the daemon hands a measured duration
+down and omits the field otherwise. Over E2EE, obs only sees the encrypted
+blob and cannot read a container duration itself (plain `uploadObjTalk` does
+it on its own), so the caller has to provide it.
 
-**剪貼簿裡的圖片可以直接送**：`probeClipboardImage {chat}` 一進來，daemon 就用
-`wl-paste --list-types` 看有沒有 `image/png`／`image/jpeg`／`image/webp`／`image/gif`
-（有多個就照這個順序挑），再 `wl-paste --no-newline --type <mime>` 把位元組讀進來 ——
-`--no-newline` 不能省，wl-paste 預設會在結尾補一個換行，PNG 後面多一個位元組就是壞檔。
-上限 **20 MB**（讀進記憶體、加密一份、還會被 linejs 上傳兩次），成功時把這一份快照
-暫存在 `media/` 並回傳受限的 `stage` 名稱；面板接著才送
-`sendClipboardImage {chat, stage, requestId}`，daemon 走跟 `sendFile` 同一支函式並在成功或
-失敗後刪掉暫存檔。貼上的截圖和選檔案送出的圖片，判型、命名、拒絕全部同一套。
+**Clipboard images send directly**: on `probeClipboardImage {chat}` the daemon
+runs `wl-paste --list-types` looking for `image/png` / `image/jpeg` /
+`image/webp` / `image/gif` (picking the first in that order when several
+exist), then `wl-paste --no-newline --type <mime>` to read the bytes —
+`--no-newline` is mandatory: wl-paste appends a newline by default and one
+extra byte after a PNG is a corrupt file. Cap **20 MB** (read into memory,
+encrypted once, uploaded twice by linejs). On success the snapshot is staged
+in `media/` and a restricted `stage` name returned; the panel then sends
+`sendClipboardImage {chat, stage, requestId}` and the daemon runs the same
+function as `sendFile`, deleting the stage on success or failure. Pasted
+screenshots and picked-file images share one type check, naming, and refusal.
 
-失敗都有話說，不會只是「送出失敗」：沒有 wl-clipboard 是
-「找不到 wl-paste，請 sudo pacman -S wl-clipboard」；剪貼簿裡是文字是「剪貼簿裡沒有
-圖片」；是我們送不出去的圖片格式會把格式念出來（「剪貼簿的圖片格式不支援:
-image/tiff」）；太大是「剪貼簿的圖片太大（超過 20 MB）」。daemon 是 systemd user
-unit，**如果它比 compositor 早起來就沒有 `WAYLAND_DISPLAY`**，那時 wl-paste 連不上
-顯示，回的是「連不上 Wayland，請 systemctl --user restart enil」—— 這跟剪貼簿是空的
-不是同一件事，所以話也不一樣。wl-paste 卡住最多等 5 秒，之後回「讀不到剪貼簿」，
-原因寫進 journal。
+Failures all say why, never a bare "send failed": no wl-clipboard →
+"找不到 wl-paste，請 sudo pacman -S wl-clipboard"; text in the clipboard →
+"剪貼簿裡沒有圖片"; an unsendable format names it ("剪貼簿的圖片格式不支援:
+image/tiff"); oversized → "剪貼簿的圖片太大（超過 20 MB）". The daemon is a
+systemd user unit — **if it starts before the compositor it has no
+`WAYLAND_DISPLAY`**, wl-paste can't reach the display, and the answer is
+"連不上 Wayland，請 systemctl --user restart enil" — different from an empty
+clipboard, hence different words. A stuck wl-paste gets 5 s at most, then
+"讀不到剪貼簿" with the reason journaled.
 
-**面板這一邊就是輸入框裡的 `Ctrl+V`。** 剪貼簿在 daemon 那一頭（`wl-paste` 在那裡跑），
-面板自己讀不到，所以按下去先送不會產生訊息的 `probeClipboardImage`。它會在 daemon 端
-一次讀完並固定成暫存快照；回來剛好是「剪貼簿裡沒有圖片」那一句，才知道剪貼簿裡是文字、
-改讓輸入框自己貼。只有探測成功後才送帶 `requestId` 的 `sendClipboardImage`，因此探測
-失敗或斷線不會留下沒有歷史訊息可對帳的 token，也不會在兩階段間重讀已改變的剪貼簿。
-所以複製一段文字按 Ctrl+V 照樣是貼字，只是慢了一次 socket 來回；
-複製一張圖按 Ctrl+V 就直接送出去，輸入框裡打到一半的字原封不動。上傳那幾秒橫幅寫
-「傳送中…」，跟按 `📎` 一樣；泡泡不先畫 —— 按下去的那一刻還不知道剪貼簿裡是不是圖片，
-先畫一顆再為了一次貼字收回來，等於每貼一段文字都閃一顆泡泡，真的那則等 LINE 推回來
-（跟 `📎` 送出的檔案同一條路）。其餘每一句拒絕都留在橫幅上，不會變成一次貼字：沒裝
-wl-clipboard、連不上 Wayland、太大、格式送不出去、room 傳不了檔，看到的都是上面那幾句
-原話。按下去到探測回話前若換了聊天室，圖片仍送往按下 `Ctrl+V` 時捕捉的原聊天室；若
-剪貼簿是文字則不會貼進另一間的輸入框，錯誤也不會跳到那一間去。第二階段請求若無法排入
-socket，面板才送 `discardClipboardImage` 釋放暫存。**還在等回話的時候按第二次不算數**
-（按住 Ctrl+V 會自動重複，而上傳要好幾秒）：那一下會被收下來、什麼都不做，跟 `📎` 的
-選檔器還開著時再按一次一樣 —— 送第二次就是送出兩張一模一樣的圖，剪貼簿裡是文字的話
-就是同一段字貼兩次。回話一到（不管是送成功或拒絕），Ctrl+V 立刻又能按。
+**On the panel side this is `Ctrl+V` in the input box.** The clipboard lives
+on the daemon's side (`wl-paste` runs there) and the panel cannot read it, so
+the key sends a non-message `probeClipboardImage` first. The daemon reads and
+pins a staged snapshot in one shot; when the reply happens to be "剪貼簿裡沒有
+圖片", the panel knows it's text and lets the input paste normally. Only after
+a successful probe does it send `sendClipboardImage` carrying a `requestId` —
+so a failed probe or a drop never leaves a token with no history message to
+reconcile, and the clipboard can't change between the two phases. So Ctrl+V on
+text still pastes text, one socket round-trip slower; Ctrl+V on an image sends
+it outright, leaving half-typed input untouched. The banner reads "傳送中…"
+during the upload, same as `📎`; no bubble is drawn first — at keypress time
+nobody knows whether the clipboard holds an image, and drawing a bubble then
+withdrawing it for a text paste would flash one per paste. The real message
+arrives back via LINE's push (same path as `📎`). Every other refusal stays
+on the banner verbatim — never downgraded to a text paste: no wl-clipboard,
+no Wayland, too big, unsendable format, rooms can't take files. If you switch
+chats before the probe answers, the image still goes to the chat captured at
+keypress; text won't paste into the other chat's input, and errors don't jump
+over either. If the second-phase request can't be queued on the socket, the
+panel sends `discardClipboardImage` to release the stage. **A second press
+while waiting does nothing** (holding Ctrl+V auto-repeats and uploads take
+seconds): the press is swallowed, like pressing `📎` again while the picker
+is open — sending twice means two identical images, or the same text pasted
+twice. The moment the answer lands — sent or refused — Ctrl+V works again.
 
-**打不開的附件會說原因，不再一律「下載失敗」**。對方收回的訊息 LINE 還是照送，
-contentType 仍是 `FILE`／`IMAGE`，只是沒有內容 —— daemon 把它標成 `mediaState:
-"unsent"`、`hasMedia: false`，`text` 換成「已收回訊息」（清單預覽也是），點下去回
-「訊息已收回」，完全不會去要檔案。聊天室的檔案 LINE 只保留 **7 天**（metadata 的
-`FILE_EXPIRE_TIMESTAMP`，寫進 `expiresAt`），過期的是 `mediaState: "expired"`，點下去回
-「檔案已過期（LINE 只保留 7 天）」，一樣不打網路。真的去要了才失敗的分兩種：物件已經
-不在（HTTP 404／410、`ObsError`，或上游 linejs 會先在解密那層炸出來的
-`encrypted data too short` ／ `HMAC verification failed`）回「檔案已過期或已被刪除」，
-其他才是「下載失敗」。面板照著這兩個欄位畫：收回的那則是一行灰斜體「已收回訊息」，
-貼圖、FLEX 圖、縮圖、📎 全部收掉；過期的檔案 📎 那行的檔名後面接「（已過期）」，
-兩種都點不下去，燈箱的 ←/→ 也不會停在上面。
+**Unopenable attachments say why instead of a bare "download failed".**
+Unsent messages still arrive from LINE with contentType `FILE`/`IMAGE` but no
+content — the daemon marks them `mediaState: "unsent"`, `hasMedia: false`,
+rewrites `text` to "已收回訊息" (the list preview too), and clicking answers
+"訊息已收回" without touching the network. Chat files expire after **7 days**
+(the metadata's `FILE_EXPIRE_TIMESTAMP`, stored in `expiresAt`) as
+`mediaState: "expired"`, answering "檔案已過期（LINE 只保留 7 天）" — again no
+network. Failures after an actual fetch split in two: the object being gone
+(HTTP 404/410, `ObsError`, or the `encrypted data too short` /
+`HMAC verification failed` upstream linejs throws earlier in decrypt) answers
+"檔案已過期或已被刪除"; everything else is "下載失敗". The panel draws from
+the two fields: an unsent message is one grey italic "已收回訊息" line with
+sticker/FLEX/thumbnail/📎 all hidden; an expired file's 📎 row appends
+"（已過期）"; neither is clickable and lightbox ←/→ skips them.
 
-每一個回 `{ok:false}` 的指令都會在 journal 留一行
-`[cmd] <cmd> failed: <錯誤類別>: <訊息>`（訊息截到 120 字，mid 換成 `<mid>`，請求內容
-一律不寫）。`journalctl --user -u enil | grep '\[cmd\]'` 就是失敗紀錄。訊息裡夾著路徑的
-拒絕**只回給面板、不進 journal**：`sendFile` 找不到檔案時面板看到
-`找不到檔案: <路徑>`（路徑是使用者自己選的），journal 只有「找不到檔案」。
+Every command answered `{ok:false}` also leaves one journal line
+`[cmd] <cmd> failed: <class>: <message>` (message truncated to 120 chars, mids
+replaced by `<mid>`, request bodies never written).
+`journalctl --user -u enil | grep '\[cmd\]'` is the failure log. Refusals
+carrying a path **go only to the panel, never the journal**: a missing
+`sendFile` shows the panel `找不到檔案: <path>` (the user picked that path)
+while the journal only gets "找不到檔案".
 
-## 設定
+## Settings
 
-面板搜尋框右邊的 `A−` `A+` 直接調字級（80–160，每次 10）。它會寫回 shell.json，
-所以重開機也還在。
+`A−` `A+` next to the search box adjust text scale directly (80–160, steps of
+10). Written back to shell.json, so it survives reboots.
 
-也可以用指令：
+Or by command:
 
 ```bash
 omarchy bar set io.github.frankekn.line textScale 130
 ```
 
-同一排的 `捲動 1×` 是滾輪速度（`scrollSpeed`，%），按一下換下一段
-（0.5× → 0.75× → 1× → 1.5× → 2× → 3× → 0.5×）。聊天清單、對話和貼圖選單三個地方
-一起變，`1×` 是預設（一格約 60px，跟以前那一格差不多）：
+`捲動 1×` on the same row is wheel speed (`scrollSpeed`, %); click steps
+through (0.5× → 0.75× → 1× → 1.5× → 2× → 3× → 0.5×). Chat list, conversation,
+and sticker menu all change together; `1×` is default (a notch ≈ 60px, close
+to the old fixed step):
 
 ```bash
 omarchy bar set io.github.frankekn.line scrollSpeed 150
 ```
 
-50–300 之間的任何數字都收，不限那六段；按鈕會顯示你設的倍率，再按一下跳到比它大的
-下一段。Qt 的 `Flickable` 沒有「滾輪一格捲多少」可以設（步距寫死在裡面），所以面板
-自己接下滾輪算距離：一般滑鼠一格 60px（跟著主題的間距縮放）× 倍率，觸控板照它回報的實際位移 × 倍率
-（所以調快不會讓觸控板變成一滑一頁）。貼圖選單裡橫著捲的那兩排（分頁列、最近用過）走
-同一套，只是一格是它們自己那一步（約兩格分頁、一格貼圖）。拖曳、觸控、捲動條和鍵盤的
-`j`／`k` 都沒有改。
+Any number in 50–300 is accepted, not just the six steps; the button shows
+your factor and clicking jumps to the next step above it. Qt's `Flickable`
+has no "pixels per wheel notch" setting (the step is hardcoded), so the panel
+measures wheel distance itself: a normal mouse notch is 60px (scaled to the
+theme's spacing) × factor, a touchpad reports its real delta × factor (so
+speeding up doesn't turn a touchpad into one-screen-per-swipe). The
+horizontally scrolling strips in the sticker menu (tab strip, recents) share
+the same logic with their own step (≈ two tabs, or one sticker). Dragging,
+touch, the scrollbar and the `j`/`k` keys are unchanged.
 
-再過去的 `讀取 60` 是一次跟 daemon 要幾則（`historyPage`），按一下換下一段
-（30 → 60 → 100 → 150 → 30）。**開聊天室的第一頁和往上翻的每一頁都是這個數字**：
+Next over, `讀取 60` is how many messages to ask the daemon at once
+(`historyPage`); click steps (30 → 60 → 100 → 150 → 30). **The first page
+when opening a chat and every older page above use this number:**
 
 ```bash
 omarchy bar set io.github.frankekn.line historyPage 100
 ```
 
-20–200 之間的任何數字都收，不限那四段（跟捲動速度同一套：按鈕找的是「比現在大的
-下一段」，所以手改成 37 也接得上）。上限 200 是 daemon 那邊也認的數字 ——
-socket 收到的 `count` 在 daemon 裡一樣被夾在 1–200，不是數字就當沒指定（預設 30）。
+Any number in 20–200 is accepted, steps or not (same rule as scroll speed:
+the button looks for "the next step above current", so hand-editing 37 still
+works). The 200 cap is recognized by the daemon too — a `count` arriving over
+the socket is clamped to 1–200 there as well, and a non-number counts as
+unset (default 30).
 
-調大的代價是開聊天室的第一次載入慢一點，換來的是往上翻的時候少跑幾趟。預設是 60：
-30 則大概只有一個畫面多一點，於是每往上翻一次就撞一次網路來回。
+Bigger costs a slower first load per chat in exchange for fewer round trips
+when reading back. Default is 60: at 30, a page barely covers one screen, so
+nearly every scroll-up hits the network.
 
-翻舊訊息不用等捲到最頂：**離頂端還有一個畫面高就先去要下一頁**，捲到頂的時候上一頁
-通常已經接上了，不會停在頂端等。一次只有一趟在飛，而且翻到最舊的一則之後就不再問
-（daemon 回一頁空的就是「沒有更舊的了」）—— 重開那間聊天室或按「同步」會重新開始算。
+Older pages don't wait for the very top: **the next page is requested one
+screen before the top**, so by the time you reach it the page is usually
+already attached. One request in flight at a time, and once the oldest
+message is reached it stops asking (an empty page from the daemon means "no
+older") — reopening the chat or pressing sync restarts the count.
 
-面板位置（`placement`）有三種。搜尋框右邊那顆按鈕會顯示**現在是哪一種**，
-按一下換下一種（貼齊 bar → 置中 → 視窗 → 貼齊 bar），一樣寫回 shell.json：
+Panel position (`placement`) has three modes. The button right of the search
+box shows **the current one**; click cycles (below bar → center → window →
+below bar), written back to shell.json:
 
-| 值 | 版面 | 適合 |
+| Value | Layout | Best for |
 |---|---|---|
-| `Below the bar`（預設） | 吊在 bar 圖示下方，單欄，清單與對話互相切換 | 只是瞄一下未讀 |
-| `Center of screen` | 開在螢幕正中央，左清單右對話同時看得到（跟 TUI 一樣） | 回幾則訊息 |
-| `App window` | 一個一般的 Hyprland 視窗，兩欄 | 一直開著當聊天軟體用 |
+| `Below the bar` (default) | hangs under the bar icon, single column, list and conversation swap | a glance at unread |
+| `Center of screen` | centered, list left + conversation right at once (like the TUI) | replying to a few messages |
+| `App window` | a regular Hyprland window, two columns | running it as a chat app |
 
 ```bash
 omarchy bar set io.github.frankekn.line placement "App window"
 ```
 
-前兩種是 `WlrLayer.Overlay`，永遠蓋在所有視窗上面，也不歸 Hyprland 的視窗規則管。
-`App window` 是真的 toplevel 視窗：會照你的規則平鋪或浮動、alt-tab 切得到、
-可以放到別的工作區，開圖開影片時外部檢視器也是正常疊在上面（不用先關面板）。
-視窗的 class 是 `org.quickshell`、title 是 `LINE`（omarchy 自己的 dev gallery
-也是同一個 class）。想讓它浮動的話：
+The first two are `WlrLayer.Overlay`: always on top of every window and
+outside Hyprland's window rules. `App window` is a real toplevel: tiles or
+floats per your rules, alt-tabs, moves to other workspaces, and external
+viewers stack normally when opening images/videos (no panel close needed).
+Its window class is `org.quickshell`, title `LINE` (omarchy's dev gallery
+shares the class). To float it:
 
 ```bash
-# ~/.config/hypr/windows.conf（或你放 windowrule 的地方）
+# ~/.config/hypr/windows.conf (or wherever your windowrules live)
 windowrule = float, class:^(org\.quickshell)$, title:^(LINE)$
 windowrule = size 1040 720, class:^(org\.quickshell)$, title:^(LINE)$
 ```
 
-視窗大小會自己記起來（停手 0.8 秒後寫回 `windowWidth` / `windowHeight`），
-下次開一樣大。也可以直接指定：
+The window remembers its size (written back to `windowWidth`/`windowHeight`
+0.8 s after you stop resizing) and reopens the same. Or set it directly:
 
 ```bash
 omarchy bar set io.github.frankekn.line windowWidth 1280
 omarchy bar set io.github.frankekn.line windowHeight 860
 ```
 
-三種模式的鍵盤操作完全一樣（Esc 一路退到關閉、`/`、`L`、`r`、燈箱都在）。
-唯一的差別是 Tab：那是「換到 bar 上隔壁那個面板」，`App window` 模式下不是
-bar 面板，所以什麼都不做。
+All three modes share identical keyboard handling (Esc peels back to close,
+`/`, `L`, `r`, the lightbox). The only difference is Tab — "switch to the
+neighboring bar panel" — which does nothing in `App window` mode because the
+window isn't a bar panel.
 
-## daemon ↔ 外掛的契約
+## The daemon ↔ plugin contract
 
-兩邊都在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil`）：
+Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 
-| 路徑 | 用途 |
+| Path | Role |
 |---|---|
-| `state.json` | 登入狀態、聊天室清單、未讀數（原子寫入，外掛用 `FileView` 監看） |
-| `events.json` | 即時事件環（原子寫入，外掛用 `FileView` 監看），見下 |
-| `sock` | unix socket，一行一個 JSON 請求／回應；連線中的面板也從這裡收推播幀 |
-| `storage.json` | LINE 憑證與 E2EE 金鑰（`chmod 600`，daemon 專用） |
-| `media/` | 下載過的圖片／影片縮圖快取（14 天或 500 MB 到就掃掉舊的） |
-| `media/avatars/` | 大頭貼快取（**不看時間**，只有 20 MB 上限，滿了先掃最舊的） |
-| `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |
-| `avatars.json` | 哪個 mid 的哪一版大頭貼已經處理過，重開不用重抓（daemon 專用） |
-| `hidden.json` | 被隱藏的聊天室 mid，`{"mids":[…]}`（原子寫入，daemon 專用，上限 1000） |
-| `panel-stickers.json` | 最近用過的貼圖，照帳號分（**外掛**寫的，原子寫入；daemon 不讀） |
-| `qr-<ts>.png` | 登入 QR；每次產生都換檔名（同名檔 QML `Image` 不會重載） |
+| `state.json` | login state, chat list, unread counts (atomic write, watched by the plugin's `FileView`) |
+| `events.json` | live event ring (atomic write, `FileView`-watched), see below |
+| `sock` | unix socket, one JSON request/reply per line; connected panels also receive push frames here |
+| `storage.json` | LINE credentials and E2EE keys (`chmod 600`, daemon-only) |
+| `media/` | downloaded image/video thumbnail cache (swept at 14 days or 500 MB) |
+| `media/avatars/` | avatar cache (**age-insensitive**, 20 MB cap, sweeps oldest first) |
+| `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |
+| `avatars.json` | which mid's which avatar version was already handled — no refetch on restart (daemon-only) |
+| `hidden.json` | hidden-chat mids, `{"mids":[…]}` (atomic write, daemon-only, cap 1000) |
+| `panel-stickers.json` | recent stickers, per account (written by the **plugin**, atomic; the daemon doesn't read it) |
+| `qr-<ts>.png` | login QR; a fresh filename each time (QML `Image` won't reload a same-named file) |
 
-`state.json`（整份每次重寫，沒有增量更新）：
+`state.json` (rewritten in full every time, no partial updates):
 
 ```jsonc
 {
-  "updatedAt": 1735000000000,          // 心跳，每 30 秒；超過 180 秒算 offline
-  "bootId": "…",                       // 這次 daemon 啟動的 id，重啟就換
-  "me": { "mid": "u…", "displayName": "…" },   // 未登入時是 {}
+  "updatedAt": 1735000000000,          // heartbeat every 30 s; over 180 s is offline
+  "bootId": "…",                       // this daemon boot's id, changes on restart
+  "me": { "mid": "u…", "displayName": "…" },   // {} while logged out
   "login": {
     "status": "idle",                  // idle|starting|qr|pin|ok|error
-    "qrPng": "…/qr-<ts>.png",          // 只有 status=qr
-    "pin": "…",                        // 只有 status=pin
-    "error": "…",                      // 只有 status=error，給人看的訊息
-    "reason": "…",                     // 選用，status=error 時的分類
-    "attempt": "logout",               // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
-    "settled": true                     // 選用；true 代表登入／登出收尾已完成
+    "qrPng": "…/qr-<ts>.png",          // only when status=qr
+    "pin": "…",                        // only when status=pin
+    "error": "…",                      // only when status=error, human-readable
+    "reason": "…",                     // optional, the error's class
+    "attempt": "logout",               // optional; logout|resume|manual — which attempt this state belongs to
+    "settled": true                     // optional; true once login/logout teardown completed
   },
-  "chats": [                           // 未讀在前，其次照 lastTime
+  "chats": [                           // unread first, then by lastTime
     { "mid": "u…", "name": "…", "unread": 0,
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
-      "avatarPath": "…/media/avatars/<sha1>.jpg",    // 選用，沒有就是沒設大頭貼
-      "hidden": true }                               // 選用，只有被隱藏的那幾間才有
+      "avatarPath": "…/media/avatars/<sha1>.jpg",    // optional, absent means no avatar set
+      "hidden": true }                               // optional, only on hidden chats
   ],
-  "chatsRevision": 12,                 // chats／chatList 有變才遞增；心跳不動
-  "chatList": { "complete": true, "loaded": 122 }, // 選用；false 代表伺服器還有下一頁
-  "timings": {                         // 選用；最近 64 次的 daemon 延遲統計
+  "chatsRevision": 12,                 // bumps only when chats/chatList change; heartbeats don't
+  "chatList": { "complete": true, "loaded": 122 }, // optional; false means the server has a next page
+  "timings": {                         // optional; rolling daemon latency stats, last 64
     "chats.refresh": { "samples": 18, "lastMs": 241.3,
                        "p50Ms": 205.1, "p95Ms": 390.8, "maxMs": 411.2 },
     "cmd.history": { "samples": 6, "lastMs": 92.4,
                      "p50Ms": 88.0, "p95Ms": 131.7, "maxMs": 131.7 }
   },
-  "stateBytes": {                      // 選用；state.json 最近 64 次寫入的大小統計
+  "stateBytes": {                      // optional; rolling state.json write-size stats, last 64
     "samples": 64, "last": 253412,
     "p50": 251190, "p95": 258871, "max": 260112,
-    "chats": 122                       // 這份檔案序列化時的 chats 列數
+    "chats": 122                       // chats count when this file was serialized
   },
-  "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態
-  "refresh": { "at": 1735000000000, "failures": 0,   // 選用，聊天室清單的新鮮度
-               "reason": "network" },                //   reason 只在 failures > 0 才有
-  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // 選用，見下
+  "link": { "push": "up", "since": 1735000000000 },  // optional, push link state
+  "refresh": { "at": 1735000000000, "failures": 0,   // optional, chat-list freshness
+               "reason": "network" },                //   reason only exists when failures > 0
+  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // optional, see below
 }
 ```
 
-`login.reason`、`login.attempt`、`login.settled`、`link`、`refresh` 和 `wanted` 都是選用的：舊的 daemon 不會寫，面板
-缺了它們也要照樣畫得出來（`link.push` 是 `"up"` 或 `"down"`，`since` 是這個狀態
-從哪一刻開始的毫秒時間戳）。`login.settled: true` 只在登入或登出的 teardown 已完成時
-出現；啟動／resume 中途的暫態不帶它，consumer 不可把暫態當成 session 已結束。
-`login.attempt` 是 `logout`（使用者按登出後的收尾）、`resume`（開機從 storage 恢復
-失敗）或 `manual`（按「登入 LINE」的 QR 嘗試失敗）。凡是 `settled: true` 的終局
-teardown——登出、任何走到底的 resume（不論失敗原因是 `token_expired`，還是開機時
-storage 裡根本沒有 token）、或已建立又失敗的 manual——面板都會清掉上個帳號的
-durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建立就失敗的 manual）則
-保留草稿，等下一次登入接續。
+`login.reason`, `login.attempt`, `login.settled`, `link`, `refresh` and
+`wanted` are all optional: older daemons don't write them and the panel must
+still render without them (`link.push` is `"up"` or `"down"`; `since` is the
+ms timestamp this state began). `login.settled: true` only appears once a
+login or logout teardown finished; transient states mid-startup/resume don't
+carry it and consumers must not read them as a settled session.
+`login.attempt` is `logout` (teardown after the user pressed logout),
+`resume` (boot-time storage resume failed) or `manual` (a QR attempt via
+"登入 LINE" failed). Any `settled: true` terminal teardown — logout, any
+resume that ran to its end (whether the cause is `token_expired` or storage
+simply holding no token at boot), or an established-then-failed manual —
+makes the panel drop the previous account's durable drafts; retryable
+transient failures (`network`/unclassified, or a manual that failed before
+establishing) keep drafts for the next login to continue.
 
-`refresh` 說的是**聊天室清單那條路**（talk 請求），跟 `link`（push 連線）是兩件事，
-兩者可以一好一壞 —— 所以不併進 `link`，不然又看不出來。`at` 是最後一次
-`getMessageBoxes` 成功、`chats` 寫進檔案的毫秒時間戳；`failures` 是從那之後連續
-失敗的次數，成功就歸 0；`reason` 只在 `failures > 0` 時存在，分類跟 `login.reason`
-同一套（`network`／`token_expired`／`unknown`）。失敗只在進入連錯的那一刻落檔一次
-（跟 `link` 的邊寫同一個形狀），之後的計數靠 30 秒心跳帶上去；面板在
-`failures >= 2` 時把「清單可能過期」印在清單標題下那一行（一次 30 秒的 timeout
-手機熱點下就會發生，單次不跳字），未讀徽章不受影響。登入前沒有這個欄位，登出
-會拿掉。stub 每次寫檔都算一次成功，另有一個真 daemon 沒有的 `fail-refresh` 指令
-（跟 `poke` 同一個性質）把 `failures` 推上去，讓面板那句話不用等真的斷網也看得到。
+`refresh` describes **the chat-list path** (talk requests), a different thing
+from `link` (the push connection) — one can be fine while the other fails, so
+it isn't merged into `link`. `at` is the ms timestamp of the last successful
+`getMessageBoxes` that wrote `chats`; `failures` counts consecutive failures
+since, reset by a success; `reason` exists only when `failures > 0` and shares
+`login.reason`'s classes (`network`/`token_expired`/`unknown`). A failure only
+lands in the file at the moment the streak begins (same edge-write shape as
+`link`); later counting rides the 30 s heartbeat. At `failures >= 2` the panel
+prints "清單可能過期" under the list title line (a single 30 s timeout happens
+on phone hotspots and doesn't trip this); the unread badge is unaffected. The
+field is absent before login and removed on logout. The stub counts every
+write as a success, plus a `fail-refresh` command the real daemon lacks (same
+nature as `poke`) that pushes `failures` up so the message is testable without
+a real outage.
 
-`chatsRevision` 只在 `chats` 內容或清單完整性改變時遞增，30 秒心跳不會動它。
-`chatList.complete === false` 代表 LINE 回覆 `hasNext`，但目前版本尚未確認
-`minChatId`／`maxChatId` 的安全翻頁語意；面板會明確說明只顯示及搜尋已載入的
-`loaded` 間聊天室，不會把一次成功刷新誤報成完整清單。
+`chatsRevision` only bumps when `chats` content or list completeness changes —
+the 30 s heartbeat never moves it. `chatList.complete === false` means LINE
+answered `hasNext`, but the safe pagination semantics of
+`minChatId`/`maxChatId` aren't confirmed in this version; the panel clearly
+states it only shows and searches the `loaded` chats rather than misreporting
+one successful refresh as a complete list.
 
-`timings` 是 daemon 記憶體裡的滾動診斷資料，每個項目最多保留最近 64 次，單位都是
-毫秒。`chats.refresh` 是完整聊天室刷新，`state.write` 是 state.json 的原子寫入，
-`cmd.<name>` 是 socket 指令從讀到完整一行、等候前一條一般指令或共享媒體佇列，到回覆
-寫回的總時間。統計在 state 寫入真正輪到磁碟時才取樣，只搭下一次原本就會發生的寫入，
-不會為了量測額外喚醒面板；daemon 重啟後重新累積。
+`timings` is the daemon's in-memory rolling diagnostics, at most the last 64
+per entry, all in milliseconds. `chats.refresh` is a full chat-list refresh,
+`state.write` a state.json atomic write, `cmd.<name>` the total socket time
+for that command from reading its full line, through waiting on prior normal
+commands or the shared media queue, to writing the reply. Sampling happens
+when a state write actually reaches disk, riding the next write that would
+have happened anyway — the panel is never woken for measurement; stats
+restart on daemon restart.
 
-`stateBytes` 是同一個滾動視窗量在**序列化後的 byte 數**上：單位是 UTF-8 位元組，
-不是毫秒，所以欄位名不帶 `Ms`。取樣在 state 寫入真正輪到磁碟、整份 JSON 文字產生的
-那一刻，一次寫入只取樣一次（心跳、刷新、推播摘要全走同一個 `writeState`，不會為了
-量測多序列化一份）；跟 `timings` 同一拍——這次寫入自己的大小要等下一次寫入才會
-上榜，daemon 重啟後重新累積，剛啟動、視窗還空時整個區塊不存在。`chats` 則是**這份
-檔案自己**序列化當下的 chats 列數（含被隱藏的那幾間——它們仍留在檔案裡），跟
-滾動統計不同拍，讀的時候當「這份檔案的現況」。要對寫入做任何減量（欄位 diff、
-分檔）之前，部署端直接讀這一區塊，拿到的就是實際數字。
+`stateBytes` is the same rolling window measured on **serialized bytes**:
+UTF-8 bytes, not milliseconds, so the field names carry no `Ms`. Sampling
+fires when a state write reaches disk and the full JSON text exists — once
+per write (heartbeats, refreshes and push summaries all go through the same
+`writeState`; nothing is serialized extra for measurement). Same beat as
+`timings` — a write's own size lands on the next write; stats restart on
+daemon restart, and the whole block is absent right after boot while the
+window is empty. `chats` is the chats count **of this very file** when it was
+serialized (hidden chats included — they stay in the file), a different beat
+from the rolling stats: read it as "this file's current state". Before any
+write-reduction work (field diffs, file splitting), a deployment reads this
+block for real numbers.
 
-`timings` 和 `stateBytes` 都是**選用欄位**：舊 daemon 不會寫，面板對 state.json 的
-契約本來就是只讀自己認得的鍵、未知欄位忽略，所以舊面板不受影響。
+`timings` and `stateBytes` are **optional fields**: older daemons don't write
+them, and the panel's state.json contract has always been "read the keys you
+know, ignore the rest" — older panels are unaffected.
 
-聊天室那一列的 `hidden` 同理：**只有被隱藏的那幾間才有這個鍵**，沒隱藏的整個不存在
-（不是 `false`），舊的面板照樣畫得出來。被隱藏的聊天**仍然留在 `chats` 裡** —— 面板
-要靠它做搜尋，只是平常不畫。daemon 在每次寫 state 的當下才蓋上這個鍵，來源是
-`hidden.json`；聊天摘要本身的快取不帶它，不然隱藏之後那份快取會一直說著舊答案。
+The chat row's `hidden` key works the same way: **only hidden chats carry
+it** — unhidden ones omit it entirely (not `false`), and older panels still
+render fine. Hidden chats **stay inside `chats`** — the panel needs them for
+search, it just doesn't draw them normally. The daemon stamps the key at
+state-write time from `hidden.json`; the chat-summary cache itself doesn't
+carry it, otherwise a stale cached answer would keep hiding state wrong.
 
-### `wanted`：從通知點進來的聊天室
+### `wanted`: the chat opened from a notification
 
-點桌面通知的時候，daemon 會先寫一筆 `wanted`，再叫 shell 把面板打開 —— shell 的
-IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間」是走面板本來就在監看的
-`state.json`。
+On a desktop-notification click, the daemon writes one `wanted` entry before
+asking the shell to open the panel — shell IPC only knows open/close/toggle
+with no arguments, so "which chat" travels through the `state.json` the panel
+already watches.
 
-- `chat` 是聊天室 mid，`at` 是點下去的毫秒時間戳。
-- `seq` 跟 `events` 的一樣，**在同一個 daemon 行程裡嚴格遞增**：面板記住自己處理過的
-  那一個，只認比它大的。同一間聊天室連點兩次也是兩筆（`seq` 不同），不會被當成重複。
-  `bootId` 換了就代表計數從頭開始。
-- 登出會把整個欄位拿掉：指向一間已經開不起來的聊天室，只會讓面板跳到空的對話。
-- 欄位不會自己消失，所以面板不能只看「有沒有」，要看 `seq`。
+- `chat` is the chat mid; `at` is the click's ms timestamp.
+- `seq` is like the `events` one, **strictly increasing inside one daemon
+  process**: the panel remembers the last it handled and only honors newer
+  ones. Two clicks on the same chat are two entries (different `seq`), never
+  deduplicated. A changed `bootId` means the count restarted.
+- Logout removes the whole field: pointing at a chat that can't open would
+  just drop the panel on an empty conversation.
+- The field never disappears on its own, so "exists?" isn't enough — the
+  panel must compare `seq`.
 
-### `events.json`：即時事件
+### `events.json`: live events
 
-`events.json` 是一個環狀緩衝，**只留最近 200 筆**，跟 `state.json` 分檔寫入 —
-— 事件爆量的時候重寫的是這份小檔，`state.json` 不必跟著長大或一直被重讀。
-面板記住自己處理到哪個 `seq`，之後只吃比它大的，就不用為了一則新訊息重抓
-整頁歷史。
+`events.json` is a ring buffer keeping **only the newest 200 entries**, written
+separately from `state.json` — bursts rewrite this small file instead of
+growing or re-reading the big one. The panel remembers the last `seq` it
+applied and only consumes newer ones, so one new message never triggers a
+full-page history refetch.
 
 ```jsonc
 {
   "updatedAt": 1735000000000,
-  "bootId": "…",                       // 跟 state.json 的同一個，重啟就換
-  "events": [                          // seq 由小到大
+  "bootId": "…",                       // same as state.json's, changes on restart
+  "events": [                          // ascending seq
     { "seq": 1, "at": 1735000000000, "kind": "message", "chat": "u…",
-      "message": { /* 跟 history 回傳的同一個形狀 */ } }
+      "message": { /* same shape as a history entry */ } }
   ]
 }
 ```
 
-- `seq` 在**同一個 daemon 行程裡**嚴格遞增，不重複也不回頭。重啟會從 1 重來 ——
-  所以 `bootId` 換了就代表「這是新的一輪」，面板要把 watermark 歸零。
-- `at` 是毫秒時間戳，`chat` 是聊天室 mid（每一種 `kind` 都有，面板可以先照它篩掉
-  不是現在這間的事件，不必看 payload）。
-- 事件寫檔會**合併**：最密 250 毫秒一次（每秒 ≤ 4 次），一次進來一整串（相簿、
-  被拆開的長句）不會讓面板重讀 20 次 events.json。
-- 登出會把 `events` 清空（`seq` 不歸零 —— 同一個 `bootId` 裡倒退的 seq 是面板唯一
-  沒辦法解釋的情況）。
-- 檔案只是**補齊**用的慢路：面板連著 socket 的時候，每筆事件先以 `{"event":…,"boot":…}`
-  推播幀直接送達（見下），檔案隨後才落；斷線期間漏掉的，重連後靠讀檔
-  補齊。
+- `seq` is strictly increasing **inside one daemon process**, never reused
+  and never rewound. A restart renumbers from 1 — so a changed `bootId` means
+  "a new round" and the panel zeroes its watermark.
+- `at` is a ms timestamp; `chat` is the chat mid (every `kind` has it, so the
+  panel can pre-filter to the open chat without reading payloads).
+- Event writes **coalesce**: at most one per 250 ms (≤ 4/s), so a burst (an
+  album, a split long text) doesn't make the panel re-read events.json twenty
+  times.
+- Logout clears `events` (without resetting `seq` — a rewinding seq inside
+  one `bootId` is the only case the panel can't explain).
+- The file is only the slow catch-up path: while a panel holds the socket,
+  each event first arrives as a `{"event":…,"boot":…}` push frame (below) and
+  the file lands after; what was missed while disconnected is caught up by
+  reading the file.
 
-| `kind` | 欄位 | 什麼時候發 |
+| `kind` | Fields | Fired when |
 |---|---|---|
-| `message` | `message`（跟 `history` 一則訊息完全同一個形狀，已解密、含 mentions／mediaState） | 收到新訊息，或自己送出（LINE 會把自己送出的也推回來，別的裝置送的一樣） |
-| `read` | `by`（讀的人 mid）、`upTo`（他讀到的最新訊息 id） | 對方已讀，或自己在別的裝置上讀了 |
-| `reaction` | `messageId`、`reactions`（**整串新的**，不是差異） | 有人加、換或收回表情 |
-| `unsend` | `messageId` | 有人收回訊息（自己或對方） |
-| `edit` | `message`（編輯後的完整訊息） | 訊息被編輯 |
-| `history` | `messages`（重新驗證過的整頁） | 本地庫先回了舊頁、對帳後補上新頁。一筆就是一頁的量，所以同一間聊天室在環裡只留最新一筆，舊的直接丟掉 |
+| `message` | `message` (exactly the `history` message shape — decrypted, with mentions/mediaState) | a new message arrives, or one of yours echoes back (LINE pushes your own sends, including from other devices) |
+| `read` | `by` (reader's mid), `upTo` (newest message id they read) | the other side read, or you read on another device |
+| `reaction` | `messageId`, `reactions` (**the whole new list**, not a delta) | someone adds, swaps or undoes a reaction |
+| `unsend` | `messageId` | someone unsends (you or them) |
+| `edit` | `message` (the full post-edit message) | a message is edited |
+| `history` | `messages` (a revalidated whole page) | the local store answered a stale page first and the reconcile produced a fresh one. One entry is a whole page, so a chat keeps only its newest in the ring; older ones are dropped |
 
-`reaction` 給的是整串而不是差異，因為 LINE 的 op 一次只講一個人的新選擇；daemon 自己
-留一份「這則訊息誰選了什麼」，從歷史載入時的 `raw.reactions` 起算，再照 op 移動。
-沒被載入過的訊息只能從空的開始算（面板下次載入歷史就會校正回來）。
+`reaction` carries the whole list rather than a delta because a LINE op only
+states one person's new choice at a time; the daemon keeps a per-message
+"who picked what" map, seeded from `raw.reactions` at history-load and moved
+by each op. A never-loaded message can only start from empty (the next
+history load corrects it).
 
-socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
+Socket commands (one JSON line per request, replies
+`{ok, data?, error?}`):
 
-| cmd | 參數 | 成功時的 `data` |
+| cmd | Args | `data` on success |
 |---|---|---|
-| `history` | `chat`, `count`（1–200，超界夾住、非數字當 30）, `before?`（往前翻頁的訊息 id）, `markRead?` | 訊息陣列，舊的在前 |
-| `send` | `chat`, `text`, `mentions?`, `requestId?` | 無 |
-| `reply` | `chat`, `text`, `replyTo`（要回覆的訊息 id）, `mentions?`, `requestId?` | 無 |
-| `react` | `chat`, `messageId`, `type` | 無 |
-| `unsend` | `chat`, `messageId` | 無 |
-| `members` | `chat` | `[{ "mid": "u…", "name": "…" }]`，照名字排序 |
-| `sendFile` | `chat`, `path`, `requestId?` | 無（太大或不支援的聊天室回中文拒絕，見上） |
-| `probeClipboardImage` | `chat` | `{ "stage": "clipboard-….png" }`（沒有可送圖片時回中文拒絕） |
-| `sendClipboardImage` | `chat`, `stage`, `requestId?` | 無 |
-| `discardClipboardImage` | `stage` | 無（探測成功、但第二階段請求無法排入 socket 時釋放暫存） |
-| `download` | `chat`, `messageId` | `{ "path": "…" }`（原檔，非縮圖） |
-| `preview` | `chat`, `messageId` | `{ "path": "…" }`（畫面上可見圖片的本機縮圖） |
-| `image` | `url`（`https://` 的公開圖片） | `{ "path": "…" }`（本機快取檔） |
-| `stickers` | `refresh?` | `{ "packages": [ … ] }`，見下 |
-| `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | 無 |
-| `hide` | `chat` | 無（把那一間從清單上拿掉，記在 `hidden.json`） |
-| `unhide` | `chat` | 無 |
-| `login` | —— | 無 |
-| `logout` | —— | 無 |
+| `history` | `chat`, `count` (1–200, clamped, non-numbers count as 30), `before?` (message id to page back from), `markRead?` | message array, oldest first |
+| `send` | `chat`, `text`, `mentions?`, `requestId?` | none |
+| `reply` | `chat`, `text`, `replyTo` (message id), `mentions?`, `requestId?` | none |
+| `react` | `chat`, `messageId`, `type` | none |
+| `unsend` | `chat`, `messageId` | none |
+| `members` | `chat` | `[{ "mid": "u…", "name": "…" }]`, name-sorted |
+| `sendFile` | `chat`, `path`, `requestId?` | none (oversized or unsupported chats get a written refusal, above) |
+| `probeClipboardImage` | `chat` | `{ "stage": "clipboard-….png" }` (refusal when nothing sendable is on the clipboard) |
+| `sendClipboardImage` | `chat`, `stage`, `requestId?` | none |
+| `discardClipboardImage` | `stage` | none (releases the stage when the probe succeeded but phase two can't be queued) |
+| `download` | `chat`, `messageId` | `{ "path": "…" }` (original file, not a thumbnail) |
+| `preview` | `chat`, `messageId` | `{ "path": "…" }` (local thumbnail for on-screen images) |
+| `image` | `url` (a public `https://` image) | `{ "path": "…" }` (local cache file) |
+| `stickers` | `refresh?` | `{ "packages": [ … ] }`, see below |
+| `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | none |
+| `hide` | `chat` | none (removes the row from the list, recorded in `hidden.json`) |
+| `unhide` | `chat` | none |
+| `login` | —— | none |
+| `logout` | —— | none |
 | `sync` | —— | `{ chats, link, at }` |
 
-面板連著 socket 的時候，daemon 會主動寫兩種**推播幀** —— 沒有 `id`、不對應任何
-請求，跟回覆共用同一條序列化寫入通道，所以一行永遠完整：
+While a panel holds the socket, the daemon also writes two kinds of **push
+frames** — no `id`, matching no request, sharing the same serialized write
+channel as replies so a line always arrives whole:
 
-- `{"event": <event>, "boot": "<bootId>"}` —— 事件環裡的一筆新事件（`history`
-  事件也在裡面）。client 拿 `seq` 對自己的 watermark 去重；`boot` 跟已知的
-  `bootId` 不同代表 daemon 重啟過，歸零後從 `events.json` 重新補齊。
-- `{"chat": <row>, "chatsRevision": N, "boot": "<bootId>"}` —— 單一聊天室列
-  欄位變動（新訊息的預覽、收回、頭像補上）時整列推過來。`chatsRevision` 是它的
-  水位線 —— 同一欄位的檔案寫入如果帶著更舊的 revision 抵達，直接丟掉，不能
-  蓋回已推播的新值。整列重建（refresh 輪、登出）不推，照舊由 `state.json` 收口。
-  這種幀不進事件環、不帶 `seq`。
+- `{"event": <event>, "boot": "<bootId>"}` — a new event-ring entry
+  (`history` events included). The client dedupes by `seq` against its
+  watermark; a `boot` different from the known `bootId` means the daemon
+  restarted — zero the watermark and catch up from `events.json`.
+- `{"chat": <row>, "chatsRevision": N, "boot": "<bootId>"}` — a single chat
+  row whose fields moved (a new-message preview, an unsend, an avatar
+  landing) pushed whole. `chatsRevision` is its watermark — a file write
+  carrying an older revision is dropped and can never clobber the pushed
+  newer value. Whole-list rebuilds (refresh rounds, logout) are not pushed
+  and still converge through `state.json`. These frames don't enter the
+  event ring and carry no `seq`.
 
-不認得推播幀的舊 client 只讀 `id` 對應的回覆，多出的行被忽略，行為不變。推播寫
-不出去或對端讀太慢時 daemon 直接關掉這條連線，面板重連後靠 `events.json` 和
-`state.json` 補齊。
+Older clients that don't know push frames just read replies by `id` — extra
+lines are ignored and behavior is unchanged. If a push can't be written or
+the peer reads too slowly, the daemon closes that connection; the panel
+reconnects and catches up via `events.json` and `state.json`.
 
-未登入時除了 `login`、`logout`、`hide`、`unhide`、`discardClipboardImage` 以外都回
-`{ok:false, error:"尚未登入"}`；認不得的 cmd 回 `unknown cmd: <cmd>`。
-`hide`／`unhide` 在門檻之前：它只寫我們自己的檔案、不碰 LINE，沒有理由因為 session
-還沒接上就拒絕。兩個都是**冪等**的（已經隱藏的再隱藏一次照樣 `{ok:true}`，只是不寫
-檔），`chat` 是空的則回 `{ok:false, error:"沒有指定是哪一間聊天室"}`。
+While logged out, everything except `login`, `logout`, `hide`, `unhide` and
+`discardClipboardImage` answers `{ok:false, error:"尚未登入"}`; an unknown cmd
+answers `unknown cmd: <cmd>`. `hide`/`unhide` sit before the login gate: they
+only touch our own file and never LINE, so a missing session is no reason to
+refuse. Both are **idempotent** (hiding an already-hidden chat still returns
+`{ok:true}`, just without a write), and an empty `chat` answers
+`{ok:false, error:"沒有指定是哪一間聊天室"}`.
 
-`history` 先回文字與訊息資訊，不等待圖片下載；ListView 建立到畫面附近的圖片列時才送
-`preview`。`image`、`preview` 與原檔 `download` 共用全 daemon 最多四筆的背景通道，回覆仍靠 `id`
-對應，所以可能比後送出的互動指令晚回來。傳訊息、回覆、收回等會改變狀態的指令仍照
-接收順序執行。
+`history` answers text and message fields without waiting for image
+downloads; the `preview` request only goes out when a ListView delegate nears
+the screen. `image`, `preview` and original `download` share one background
+lane of at most four across the daemon, with replies still matched by `id` —
+they may come back after interactive commands sent later. State-changing
+commands (send, reply, unsend, …) still run in receive order.
 
-五個傳送指令的 `requestId` 是選用的非空字串。daemon 會把它放進 LINE 訊息的
-`contentMetadata`，並在之後的 history 或 message event 以同名欄位原樣回傳。面板替每次
-傳送產生唯一值；socket 在 LINE 已接受訊息後斷線時，就能用這個值精確確認結果，不以
-相同文字或時間猜測。其他 client 可以省略，省略時 history 訊息也沒有這個欄位。
+The five send commands take an optional non-empty `requestId` string. The
+daemon puts it into the LINE message's `contentMetadata` and returns it
+verbatim in later history or message events under the same name. The panel
+mints one per send; when the socket drops after LINE accepted the message,
+the value precisely confirms the outcome — no guessing by identical text or
+time. Other clients may omit it; history messages then carry no such field.
 
-未送出的文字、提及、回覆目標與游標位置存於
-`$XDG_STATE_HOME/enil/panel-drafts.json`，以帳號及聊天室分開；每次編輯立即排入原子寫入，
-寫入進行中時只保留後續最新快照，切換聊天室、關面板或重啟 shell 都能還原。斷線後尚未確認的 `requestId` 與樂觀
-訊息也存在同一檔案，切換聊天室或重啟面板後仍會顯示並繼續精確核對。收到送出成功的
-回覆，或斷線後在 history／message event 看到完全相同的 `requestId`，才刪除該次傳送
-對應的草稿；送出失敗或尚未精確確認時仍保留。daemon 重啟期間的 `starting` 與可重試的
-網路 `error` 不會被當成登出；明確進入 `idle`，或已結束且無法重試的 session 錯誤，
-才會清除該帳號的草稿與未確認傳送。
+Unsent text, mentions, reply targets and cursor position live in
+`$XDG_STATE_HOME/enil/panel-drafts.json`, per account and chat; every edit
+queues an atomic write, and while a write runs only the newest follow-up
+snapshot is kept — switching chats, closing the panel or restarting the shell
+all restore. Unconfirmed `requestId`s with their optimistic messages live in
+the same file, still displayed and still precisely reconciled after a
+disconnect, chat switch or panel restart. A draft's send is dropped only when
+its reply succeeds or an identical `requestId` shows up in history/message
+events after a disconnect; failures and unconfirmed sends keep it.
+`starting` during a daemon restart and retryable network `error`s don't count
+as logout — only a definite `idle` or a settled non-retryable session error
+clears that account's drafts and unconfirmed sends.
 
-回應**一定寫得完整**：daemon 是用 `writeAll` 一路寫到最後一個位元組，不是靠一次
-`conn.write` —— unix socket 一次只吃得下緩衝區塞得下的量（實測 219264 位元組），
-`stickers` 這種十幾萬位元組的回應會被截斷，而且不會有任何錯誤，面板只會等一個永遠
-不會來的換行。萬一回應本身編不成 JSON（例如混進 BigInt 或循環參照），daemon 會回
-`{ok:false, error:"回覆無法編碼"}` 並在 journal 留一行
-`[cmd] <cmd> reply unserializable: <錯誤類別>` —— 值本身不進 journal。
+A reply is **always written whole**: the daemon `writeAll`s to the last byte
+rather than one `conn.write` — a unix socket only takes what fits its buffer
+(219264 bytes measured), and a `stickers` reply in the hundred-KB range would
+truncate silently, leaving the panel waiting for a newline that never comes.
+Should a reply itself fail to encode (a BigInt or a cycle snuck in), the
+daemon answers `{ok:false, error:"回覆無法編碼"}` and journals
+`[cmd] <cmd> reply unserializable: <class>` — the value never reaches the
+journal.
 
-`sync` 是手動同步：重建 push 連線（不等它完成）並重抓聊天列表 —— 回報的一定是**收到這個
-請求之後**才跑完的那一輪，剛好有一輪在飛就先等它結束。`chats` 是抓回來的
-聊天室數量、`link` 是**同步開始當下**的 push 狀態（`"up"`／`"down"`；重建一開始就會把
-狀態設成 down，回報之後的值等於每次都說 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
-回 `{ok:false, error:"同步失敗：…"}`，後半是給人看的原因。
+`sync` is the manual sync: rebuilds the push connection (without waiting for
+it) and refetches the chat list — and it always reports the round that
+finished **after** this request arrived, waiting out a round already in
+flight. `chats` is the fetched chat count, `link` is the push state **at the
+moment the sync began** (`"up"`/`"down"`; a rebuild flips it to down at once,
+so a value read after the report is always down), `at` is the completion's ms
+timestamp. A failed fetch answers `{ok:false, error:"同步失敗：…"}` with a
+human-readable reason.
 
-`members` 是 @ 用的群組成員名單，只有群組（`c…`）和 room（`r…`）能問；1:1（`u…`）回
-`{ok:false, error:"這不是群組，沒有成員名單"}`。名單裡不含自己。daemon 快取十分鐘，
-所以同一間聊天室來回開關只會真的抓一次。room 的名單多半拿不到，那時回
-`{ok:false, error:"多人聊天室（room）拿不到成員名單"}` —— 面板不跳橫幅，等使用者真的
-打了 `@` 才在選單裡說原因。
+`members` is the group member list for `@`, answerable only for groups
+(`c…`) and rooms (`r…`); 1:1 (`u…`) answers
+`{ok:false, error:"這不是群組，沒有成員名單"}`. The list excludes yourself.
+The daemon caches ten minutes, so re-entering the same chat only fetches
+once. Rooms usually can't produce a list — then the reply is
+`{ok:false, error:"多人聊天室（room）拿不到成員名單"}` and the panel shows no
+banner, explaining only when the user actually types `@`.
 
-`image` 拿的是一張**公開**圖片的本機檔：daemon 抓進 `media/public-images/`（合併、
-上限與清掃見上面「安裝」那一段），回 `{ "path": "…" }`，面板只讀 `file://`。只收
-`https://`、不帶帳號密碼、回應的內容型別要是 `image/`，重導最多五次而且每一跳都得是
-`https://`；任何一項不成立或抓不回來都回 `{ok:false, error:"圖片下載失敗"}` —— 面板
-不會改成自己去連 HTTPS，那正是這支指令要避開的那條路。
+`image` fetches a **public** image into a local file: the daemon caches it in
+`media/public-images/` (merging, caps and sweeping per the install section)
+and returns `{ "path": "…" }`; the panel only ever reads `file://`. Only
+`https://`, no embedded credentials, the response's content type must be
+`image/`, and at most five redirects each still `https://`; any violation or
+a failed fetch answers `{ok:false, error:"圖片下載失敗"}` — the panel does
+not fall back to fetching HTTPS itself, which is exactly the path this
+command exists to avoid.
 
-`send`／`reply` 不指定要不要加密，交給 LINE 決定：先照明文送，對方要求加密時才由
-linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）。反過來硬指定加密的話，
-對方把 Letter Sealing 關掉時金鑰查詢會直接回 `E2EE_RETRY_PLAIN`，訊息連送都送不出去。
+`send`/`reply` don't pick a cipher — LINE decides: sent plain first, and
+linejs itself resends via E2EE when the peer demands it (`mentions` and the
+quote ride along). Forcing E2EE instead makes the key exchange answer
+`E2EE_RETRY_PLAIN` when the peer has Letter Sealing off, and the message
+can't be sent at all.
 
-`reply` 就是帶引言的 `send`：一樣的 `mentions` 驗證、一樣的加密、一樣的拒絕，只多一個
-`replyTo`。少了它回 `{ok:false, error:"沒有指定要回覆哪一則訊息"}` —— 不擋的話訊息還是
-送得出去，只是變成沒有引言的普通訊息，等於默默吃掉使用者挑的那一則。
+`reply` is a `send` with a quote: same `mentions` validation, same cipher,
+same refusals, one extra `replyTo`. Missing it answers
+`{ok:false, error:"沒有指定要回覆哪一則訊息"}` — unguarded, the message would
+still go out as a plain message, silently eating the quote the user picked.
 
-`react` 的 `type` 是 LINE 的六個預設表情
-`NICE`／`LOVE`／`FUN`／`AMAZING`／`SAD`／`OMG`，外加把自己的收回來的 `UNDO`；
-其他一律回 `{ok:false, error:"不支援的表情"}`。一個人在同一則訊息上只會有一個表情，
-再送一次就是換掉，不是疊加。
+`react`'s `type` is one of LINE's six defaults
+`NICE`/`LOVE`/`FUN`/`AMAZING`/`SAD`/`OMG`, plus `UNDO` to take yours back;
+anything else answers `{ok:false, error:"不支援的表情"}`. One person holds one
+reaction per message — resending swaps it, not stacks.
 
-`stickers` 是這個帳號**自己擁有**的貼圖包，照貼圖小舖給的順序，最多 100 個：
+`stickers` lists the packs **this account owns**, in the order the sticker
+shop returns, at most 100:
 
 ```jsonc
 { "packages": [
-  { "id": "1",                      // 貼圖包編號（十進位）
+  { "id": "1",                      // pack id (decimal)
     "name": "饅頭人&詹姆士",
-    "version": 3,                   // STKVER；小舖沒給就是 0
+    "version": 3,                   // STKVER; 0 when the shop omits it
     "stickers": [
       { "id": "4",
         "url": "https://stickershop.line-scdn.net/stickershop/v1/sticker/4/android/sticker.png",
@@ -850,249 +1076,291 @@ linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）�
 ] }
 ```
 
-daemon 快取一小時，`{"cmd":"stickers","refresh":true}` 會重抓（同一刻只會有一輪在跑，
-兩個面板同時開不會變成兩倍的請求）。清單來自 LINE 貼圖小舖的
-`getOwnedProductSummaries`，但**那支 API 不回貼圖 id**，所以每個貼圖包的貼圖是再去抓
-公開的 `productInfo.meta`（不需要登入）。抓不到的那個貼圖包 `stickers` 會是**空陣列**
-—— 帳號確實有這個貼圖包，只是這次讀不到，讓它從清單裡消失只會更難解釋。`animated` 是
-**整包**的性質不是單張的：LINE 的 JSON 沒有逐張的旗標，收到的貼圖也只有 `STKOPT`。
-`url` 跟收到的貼圖走同一條 CDN 路徑，面板兩邊可以共用同一段畫圖的程式。登出會把快取
-清掉 —— 換一個帳號就是換一批貼圖包。
+The daemon caches an hour; `{"cmd":"stickers","refresh":true}` refetches
+(only one round runs at a time — two open panels don't double the requests).
+The list comes from the sticker shop's `getOwnedProductSummaries`, but **that
+API doesn't return sticker ids**, so each pack's stickers come from the
+public `productInfo.meta` (no login needed). A pack whose fetch fails gets an
+**empty `stickers` array** — the account does own it; it just couldn't be
+read this time, and dropping it from the list would be harder to explain.
+`animated` is a **whole-pack** property, not per-sticker: LINE's JSON has no
+per-sticker flag and received stickers only carry `STKOPT`. The `url` shares
+the CDN path used by received stickers, so one drawing routine serves both.
+Logout clears the cache — a new account means a new set of packs.
 
-小舖那邊出事分兩句：請求本身失敗（連不上、Thrift 丟例外）是
-`{ok:false, error:"貼圖清單讀不到：<原因>"}`；回來的東西**根本不是一份清單**（該有
-list 的欄位不是陣列、或整包不是物件也不是陣列）是
-`{ok:false, error:"貼圖清單格式不對"}`，`sendSticker` 也用同樣兩句。分兩句是因為
-「讀不到」會讓人去看自己的 Wi-Fi，而那時候封包其實好好地回來了。**欄位不存在不算
-出事**：Thrift 沒東西可放的欄位是整個省略的，所以一個貼圖包都沒有的帳號、以及剛好
-滿頁之後的下一頁，回來的都是「沒有那個欄位」的物件，那是空的一頁不是壞掉的小舖。
-以前這兩種一律當成空清單，結果是選單開起來空的、還被快取一小時，而且哪裡都沒有一句
-話。
+Shop trouble splits into two sentences: the request itself failing
+(unreachable, a Thrift exception) is
+`{ok:false, error:"貼圖清單讀不到：<原因>"}`; the reply **not being a list at
+all** (a should-be-list field isn't an array, or a pack is neither object nor
+array) is `{ok:false, error:"貼圖清單格式不對"}`, and `sendSticker` uses the
+same pair. Two sentences because "can't read" sends people to check their
+Wi-Fi while the packets actually came back fine. **A missing field isn't an
+error**: Thrift omits empty fields entirely, so an account owning no packs
+and the page after a full one both come back as objects without that field —
+an empty page, not a broken shop. Both used to count as an empty list: the
+menu opened blank, got cached an hour, and nobody said a word.
 
-`sendSticker` 送出一張貼圖。`packageId`／`stickerId` 是十進位編號，`version` 選用
-（不給就用清單裡那一包的 `version`）。編號形狀不對回
-`{ok:false, error:"貼圖編號不對"}`，貼圖包不在自己的清單裡回
-`{ok:false, error:"這個貼圖包不在你的貼圖清單裡"}` —— LINE 對 metadata 照單全收，
-擋不下來的話對方收到的是一顆放不出圖的空泡泡，而且收不回來。**不檢查**那張貼圖在不在
-那一包裡：`stickers` 是空的那幾包本來就沒得檢查，擋下來等於把 daemon 讀不到清單這件事
-算在使用者頭上。貼圖**不走 E2EE**（內容就是 metadata，而 metadata 本來就不加密），
-送出之後跟 `send` 一樣由 LINE 把自己送出的推回來，面板收到的是 `message` 事件。
-整包是動態的（`animated`）就多帶一個 `STKOPT: "A"`，靜態的那幾包整個欄位不帶 ——
-linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`，不帶的話連
-自己推回來的那則都是不會動的那一格。面板畫的時候再換回靜態網址：APNG 在 Qt 裡只
-畫得出第一格，一張卻要幾百 KB。
+`sendSticker` sends one sticker. `packageId`/`stickerId` are decimal ids;
+`version` optional (defaults to that pack's `version` from the list).
+Misshapen ids answer `{ok:false, error:"貼圖編號不對"}`; a pack not in your
+list answers `{ok:false, error:"這個貼圖包不在你的貼圖清單裡"}` — LINE takes
+any metadata at face value, and without the check the receiver gets an empty
+bubble that can't render, unsendably. Whether the sticker is actually **in**
+that pack goes **unchecked**: packs with empty `stickers` can't be checked
+anyway, and refusing would bill the user for the daemon's failed read.
+Stickers **skip E2EE** (their content is metadata, and metadata is never
+encrypted); after sending, LINE echoes it back like a `send` and the panel
+gets a `message` event. An animated pack (`animated`) sends one extra
+`STKOPT: "A"`, static packs omit the field — linejs's `getStickerURL()` only
+returns `sticker_animation.png` when it sees the value, and without it even
+your own echo is the frozen frame. The panel swaps back to the static URL
+when drawing: Qt only renders an APNG's first frame, which still costs
+hundreds of KB.
 
-`unsend` 只收得回**自己傳的**訊息，別人的回
-`{ok:false, error:"只能收回自己傳的訊息"}`；daemon 是從自己的游標表看送出者的，
-不必為了拒絕先去問 LINE。沒在快取裡的回「訊息不在快取裡」。收回成功之後 LINE 會把
-`DESTROY_MESSAGE` 推回來，面板收到的是 `unsend` 事件，daemon 不會自己補一筆。
+`unsend` only takes back **your own** messages; other people's answer
+`{ok:false, error:"只能收回自己傳的訊息"}` — the sender check runs off the
+daemon's own cursor table, no LINE round trip for a refusal. A message not
+in cache answers "訊息不在快取裡". After a successful unsend LINE pushes
+`DESTROY_MESSAGE` back and the panel gets an `unsend` event — the daemon
+doesn't fake one.
 
-`send` 的 `mentions` 是選用的，`[{ start, end, mid }]` 或 `[{ start, end, all: true }]`：
+`send`'s `mentions` is optional, `[{ start, end, mid }]` or
+`[{ start, end, all: true }]`:
 
-- **`start`／`end` 是 `text` 的 UTF-16 code unit 位移，半開區間 `[start, end)`。**
-  一個中日韓字算 1，BMP 以外的表情符號（surrogate pair）算 2 —— 也就是 JavaScript
-  `String` 的 `length` 和 `substring` 用的那個單位，兩邊都是 JS，誰都不用換算。
-  這是 LINE 自己的單位：linejs 用 `parseInt` 讀 `MENTIONEES` 的 `S`／`E` 再交給
-  `String.prototype.substring`。
-- `mid` 是 `u` + 32 個小寫十六進位字；`all: true` 是 @全部，不帶 mid。
-- daemon 會驗：不是整數、超出 `text` 範圍、頭尾顛倒、mid 形狀不對、或跟前一段重疊的
-  **整筆丟掉**，其餘照送。壞掉的 mention 只賠上自己那一個標記，不會害整句話送不出去。
-- daemon 把它組成 LINE 的 `contentMetadata.MENTION`。這段 metadata **不加密**（E2EE
-  只加密本文），所以位移描述的是對方解密後看到的那串字。
+- **`start`/`end` are UTF-16 code-unit offsets into `text`, half-open
+  `[start, end)`.** A CJK char counts 1, an astral emoji (surrogate pair)
+  counts 2 — the units JavaScript's `String` `length` and `substring` use.
+  Both sides are JS, so nobody converts. These are LINE's own units: linejs
+  `parseInt`s `MENTIONEES`'s `S`/`E` and hands them to
+  `String.prototype.substring`.
+- `mid` is `u` + 32 lowercase hex chars; `all: true` is @All, no mid.
+- The daemon validates: non-integer, out of `text`'s range, inverted, a
+  misshapen mid, or overlapping a previous span gets **that entry dropped**;
+  the rest still send. A broken mention only costs its own marker, not the
+  whole message.
+- The daemon assembles it into LINE's `contentMetadata.MENTION`. That
+  metadata is **not encrypted** (E2EE only covers the body), so the offsets
+  describe the string the receiver sees after decryption.
 
-`history` 回傳的訊息（欄位沒值時是整個不存在，不是 `null`）：
+Messages returned by `history` (absent fields are omitted, never `null`):
 
-| 欄位 | 型別 | 何時有 |
+| Field | Type | Present when |
 |---|---|---|
-| `id` | string | 一律 |
-| `chat` | string | 一律，就是請求裡的 `chat` |
-| `from` | string | 一律，送出者 mid（來源缺漏時是空字串） |
-| `fromName` | string | 一律，解不出名字就退回 mid |
-| `text` | string | 一律；解不開的 E2EE 是空字串 |
-| `time` | number | 一律，毫秒 |
-| `contentType` | string | 一律；`NONE`／`IMAGE`／`VIDEO`／`STICKER`／`FLEX`… |
-| `decryptFailed` | boolean | 一律；E2EE 沒解開時為 `true` |
-| `hasMedia` | boolean | 一律；已收回的訊息一律 `false` |
-| `unsent` | boolean | 一律；對方收回的訊息為 `true`，`text` 是「已收回訊息」 |
-| `mediaState` | string | 一律；`ok`／`unsent`／`expired`，附件打不開的原因 |
-| `expiresAt` | number | `FILE` 的 metadata 有 `FILE_EXPIRE_TIMESTAMP`；毫秒 |
-| `previewable` | boolean | 附件可用低成本縮圖；目前是 `IMAGE` 與有獨立縮圖的 `VIDEO`。縮圖不隨 history 走：可預覽的那幾則由面板再送 `preview` 換本機路徑 |
-| `altText` | string | `FLEX` 且拆得出版面 |
-| `flexImages` | string[] | 同上，只收絕對 `https://` 圖片 |
-| `stickerUrl` | string | `STICKER` 且 metadata 有 `STKID` |
-| `fileName` | string | metadata 有 `FILE_NAME` |
-| `fileSize` | number | metadata 有 `FILE_SIZE` |
-| `mentions` | object[] | 訊息 metadata 有 `MENTION`；`{ start, end, name, mid? , all? }`，位移單位同上，`all` 的 `name` 是「全部」 |
-| `replyTo` | object | 這則是回覆（`messageRelationType` 是 `REPLY`）；`{ id, fromName?, text? }` |
-| `reactions` | object[] | 這則有表情；`[{ type, count, mine }]`，照 LINE 列舉的順序 |
-| `readBy` | object | **只有自己傳的**訊息才有；`{ count, all }` |
-| `fromAvatar` | string | 送出者有大頭貼而且已經抓下來了；本機檔案路徑 |
-| `requestId` | string | 傳送請求帶了非空 `requestId`，而且 LINE 保留了該 metadata |
+| `id` | string | always |
+| `chat` | string | always, the request's `chat` |
+| `from` | string | always, sender mid (empty when the source omits it) |
+| `fromName` | string | always, falls back to mid when unresolvable |
+| `text` | string | always; undecryptable E2EE is "" |
+| `time` | number | always, ms |
+| `contentType` | string | always; `NONE`/`IMAGE`/`VIDEO`/`STICKER`/`FLEX`… |
+| `decryptFailed` | boolean | always; `true` when E2EE couldn't be decrypted |
+| `hasMedia` | boolean | always; unsent messages are always `false` |
+| `unsent` | boolean | always; `true` on messages the other side unsent, `text` is "已收回訊息" |
+| `mediaState` | string | always; `ok`/`unsent`/`expired` — why an attachment won't open |
+| `expiresAt` | number | a `FILE` whose metadata has `FILE_EXPIRE_TIMESTAMP`; ms |
+| `previewable` | boolean | the attachment can be thumbnailed cheaply; currently `IMAGE` and `VIDEO` with a separate thumbnail. Thumbnails don't ride history: the panel sends `preview` for previewable rows to get a local path |
+| `altText` | string | `FLEX` and the layout parsed |
+| `flexImages` | string[] | same, absolute `https://` images only |
+| `stickerUrl` | string | `STICKER` and metadata has `STKID` |
+| `fileName` | string | metadata has `FILE_NAME` |
+| `fileSize` | number | metadata has `FILE_SIZE` |
+| `mentions` | object[] | message metadata has `MENTION`; `{ start, end, name, mid? , all? }` — same offset units, `all`'s `name` is "全部" |
+| `replyTo` | object | this message is a reply (`messageRelationType` is `REPLY`); `{ id, fromName?, text? }` |
+| `reactions` | object[] | the message has reactions; `[{ type, count, mine }]` in LINE's enum order |
+| `readBy` | object | **own messages only**; `{ count, all }` |
+| `fromAvatar` | string | the sender has an avatar already cached; local file path |
+| `requestId` | string | the send carried a non-empty `requestId` and LINE kept the metadata |
 
-`replyTo` 的 `fromName`／`text` 是**盡力而為**：LINE 不會把被引用的那則跟著送過來，
-每一則都去補抓等於一個泡泡一趟往返，所以 daemon 只從自己這輪渲染過的訊息裡查
-（最近 500 則，`text` 截到 200 字）。查不到就只有 `id`，面板照樣要畫得出來
-（畫成一行「回覆訊息」就好）。
+`replyTo`'s `fromName`/`text` is **best effort**: LINE doesn't send the quoted
+message along, and fetching per message means a round trip per bubble — so the
+daemon only looks inside the messages it rendered this session (last 500,
+`text` truncated at 200 chars). An unresolved one carries only `id` and the
+panel must still render (one "回覆訊息" line is enough).
 
-`reactions` 的 `mine` 是「自己有沒有選這一個」。同一則訊息上一個人只算一次，
-所以 `count` 加起來就是有多少人按過。
+`reactions`' `mine` is "did I pick this one". One person counts once per
+message, so `count` sums to how many reacted.
 
-`readBy` 的 `count` 是「除了自己以外，已經讀到這則的人數」，`all` 是「daemon 知道的
-人都讀到了」—— 1:1 就是對方讀了（畫成「已讀」），群組是還沒到齊（畫成「已讀 N」）。
-分母是 `getMessageReadRange` 回報有 range 的成員（扣掉自己）。什麼都不知道的時候
-**整個欄位不存在**，不是 `count: 0` —— 不能把「不知道」畫成「沒人讀」。開聊天室時抓
-一次，之後靠 `read` 事件更新。
+`readBy`'s `count` is "people other than me who read up to this message" and
+`all` is "everyone the daemon knows about has read it" — in 1:1 that's the
+other person having read (drawn "已讀"), in a group not-yet-everyone (drawn
+"已讀 N"). The denominator is members with a range in `getMessageReadRange`
+(minus self). When nothing is known **the whole field is absent**, not
+`count: 0` — "unknown" must never draw as "nobody read". Fetched once on
+opening a chat, then kept by `read` events.
 
-只要有東西照這個契約寫檔案與監聽 socket，這個外掛就能用 —— 不一定要是這個 daemon。
-`daemon/stub.py` 就是這樣一個東西：純標準庫的假 daemon，餵假資料給面板，讓人不用真的
-LINE session 也能改 UI。
+Anything that writes this contract's files and serves this socket can drive
+the plugin — it doesn't have to be this daemon. `daemon/stub.py` is exactly
+that: a fake daemon in pure stdlib feeding fake data to the panel, so UI work
+needs no real LINE session.
 
 ```bash
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # 已登入
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # 未登入，可以試 QR 流程
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # logged in
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # logged out, QR flow testable
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
-`--fixture` 有四個：`default`（`u`／`c`／`r` 各一個以上的聊天室，訊息涵蓋純文字、
-多行、E2EE 解密失敗、圖片、影片、檔案、貼圖、FLEX、系統事件、自己發的、收回的、
-過期的檔案）、`empty`（空清單）、`busy`（200 個聊天室，看清單捲動與搜尋）、
-`notify`（就是 `default`，但開起來就已經有一筆 `wanted`，直接看「從通知點進來」
-長什麼樣）。`history`
-會照 `before` 翻頁，`markRead` 會清未讀，`send` 會回一則 echo（`mentions` 照 daemon
-那套驗過再掛回去），`sendFile` 對 `r…` 回跟 daemon 一樣的中文錯誤，`download` 對收回／
-過期的訊息也是。`members` 對群組回假名單、對 1:1 和 room 回跟 daemon 一樣的中文拒絕；
-`default` 裡有一則帶 @全部和 @某人的訊息，前面還放了一個表情符號，位移才會真的踩到
-UTF-16 那個單位。
+Four `--fixture`s: `default` (one each of `u`/`c`/`r` chats; messages cover
+plain text, multiline, failed E2EE, image, video, file, sticker, FLEX, system
+events, your own sends, unsent and expired), `empty` (an empty list), `busy`
+(200 chats, for list scrolling and search), and `notify` (same as `default`
+but opens with one `wanted` already set — see the notification-click flow at
+once). `history` pages by `before`, `markRead` clears unread, `send` echoes a
+message back (`mentions` validated like the daemon then re-attached),
+`sendFile` answers `r…` with the same refusal as the daemon, `download` does
+the same for unsent/expired. `members` returns a fake list for groups and the
+same refusal for 1:1 and rooms; `default` includes a message with @All and
+@someone, preceded by an emoji so the offsets really exercise UTF-16 units.
 
-兩階段剪貼簿指令也在：stub 沒有剪貼簿，所以 `probeClipboardImage` 一律回一張畫出來的
-假 PNG 的 `stage`，再交給 `sendClipboardImage` 送出（IMAGE，縮圖走 `preview`）；
-探測時多加
-一個真 daemon **沒有**的 `empty: true` 才回「剪貼簿裡沒有圖片」——
-不然面板那條「沒東西可以貼」的路只能靠清空真的剪貼簿才走得到。`sendFile` 的
-`contentType` 也照 daemon 那套從副檔名判（IMAGE／VIDEO／FILE），影片不給 `mediaPath`，
-太大的那三句拒絕也一模一樣 —— 這是唯一不用真的準備一個 1 GB 檔案就能看到那句話的地方
-（測試用的是 sparse 檔）。
+The two-phase clipboard commands are in too: the stub has no clipboard, so
+`probeClipboardImage` always returns a `stage` for a drawn fake PNG, which
+`sendClipboardImage` then sends (IMAGE, thumbnail via `preview`); adding
+`empty: true` to the probe — something the real daemon **doesn't** have —
+returns "剪貼簿裡沒有圖片", otherwise the panel's "nothing to paste" path is
+only reachable by emptying a real clipboard. `sendFile`'s `contentType` is
+judged by extension like the daemon (IMAGE/VIDEO/FILE), videos carry no
+`mediaPath`, and the three oversized refusals match word for word — the only
+place you can see that message without preparing a real 1 GB file (tests use
+sparse files).
 
-`reply`／`react`／`unsend` 三個指令也都在，而且會照樣寫 `events`：`send` 和 `reply`
-會補一筆 `message` 事件（真的 daemon 是 LINE 把自己送出的訊息推回來），兩秒後再補一筆
-`read` 並把 `readBy` 掛上去 —— 沒有這個「假的對方」，面板的「已讀」根本沒東西可以測。
-`react` 換的是整串 `reactions`（不是差異），`unsend` 只肯收回 `ME` 送的那幾則。
-fixture 裡本來就有帶 `replyTo`（含一則只有 `id`、引不到原文的）、`reactions` 和
-`readBy` 的訊息。
+`reply`/`react`/`unsend` are in too and write `events` like the real thing:
+`send` and `reply` append a `message` event (the real daemon gets LINE's echo
+of your own send), then a `read` event two seconds later with `readBy`
+attached — without this "fake peer" the panel's read receipts have nothing to
+test against. `react` swaps the whole `reactions` list (not a delta), and
+`unsend` only accepts messages `ME` sent. The fixture already includes
+messages with `replyTo` (one only carrying `id`, unquotable), `reactions` and
+`readBy`.
 
-貼圖也在：`stickers` 回兩個假的貼圖包（一包靜態、一包動態，`url` 是真的 CDN 路徑），
-`sendSticker` 的兩句拒絕跟 daemon 一模一樣，送出去會是一則 `contentType: "STICKER"`、
-帶 `stickerUrl` 的訊息事件。
+Stickers too: `stickers` returns two fake packs (one static, one animated,
+`url`s on the real CDN paths), `sendSticker`'s two refusals match the daemon
+verbatim, and a send produces a `contentType: "STICKER"` message event with a
+`stickerUrl`.
 
-`image` 也在，而且非有不可：面板只讀本機檔，少了它貼圖格、貼圖選單、FLEX 預覽和燈箱
-在 stub 底下全是破圖。stub 沒有網路，所以圖是畫出來的 —— 一個網址一個檔（sha256 命名、
-跟 daemon 同樣放 `media/public-images/`、不帶副檔名），問幾次都是同一條路徑，`#` 後面
-那半跟 daemon 一樣先丟掉。不是 `https://`、帶帳號密碼、或解析不出來的網址，回的是跟
-daemon 一字不差的 `圖片下載失敗`。
+`image` is in, necessarily: the panel only reads local files, so without it
+the sticker grid, picker, FLEX previews and lightbox are all broken images
+under the stub. The stub has no network so images are drawn — one file per
+URL (sha256-named, same `media/public-images/` location as the daemon, no
+extension), the same path every ask, with the `#` tail dropped like the
+daemon. Non-`https://`, credentialed, or unparseable URLs get the daemon's
+verbatim `圖片下載失敗`.
 
-大頭貼也在：一部分聊天室和送出者有 `avatarPath`／`fromAvatar`（`media/avatars/` 底下
-畫出來的假圖），一部分故意沒有 —— 沒有大頭貼的那一列面板一樣要畫得出來。
+Avatars too: some chats and senders carry `avatarPath`/`fromAvatar` (drawn
+fake images under `media/avatars/`), some deliberately don't — a row without
+an avatar must still render.
 
-`hide`／`unhide` 也在（跟 daemon 一樣不看有沒有登入），被隱藏的那幾間會在寫 state 的
-當下帶上 `hidden: true`：沒有它，右鍵選單、搜尋才找得回來、以及「隱藏之後不算未讀」
-這幾條路在沒有 LINE session 的時候一條都走不完。stub 記在記憶體裡（它跟著暫存的
-state 目錄一起丟掉），不寫 `hidden.json`。
+`hide`/`unhide` are in (login-blind like the daemon), stamping `hidden: true`
+at state-write time: without it the right-click menu, search-finds-it-back
+and hidden-doesn't-count-unread paths can't run without a LINE session. The
+stub keeps it in memory (dropped with the temp state dir) and never writes
+`hidden.json`.
 
-stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mid>"}` 會寫一筆
-`state.wanted`，等同於「使用者點了那間聊天室的通知」。真的 daemon 是從 `notify-send`
-的 action 走到這一步的，需要通知伺服器、一則通知和一個人去點它，開發時驅動不了。
+The stub has one command the real daemon lacks — `poke`:
+`{"cmd":"poke","chat":"<mid>"}` writes a `state.wanted`, equivalent to "the
+user clicked that chat's notification". The real daemon reaches the same
+point via `notify-send`'s action — needing a notification server, a
+notification, and a person to click it, none of which development can drive.
 
-`python3 daemon/stub_test.py` 把這些形狀釘在上面的契約上（純標準庫，跑在自己的暫存
-`XDG_STATE_HOME` 裡）。
+`python3 daemon/stub_test.py` pins these shapes against the contract above
+(pure stdlib, runs inside its own temp `XDG_STATE_HOME`).
 
-**別讓 stub 指到真的 state 目錄** —— 它會蓋掉 `state.json`。
+**Never point the stub at the real state dir** — it will overwrite
+`state.json`.
 
-## 這個 repo 的改動
+## Changes in this repo
 
-原始外掛作者 Unayung（MIT）；本 repo 為 fork，已與上游分離。
+Original plugin by Unayung (MIT); this repo is a fork, since diverged.
 
-daemon 原本是另一個 repo，現在收進來（改寫成單檔 Deno），並加了：
+The daemon used to live in another repo — vendored in now (rewritten as a
+single Deno file) — with these additions:
 
-- 多行訊息：Shift+Enter 換行
-- 面板關著時發桌面通知
-- 清單預覽自己發的訊息顯示「我:」
-- 貼圖當圖片顯示，不再是空白
-- 對話裡顯示系統事件（加入／退出／改名）與日期分隔線
-- 面板內登出
-- 送出失敗時把文字還回輸入框，不會直接吞掉
-- 每次送出只 refresh 一次聊天室清單（原本兩次）
-- `twoPane` 版面按 Esc 保留右邊那欄，不會整個收掉
-- 重開聊天室吃 history 快取，不用等網路
-- 介面字串中文化
-- 搜尋同時比對訊息預覽，不只聊天室名稱
-- 影片縮圖（非 E2EE）
-- 媒體快取上限 14 天／500 MB，自動掃
-- room 傳檔給明確錯誤訊息，不再冒出 `Invalid mid`
-- `refreshChats` 快取聯絡人名稱，少打很多次 API
-- 抓到全部 122 個聊天室（原本 50，而且 1:1 聊天全被 group 擠掉）
-- `agoText` 防呆，`lastTime` 缺漏時不再顯示 `NaN`
+- Multiline messages: Shift+Enter newline
+- Desktop notifications while the panel is closed
+- Own-message previews in the list show "我:"
+- Stickers render as images instead of blanks
+- System events (join/leave/rename) and date separators in conversations
+- In-panel logout
+- Failed sends return the text to the input instead of eating it
+- One chat-list refresh per send (was two)
+- Esc in the `twoPane` layout keeps the right pane instead of closing all
+- Reopened chats serve the history cache — no network wait
+- UI strings localized to Traditional Chinese
+- Search also matches message previews, not just chat names
+- Video thumbnails (non-E2EE)
+- Media cache capped at 14 days / 500 MB, auto-swept
+- File sends to rooms get a clear error instead of `Invalid mid`
+- `refreshChats` caches contact names — many fewer API calls
+- All 122 chats fetched (was 50, and 1:1 chats were all squeezed out by groups)
+- `agoText` guarded — a missing `lastTime` no longer shows `NaN`
 
-### linejs 用自己的 fork
+### linejs is our own fork
 
-daemon 不吃 `jsr:@evex/linejs`，吃 `daemon/vendor/linejs` 這個 submodule。
-來源是公開 fork `frankekn/linejs`，實際版本由 submodule pin 固定。理由是這幾個修的都是**上游有、我們天天踩**的 bug，而且都在協定層，
-在 daemon 這邊繞不過去：
+The daemon doesn't eat `jsr:@evex/linejs` — it eats the `daemon/vendor/linejs`
+submodule. The source is the public fork `frankekn/linejs`, pinned by the
+submodule. Reason: these fixes are all **upstream bugs we hit daily**, in the
+protocol layer where the daemon can't route around them:
 
-| commit | 修了什麼 |
+| commit | what it fixes |
 |---|---|
-| `82d317d` | `LegyEncryptedTransport.fetch` 重組請求時漏了 `AbortSignal`，加密過的呼叫等於沒有 timeout —— 睡醒後死掉的 keep-alive 連線會一直掛著 |
-| `15c4142` | `Conn.new` 裡那個沒人 await 的 async IIFE，fetch 失敗時變成 unhandled rejection，在 Deno 上直接把整隻 daemon 打死 |
-| `0febc75` | 群組換人就換一把 shared key，訊息信封上的 `groupKeyId` 指的是加密當下那一代；舊碼一律去要「最新那把」，於是整段歷史都解不開（AES-GCM tag 對不起來）。改成照 `keyId` 要，快取也照代數分開 |
-| `52c2f36` | 上面那條的邊界：非數字的 key id 被 `Number()` 變成 `NaN`，快取永遠 miss，還把 `groupKeyId: NaN` 送上線 |
-| `e9079ab` | 把上游 v3.3.3 合進來：我們的五個修正都已被上游接受（PR #231–#235），另外拿到上游自己修的登入 keychain 依 id 選 key（issue #229）與連線 timeout |
-| `0e38be5` | 上面 `15c4142` 那個 catch handler 自己也可能丟：使用者掛的 `log` listener 一丟例外，unhandled rejection 就回來了。改成先 `resolve()`，log 包在 try/catch 裡（上游 PR #232 審查提出，先進 fork） |
-| `e72bd12` | obs 用一般 HTTP 錯誤碼回答死掉的物件，三條下載路徑卻照樣讀 body，於是過期檔案的錯誤長成「HMAC verification failed」。改成先看 `response.ok`，非 2xx 丟 `ObsError` —— daemon 的「檔案已過期或已被刪除」就是接這個 |
-| `f785547` | 把上游 v3.4.1 合進來：F9 的三個修正（listen 迴圈不再讓整隻 daemon 死掉、E2EE 重試檢查不再對沒有 code 的錯誤丟 TypeError、`react` 送真的 reqSeq）已被上游接受（PR #239），維護者順手加了四樣我們沒有的：pusher 起不來時把兩條 stream 用原始錯誤收掉、listen 迴圈裡每一則事件各自 try/catch、`getReqseq` 序列化（同時的第一次反應不會全拿 0）、`islisten` 在 `finally` 清掉 |
-| `a041d4a` | `uploadMediaByE2EE` 多一個 `durationMs` 參數：那條路 obs 只看得到加密後的 blob，讀不出容器裡的長度（一般的 `uploadObjTalk` 會自己讀、還會送 obs 的 `duration`），所以值得由呼叫端給，加進它自己組的 contentMetadata 當 `DURATION` —— 沒有這個，E2EE 影片在對方那邊一律是 0:00。只認 video，聲音的鍵沒在 thrift 型別裡確認過；非正數或非有限的值直接丟掉 |
-| `fc0651d` | 把上游 v3.4.2 合進來：`durationMs` 已被上游接受（PR #240），維護者把檢查改成先四捨五入成整數毫秒再驗 `Number.isSafeInteger`，所以極大或帶小數的值不會再被靜靜丟掉。順帶拿到上游這版自己修的東西 |
-| `b32a9bb` | `uploadMediaByE2EE` 接受額外的 `contentMetadata`，並與它自己管理的 OBS 欄位合併。面板的穩定請求識別因此能隨圖片、影片與檔案送出，再由歷史精確確認斷線前的傳送結果 |
-| `01efb30` | caller metadata 不能覆寫受管理的影片長度，也不能注入 `DOWNLOAD_URL`／`PREVIEW_URL` 讓接收端繞過 E2EE object；穩定請求識別等其他 metadata 仍會保留 |
-| `af30075` | 媒體下載接上呼叫端的 `AbortSignal`：面板斷線或登出時，daemon 取消中的圖片／縮圖／原檔下載可以真的中止，而不是把頻寬和佇列名額耗在沒人等的回應上（`bcc9ff3` 是合併兩條修復線的 merge pin） |
+| `82d317d` | `LegyEncryptedTransport.fetch` dropped `AbortSignal` while rebuilding requests — encrypted calls effectively had no timeout; a keep-alive connection dead since sleep would hang forever |
+| `15c4142` | the un-awaited async IIFE in `Conn.new` turned a failed fetch into an unhandled rejection, killing the whole daemon on Deno |
+| `0febc75` | groups rotate a shared key on member change and the envelope's `groupKeyId` names the generation at encryption time; old code always asked for "the latest key", so whole history was undecryptable (AES-GCM tag mismatch). Ask by `keyId`, cache per generation |
+| `52c2f36` | edge of the above: a non-numeric key id `Number()`s to `NaN`, making the cache miss forever and pushing `groupKeyId: NaN` onto the wire |
+| `e9079ab` | merged upstream v3.3.3: all five of our fixes accepted upstream (PR #231–#235), plus upstream's own login keychain pick-key-by-id (issue #229) and a connection timeout |
+| `0e38be5` | `15c4142`'s catch handler itself could throw: a user's `log` listener throwing brings the unhandled rejection back. `resolve()` first, log inside try/catch (from upstream PR #232 review, landed in the fork first) |
+| `e72bd12` | obs answers dead objects with normal HTTP error codes, but three download paths read the body anyway — so an expired file's error grew "HMAC verification failed". Check `response.ok` first, non-2xx throws `ObsError` — the daemon's "檔案已過期或已被刪除" maps from it |
+| `f785547` | merged upstream v3.4.1: F9's three fixes accepted upstream (PR #239) — the listen loop no longer kills the daemon, the E2EE retry check no longer throws TypeError on codeless errors, `react` sends a real reqSeq — and the maintainer added four things we lacked: erroring both streams with the original error when the pusher can't start, per-event try/catch in the loop, `getReqseq` serialization (concurrent first reactions no longer all get 0), and `islisten` cleared in `finally` |
+| `a041d4a` | `uploadMediaByE2EE` takes a `durationMs` param: on that path obs only sees the encrypted blob and can't read the container duration itself (plain `uploadObjTalk` reads it and sends obs's `duration`), so it's worth the caller providing it — folded into the contentMetadata it builds as `DURATION`. Without it, E2EE videos all show 0:00 on the other side. Video only — audio keys weren't confirmed in the thrift types; non-positive or non-finite values are dropped |
+| `fc0651d` | merged upstream v3.4.2: `durationMs` was accepted upstream (PR #240); the maintainer changed validation to round to integer ms first and check `Number.isSafeInteger`, so huge or fractional values no longer silently drop. Also picks up this version's own upstream fixes |
+| `b32a9bb` | `uploadMediaByE2EE` accepts extra `contentMetadata`, merged with the OBS fields it manages. The panel's stable request id can now ride image, video and file sends — precisely confirming pre-disconnect outcomes via history |
+| `01efb30` | caller metadata can't override the managed video duration or inject `DOWNLOAD_URL`/`PREVIEW_URL` to let a receiver bypass E2EE objects; the stable request id and other metadata still pass through |
+| `af30075` | media downloads take the caller's `AbortSignal`: on panel disconnect or logout, in-flight image/thumbnail/original downloads truly abort instead of burning bandwidth and queue slots on answers nobody waits for (`bcc9ff3` is the merge pin joining both fix lines) |
 
-另外 `7df1464` 不修 bug：把 fork 根目錄的 `README.md` 從 symlink
-改成真檔案，`omarchy plugin validate` 才會過（見[開發](#開發)）。
+Separately, `7df1464` fixes no bug: it turned the fork's root `README.md`
+from a symlink into a real file so `omarchy plugin validate` passes (see
+[Development](#development)).
 
-補丁自帶的測試跟著 fork 走：`base/` 底下 `request`、`push`、`e2ee`、`obs` 這四個
-資料夾裡的 `*.test.ts` 共 14 個，在 fork 那邊 `deno test -A` 跑（目前全套
-352 個測試）。本 repo 的 `deno task test` 把 `vendor/` 排除掉，只跑自己的測試。
+The patches' own tests live in the fork: the 14 `*.test.ts` files under
+`base/`'s `request`, `push`, `e2ee` and `obs` dirs run there with
+`deno test -A` (352 tests total now). This repo's `deno task test` excludes
+`vendor/` and only runs its own.
 
-要跟上游同步的時候：
+To sync with upstream:
 
 ```bash
 git submodule sync -- daemon/vendor/linejs
 git submodule update --init daemon/vendor/linejs
 cd daemon/vendor/linejs
-git remote add upstream https://github.com/evex-dev/linejs.git   # 只需一次
+git remote add upstream https://github.com/evex-dev/linejs.git   # once
 git fetch upstream
-git rebase upstream/main main         # fork 的維護分支
-deno test -A                          # 先在 fork 裡確認補丁還成立
+git rebase upstream/main main         # the fork's maintenance branch
+deno test -A                          # prove the patches still hold, in the fork
 git push --force-with-lease origin main
 cd ../../..
-git add daemon/vendor/linejs          # 主 repo 的 pin 要跟著動，這步漏了等於沒升級
+git add daemon/vendor/linejs          # move the pin — skip this and the bump never happened
 cd daemon && deno task check && deno task test
 ```
 
-哪天這些都進了上游，就把 submodule 拿掉、import map 換回 `jsr:@evex/linejs`。
+The day all of this lands upstream, drop the submodule and point the import
+map back at `jsr:@evex/linejs`.
 
-## 已知限制
+## Known limits
 
-- 非官方 client，有帳號風險（見上）
-- 多人聊天室（`r…` 開頭）不能傳檔案 —— linejs 的 `uploadMediaByE2EE` 只收 `u`／`c`
-- E2EE 影片顯示 📎 而不是縮圖：縮圖也是加密的，要抓整支影片才拿得到
-- 送出的影片要有預覽圖得裝 `ffmpegthumbnailer` 或 `ffmpeg`；兩個都沒有就是送出去
-  沒有預覽圖（見「媒體與傳檔」），這是刻意不把解碼器變成必要相依
-- 送出的影片沒有帶解析度（`WIDTH`／`HEIGHT`）：那得真的解一格畫面才知道，而縮圖
-  那一步是可以不在的
-- AVI 讀不出長度：`RIFF` 的長度不在檔頭的固定位置，而 LINE 也不會自己算
+- Unofficial client — account risk (see above)
+- Multi-person rooms (`r…` mids) can't take files — linejs's
+  `uploadMediaByE2EE` only accepts `u`/`c`
+- E2EE videos show 📎 rather than a thumbnail: the thumbnail is encrypted
+  too — getting one means downloading the whole video
+- Sent videos need `ffmpegthumbnailer` or `ffmpeg` for a preview; with
+  neither they send without one (see "Media and files") — deliberately not
+  making a decoder a hard dependency
+- Sent videos carry no resolution (`WIDTH`/`HEIGHT`): knowing it takes
+  decoding a frame, and the thumbnail step is allowed to be absent
+- AVI has no readable duration: `RIFF` doesn't fix a duration's position in
+  the header, and LINE won't compute it either
 
-## 開發
+## Development
 
-改完一定要跑：
+After any change, run:
 
 ```bash
 omarchy plugin validate .
@@ -1100,17 +1368,21 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
 (cd daemon && deno task check)
 ```
 
-`omarchy plugin validate` 拒絕外掛資料夾裡的**任何** symlink（只跳過 `.git`）。有兩個
-決定就是為了讓它在 submodule 補完之後照樣 exit 0：`nodeModulesDir` 設 `"none"`（設
-`"auto"` 會在 `daemon/node_modules/` 生出六百多條），以及 fork 的根 `README.md` 是真檔案
-而不是指向 `packages/linejs/README.md` 的 symlink。要改這兩個之前先想一下這一行。
+`omarchy plugin validate` refuses **any** symlink inside the plugin folder
+(only `.git` is skipped). Two decisions exist so it still exits 0 after the
+submodule lands: `nodeModulesDir` `"none"` (`"auto"` would grow six-hundred-odd
+symlinks under `daemon/node_modules/`), and the fork's root `README.md` is a
+real file rather than a symlink into `packages/linejs/README.md`. Think of
+this line before touching either.
 
-三個都要 exit 0，但**證明不了畫面長得對**。行為則由 repo 內建的測試證明——不需要
-daemon、socket 或 state 目錄，`node tests/qml/run.js` 直接從 `Panel.qml` 切出函式本體
-跑；`tests/qml/keytest/run.sh` 用離屏 `qmltestrunner` 驗清單檢視的按鍵路徑（沒裝
-qmltestrunner 就跳過並回 0）；`cd daemon && deno task test` 直接匯入
-`panelserver.ts` 測 socket 分派，仍與 daemon 緊密耦合的純函式則從 `daemon.ts` 的
-`// enil:*` 標記之間切出來測：
+All three must exit 0 — but **none proves the screen looks right**. Behavior
+is proven by the repo's own harnesses — needing no daemon, socket or state
+dir: `node tests/qml/run.js` slices function bodies straight out of
+`Panel.qml` and runs them; `tests/qml/keytest/run.sh` exercises the list
+view's key paths under an offscreen `qmltestrunner` (skips and returns 0 when
+it isn't installed); `cd daemon && deno task test` imports `panelserver.ts`
+for socket dispatch, and pure functions still coupled to the daemon are
+sliced out of `daemon.ts` between `// enil:*` markers:
 
 ```bash
 node tests/qml/run.js
@@ -1119,14 +1391,16 @@ python3 daemon/stub_test.py
 cd daemon && deno task fmt && deno task check && deno task no-any && deno task lint && deno task test
 ```
 
-這些檢查全部在本機跑。submodule 是公開 fork，CI 直接 `submodules: true` 取得；`omarchy plugin validate` 和 `qmllint` 也需要本機的 omarchy shell
-QML modules。實機驗證：
+All of these run locally. The submodule is a public fork — CI fetches it with
+`submodules: true`; `omarchy plugin validate` and `qmllint` need the local
+omarchy shell's QML modules anyway. Verify on hardware:
 
 ```bash
-omarchy restart shell                 # 改 QML 之後
-systemctl --user restart enil         # 改 daemon 之後
+omarchy restart shell                 # after QML changes
+systemctl --user restart enil         # after daemon changes
 ```
 
-## 安全紅線
+## Safety red lines
 
-見 [SAFETY.md](SAFETY.md) — EasyMigration/帳號轉移永久禁止,以及其他不可碰的操作。
+See [SAFETY.md](SAFETY.md) — EasyMigration/account transfer is permanently
+forbidden, along with the other operations that must never be touched.

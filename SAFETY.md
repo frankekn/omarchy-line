@@ -1,5 +1,7 @@
 # SAFETY — operations this project will never implement
 
+[繁體中文](SAFETY.zh-TW.md)
+
 Any agent, session, or script working on this repository is permanently
 forbidden from the following:
 
