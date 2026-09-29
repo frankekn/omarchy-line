@@ -35,7 +35,7 @@ interface PluginEvent {
 let scheduled = 0;
 function scheduleEventsWrite(): void { scheduled++; }
 export function writesAsked(): number { return scheduled; }
-export { pushEvent, events, EVENTS_MAX };
+export { pushEvent, events, eventSeq, EVENTS_MAX, setEventSink };
 `;
 
 interface WriteModule {
@@ -140,4 +140,25 @@ Deno.test("kinds keep their own payload fields", async () => {
   assertEquals(read.by, "u2");
   assertEquals(read.upTo, "1");
   assertEquals(react.reactions, [{ type: "NICE", count: 1, mine: false }]);
+});
+
+Deno.test("the sink sees each event with its seq before the write is asked", async () => {
+  const m = await loadBlock<
+    RingModule & {
+      eventSeq: number;
+      setEventSink(sink: ((e: TestEvent) => void) | null): void;
+    }
+  >("eventring", RING_PRELUDE);
+  const seen: TestEvent[] = [];
+  m.setEventSink((e) => seen.push({ ...e }));
+  m.pushEvent({ kind: "message", chat: "c1", message: { id: "1" } });
+  m.pushEvent({ kind: "read", chat: "c1", by: "u2", upTo: "1" });
+  m.setEventSink(null);
+  m.pushEvent({ kind: "read", chat: "c1", by: "u2", upTo: "2" });
+  assertEquals(seen.length, 2);
+  // The sink gets the fully numbered event, so a subscriber never has to guess
+  // where in the ring it landed.
+  assertEquals(seen[0].seq, 1);
+  assertEquals(seen[1].seq, 2);
+  assertEquals(seen[1].kind, "read");
 });

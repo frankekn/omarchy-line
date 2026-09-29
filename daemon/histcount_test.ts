@@ -80,10 +80,15 @@ Deno.test("a count is a whole number of messages", async () => {
 
 Deno.test("the bound the panel clamps to is the bound reachable here", async () => {
   const m = await loadModule();
+  // The clamp itself moved to the shared library (PanelKit.js); the step list
+  // the button cycles is still a Panel.qml property.
+  const kit = await Deno.readTextFile(
+    new URL("../PanelKit.js", import.meta.url),
+  );
   const panel = await Deno.readTextFile(
     new URL("../Panel.qml", import.meta.url),
   );
-  const clamp = /return Math\.max\(20, Math\.min\((\d+), n\)\)/.exec(panel);
+  const clamp = /return Math\.max\(20, Math\.min\((\d+), n\)\)/.exec(kit);
   assertEquals(clamp?.[1], String(m.HISTORY_COUNT_MAX));
   // Every step the panel's button can reach must survive this end unchanged,
   // or the button would name a page size the daemon quietly refuses to fetch.

@@ -72,6 +72,7 @@ import {
   me,
   pushEvent,
   saveHidden,
+  setChatSink,
   setEventSink,
   setHidden,
   writeState,
@@ -889,6 +890,19 @@ const panelPushers = new Set<(line: string) => void>();
 
 setEventSink((ev) => {
   const line = JSON.stringify({ event: ev, boot: BOOT_ID });
+  for (const send of panelPushers) send(line);
+});
+
+// A row that moved gets its own frame so the list preview reorders instantly;
+// rows that did not change are not worth the bytes -- the file converges them
+// on its own throttle. A chat patch shares the push channel but not the event
+// ring: it carries no seq, its own chatsRevision is the watermark.
+setChatSink((row, revision) => {
+  const line = JSON.stringify({
+    chat: row,
+    chatsRevision: revision,
+    boot: BOOT_ID,
+  });
   for (const send of panelPushers) send(line);
 });
 

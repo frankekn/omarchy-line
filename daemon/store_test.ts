@@ -182,6 +182,122 @@ Deno.test("bigint wire fields survive the round trip", async () => {
   });
 });
 
+async function diskLines(dir: string): Promise<number> {
+  const text = await Deno.readTextFile(`${dir}/messages/${ME}/${CHAT}.jsonl`);
+  return text.split("\n").filter((l) => l.trim()).length;
+}
+
+Deno.test("dead overlay lines get folded back into the file", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const store = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 4,
+      compactRatio: 2,
+    });
+    store.append(ME, CHAT, [msg(1, "a"), msg(2, "b"), msg(3, "c")]);
+    await store.flush();
+    // Compaction only rewrites files someone reads -- load the index first.
+    assertEquals((await store.tail(ME, CHAT, 10))?.length, 3);
+    // Ten reaction overlays on one message: 10 dead lines over 3 live rows.
+    for (let i = 0; i < 10; i++) {
+      store.reactions(ME, CHAT, "1", new Map([[`u-p${i}`, "NICE"]]));
+    }
+    await store.flush();
+    // The rewrite runs on the writing chain, so flush() has already seen it.
+    assertEquals(await diskLines(dir), 3);
+    const tail = await store.tail(ME, CHAT, 10);
+    assertEquals(tail?.map((m) => m.text), ["a", "b", "c"]);
+    // The latest overlay is the one that survived the fold.
+    const reactions = tail?.[0]?.reactions as Record<string, unknown>[];
+    assertEquals(reactions[0].fromUserMid, "u-p9");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a compacted file reloads to the same index", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const first = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 2,
+      compactRatio: 2,
+    });
+    first.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    first.tombstone(ME, CHAT, "2"); // row stays, marked unsent
+    first.tombstone(ME, CHAT, "999"); // a stub for a message never seen
+    for (let i = 0; i < 6; i++) {
+      first.reactions(ME, CHAT, "1", new Map([[`u-p${i}`, "LOVE"]]));
+    }
+    await first.flush();
+    // Reading the chat loads the index and queues the rewrite; flush()
+    // settles the chain it was queued on.
+    assertEquals((await first.tail(ME, CHAT, 10))?.length, 2);
+    await first.flush();
+    // 2 live rows (incl. the tombstoned one) + the unseen stub.
+    assertEquals(await diskLines(dir), 3);
+
+    // A cold reopen is a daemon restart; it must see the identical view.
+    const second = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 2,
+      compactRatio: 2,
+    });
+    const tail = await second.tail(ME, CHAT, 10);
+    assertEquals(tail?.map((m) => m.text), ["a", "b"]);
+    const gone = tail?.[1] ?? {};
+    assertEquals(
+      (gone.contentMetadata as Record<string, unknown>).UNSENT,
+      "true",
+    );
+    const reactions = tail?.[0]?.reactions as Record<string, unknown>[];
+    assertEquals(reactions[0].fromUserMid, "u-p5");
+    // The stub answers get() but never joins the message order.
+    const stub = await second.get(ME, CHAT, "999");
+    assertEquals(
+      (stub?.contentMetadata as Record<string, unknown>).UNSENT,
+      "true",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a bloated file compacts on cold open, and later appends land", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    // First store: compaction off, so the file accumulates dead lines.
+    const off = createMessageStore(`${dir}/messages`, {
+      compactMinLines: Number.MAX_SAFE_INTEGER,
+    });
+    off.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    await off.flush();
+    for (let i = 0; i < 8; i++) {
+      off.reactions(ME, CHAT, "1", new Map([[`u-p${i}`, "NICE"]]));
+    }
+    await off.flush();
+    assertEquals(await diskLines(dir), 10);
+
+    // Second store: opening the chat queues the rewrite; flush() settles it.
+    const on = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 2,
+      compactRatio: 2,
+    });
+    assertEquals((await on.tail(ME, CHAT, 10))?.length, 2);
+    await on.flush();
+    assertEquals(await diskLines(dir), 2);
+
+    // Appends after the rewrite land on the new file, nothing is lost.
+    on.append(ME, CHAT, [msg(3, "c")]);
+    await on.flush();
+    const third = createMessageStore(`${dir}/messages`);
+    assertEquals(
+      (await third.tail(ME, CHAT, 10))?.map((m) => m.text),
+      ["a", "b", "c"],
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("binary wire fields revive as Uint8Array, not tagged objects", async () => {
   await withStore(async (store, dir) => {
     // Write the exact shape Buffer.toJSON leaves on disk, because the wire

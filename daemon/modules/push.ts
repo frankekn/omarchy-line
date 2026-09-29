@@ -192,7 +192,7 @@ async function onIncomingMessage(
         const rows = chats.slice();
         rows[at] = { ...previous, lastText, lastTime, lastFrom };
         setChats(rows.sort((a, b) => b.lastTime - a.lastTime));
-        bumpChatsRevision();
+        bumpChatsRevision(rows[at]);
         publishedSummary = true;
         repaintedRow = true;
       } else if (identityIsCurrent) {
@@ -204,7 +204,7 @@ async function onIncomingMessage(
       // A push can introduce a chat that was absent from the boxes snapshot
       // currently being built. Publish a complete provisional row so that
       // reconciliation can retain it even if the compensating fetch fails.
-      setChats([{
+      const row = {
         mid: chat,
         name: provisionalChatName(
           chat,
@@ -216,8 +216,9 @@ async function onIncomingMessage(
         lastText,
         lastTime,
         lastFrom,
-      }, ...chats].sort((a, b) => b.lastTime - a.lastTime));
-      bumpChatsRevision();
+      };
+      setChats([row, ...chats].sort((a, b) => b.lastTime - a.lastTime));
+      bumpChatsRevision(row);
       publishedSummary = true;
     }
     if (publishedSummary) {
@@ -307,7 +308,7 @@ async function onEditedMessage(
         const rows = chats.slice();
         rows[at] = { ...rows[at], lastText };
         setChats(rows);
-        bumpChatsRevision();
+        bumpChatsRevision(rows[at]);
       }
       chatSummaryStore.summaryCache.delete(chat);
       chatSummaryStore.chatSummaryEpoch++;
@@ -476,7 +477,7 @@ function onTalkOp(op: RawOperationFields): void {
         const rows = chats.slice();
         rows[at] = { ...rows[at], lastText: UNSENT_TEXT };
         setChats(rows);
-        bumpChatsRevision();
+        bumpChatsRevision(rows[at]);
       }
       chatSummaryStore.chatSummaryEpoch++;
       chatSummaryVersions.delete(ev.chat);

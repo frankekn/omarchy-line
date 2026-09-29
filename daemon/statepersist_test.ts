@@ -15,7 +15,7 @@ interface StatePersistModule {
   releaseStateWrites(): void;
   writeState(): Promise<void>;
   invalidateStateWrites(): Promise<void>;
-  addEvent(seq: number): void;
+  addEvent(seq: number, kind?: string): void;
   hide(mid: string): void;
   setNow(value: number): void;
 }
@@ -79,6 +79,18 @@ export const writes: string[] = [];
 export let renames = 0;
 export let removes = 0;
 const Deno = {
+  open(_path: string, _opts?: unknown) {
+    return Promise.resolve({
+      write(bytes: Uint8Array) {
+        writes.push(new TextDecoder().decode(bytes));
+        return Promise.resolve();
+      },
+      sync() {
+        return Promise.resolve();
+      },
+      close() {},
+    });
+  },
   async writeTextFile(_path: string, text: string) {
     writes.push(text);
   },
@@ -89,7 +101,7 @@ const Deno = {
   remove() { removes++; return Promise.resolve(); },
 };
 export function release() { unblock(); }
-export function addEvent(seq: number) { events.push({ seq }); }
+export function addEvent(seq: number, kind?: string) { events.push({ seq, kind }); }
 export function renameChat(name: string) { chats = [{ mid: "old-chat", name }]; }
 export function hide(mid: string) { hidden.add(mid); }
 export function setNow(value: number) { now = value; }

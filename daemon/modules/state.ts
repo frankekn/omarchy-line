@@ -37,8 +37,9 @@ import type { Json, PluginChat, PluginEvent } from "./types.ts";
 // enil:eventring-begin
 /**
  * How much of the recent past a panel that was closed can catch up on without
- * re-fetching history. Every entry carries a whole PluginMessage, so this is
- * also the cap on how large state.json can grow.
+ * re-fetching history, and how far a resubscribing socket can replay. Every
+ * entry carries a whole PluginMessage, so this is also the cap on how large
+ * the persisted `events` array can grow.
  */
 const EVENTS_MAX = 200;
 let events: PluginEvent[] = [];
@@ -227,8 +228,19 @@ function saveHidden(path: string = HIDDEN_PATH): Promise<void> {
     // put the first click's set on disk first, and a kill landing between the
     // two writes would leave the file a click behind the panel.
     const blob = JSON.stringify({ mids: [...hiddenMids] });
-    const tmp = `${path}.tmp`;
-    await Deno.writeTextFile(tmp, blob);
+    const tmp = `${path}.${Deno.pid}.tmp`;
+    const handle = await Deno.open(tmp, {
+      write: true,
+      create: true,
+      truncate: true,
+      mode: 0o600,
+    });
+    try {
+      await handle.write(new TextEncoder().encode(blob));
+      await handle.sync();
+    } finally {
+      handle.close();
+    }
     await Deno.rename(tmp, path); // atomic, like every other file we own
   }).catch((e) => {
     // Losing the file costs the user hiding a row again, never a message, so
@@ -239,13 +251,22 @@ function saveHidden(path: string = HIDDEN_PATH): Promise<void> {
 }
 
 async function loadHidden(path: string = HIDDEN_PATH): Promise<void> {
-  let parsed: unknown;
+  let text: string;
   try {
-    parsed = JSON.parse(await Deno.readTextFile(path));
+    text = await Deno.readTextFile(path);
   } catch {
     // No file yet, or one we cannot read. Starting with nothing hidden is the
     // recoverable answer -- a daemon that refused to boot over a preferences
     // file would take the whole chat list down with it.
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    // Same recoverable answer, but say so: silently forgetting the hidden
+    // rows looked exactly like the user unhiding everything.
+    console.error("[hidden] unreadable file:", errorLine(e));
     return;
   }
   const mids = (parsed as { mids?: unknown } | null)?.mids;
@@ -345,10 +366,27 @@ function writeState(): Promise<void> {
       2,
     );
     const started = performance.now();
-    const tmp = `${STATE_PATH}.tmp`;
+    // Pid-suffixed tmp: two daemons (the single-instance gate tries to
+    // prevent it; a hand-run one does not always) must not rename a
+    // half-written file onto each other's state.
+    const tmp = `${STATE_PATH}.${Deno.pid}.tmp`;
     let committed = false;
     try {
-      await Deno.writeTextFile(tmp, snapshot);
+      const handle = await Deno.open(tmp, {
+        write: true,
+        create: true,
+        truncate: true,
+        mode: 0o600,
+      });
+      try {
+        await handle.write(textEncoder.encode(snapshot));
+        // Durable before the name exists. Rename is atomic for the watcher,
+        // but without this a power loss can leave a fresh state.json whose
+        // bytes never made it to the platter.
+        await handle.sync();
+      } finally {
+        handle.close();
+      }
       if (epoch !== stateEpoch || epoch < stateInvalidationTarget) {
         await Deno.remove(tmp).catch(() => {});
         return;
@@ -505,9 +543,26 @@ export function setChats(next: PluginChat[]): void {
   chats = next;
 }
 
+/**
+ * Subscribed panels get a changed chat row the moment the revision moves, so
+ * the list repaint does not wait on the file throttle. Callers that rebuilt
+ * the whole list (refresh rounds, logout) pass nothing -- that scale of
+ * change still arrives through state.json.
+ */
+let chatSink: ((row: PluginChat, revision: number) => void) | null = null;
+
+function setChatSink(
+  sink: ((row: PluginChat, revision: number) => void) | null,
+): void {
+  chatSink = sink;
+}
+
 /** The panel invalidates its list rendering off this counter. */
-export function bumpChatsRevision(): void {
+export function bumpChatsRevision(changed?: PluginChat): void {
   chatsRevision++;
+  // `hidden` lives on the serialized copy, not the stored row; stamp it before
+  // the row leaves the process or a hidden chat would resurface for a beat.
+  if (changed) chatSink?.(hiddenStamped([changed])[0], chatsRevision);
 }
 
 /** Published together with chats. */
@@ -539,6 +594,7 @@ export {
   clearRefreshHealth,
   dirtyMids,
   events,
+  eventSeq,
   hiddenStamped,
   invalidateStateWrites,
   isHidden,
@@ -555,6 +611,7 @@ export {
   releaseStateWrites,
   saveHidden,
   scheduleStateWrite,
+  setChatSink,
   setEventSink,
   setHidden,
   setLogin,

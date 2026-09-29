@@ -292,7 +292,7 @@ Deno.test("a push publishes a provisional row for a newly encountered chat", asy
     "} else {",
     source.indexOf("if (at >= 0)", incoming),
   );
-  const insert = source.indexOf("setChats([{", missing);
+  const insert = source.indexOf("setChats([row,", missing);
   const version = source.indexOf("chatSummaryVersions.delete(chat)", insert);
   assert(incoming >= 0 && missing > incoming);
   assert(insert > missing && version > insert);

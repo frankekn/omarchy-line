@@ -287,7 +287,7 @@ function settleAvatar(
   // to tell the panel about it until the next refresh.
   if (touched) {
     setChats(next);
-    bumpChatsRevision();
+    bumpChatsRevision(next.find((c) => c.mid === mid));
     scheduleStateWrite();
   }
   return path;
@@ -385,8 +385,19 @@ async function saveAvatarIndex(): Promise<void> {
     pics: Object.fromEntries(avatarIndex),
   });
   try {
-    const tmp = `${AVATAR_INDEX_PATH}.tmp`;
-    await Deno.writeTextFile(tmp, blob);
+    const tmp = `${AVATAR_INDEX_PATH}.${Deno.pid}.tmp`;
+    const handle = await Deno.open(tmp, {
+      write: true,
+      create: true,
+      truncate: true,
+      mode: 0o600,
+    });
+    try {
+      await handle.write(new TextEncoder().encode(blob));
+      await handle.sync(); // same rule as state.json: bytes, then the name
+    } finally {
+      handle.close();
+    }
     await Deno.rename(tmp, AVATAR_INDEX_PATH);
   } catch (e) {
     // Losing the index costs one round of refetching, never a message. The

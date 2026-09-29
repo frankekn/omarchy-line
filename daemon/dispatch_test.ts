@@ -49,7 +49,9 @@ Deno.test("media commands take the dispatch signal down to the download", async 
   assert(
     source.includes("imageCache.get(url, req.invalidate === true, signal)"),
   );
-  assert(panelServer.includes("await options.handle(req, signal)"));
+  assert(
+    panelServer.includes("await options.handle(req, signal)"),
+  );
 });
 
 function controlledConnection(
@@ -1604,4 +1606,81 @@ Deno.test("several panels share one bounded pending media queue", async () => {
   for (const client of clients) client.finish();
   await Promise.all(serving);
   assertEquals(starts.length, 5);
+});
+
+Deno.test("a push line rides the same serialized lane as replies", async () => {
+  let push: ((line: string) => void) | undefined;
+  const config = {
+    ...options((req) => Promise.resolve({ ok: true, data: { cmd: req.cmd } })),
+    attachPusher(send: (line: string) => void) {
+      push = send;
+    },
+  };
+  const conn = controlledConnection(['{"id":1,"cmd":"sync"}\n']);
+  const serving = servePanelConnection(conn, config);
+  await waitFor(() => conn.replies().length === 1, "reply never arrived");
+  push?.('{"event":{"seq":7,"kind":"message","chat":"c1"},"boot":"b1"}');
+  await waitFor(() => conn.replies().length === 2, "push was never written");
+  assertEquals(conn.replies(), [
+    { ok: true, data: { cmd: "sync" }, id: 1 },
+    { event: { seq: 7, kind: "message", chat: "c1" }, boot: "b1" },
+  ]);
+  conn.finish();
+  await serving;
+});
+
+Deno.test("a push that cannot be written closes the connection", async () => {
+  let push: ((line: string) => void) | undefined;
+  let closedReported = false;
+  const config = {
+    ...options(() => Promise.resolve({ ok: true })),
+    attachPusher(send: (line: string) => void) {
+      push = send;
+    },
+    onClosed() {
+      closedReported = true;
+    },
+  };
+  const conn = controlledConnection([], new Error("peer gone"));
+  const serving = servePanelConnection(conn, config).catch(() => {});
+  push?.('{"event":{"seq":1,"kind":"message","chat":"c1"},"boot":"b1"}');
+  await waitFor(
+    () => closedReported,
+    "failed push did not close the connection",
+  );
+  conn.finish();
+  await serving;
+});
+
+Deno.test("chat row pushes ride the same sink the events do", async () => {
+  // The single-row call sites are the wiring; a source pin is the only honest
+  // check here, the same way the logout ordering above is pinned.
+  const state = await Deno.readTextFile(
+    new URL("./modules/state.ts", import.meta.url),
+  );
+  const socket = await Deno.readTextFile(
+    new URL("./modules/socket.ts", import.meta.url),
+  );
+  const push = await Deno.readTextFile(
+    new URL("./modules/push.ts", import.meta.url),
+  );
+  const avatars = await Deno.readTextFile(
+    new URL("./modules/avatars.ts", import.meta.url),
+  );
+  // The row must be stamped before it leaves: hidden lives on the serialized
+  // copy, and an unstamped push would un-hide a chat until the file lands.
+  assert(state.includes("chatSink?.(hiddenStamped([changed])[0]"));
+  assert(
+    socket.includes("chat: row") &&
+      socket.includes("chatsRevision: revision") &&
+      socket.includes("boot: BOOT_ID"),
+  );
+  // Every repaint-of-one-row call site names its row; a bare bump means a
+  // row changed without telling subscribed panels which one.
+  const bumps = push.match(/bumpChatsRevision\(([^)]*)\)/g) ?? [];
+  assert(
+    bumps.length > 0 && bumps.every((b) => b !== "bumpChatsRevision()"),
+    "push.ts must pass the changed row: " + bumps.join(", "),
+  );
+  assert(avatars.includes("bumpChatsRevision(next.find("));
 });

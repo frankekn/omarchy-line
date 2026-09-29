@@ -6,6 +6,8 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "DraftStore.js" as DraftStore
+import "EventLog.js" as EventLog
+import "PanelKit.js" as PanelKit
 
 // bar 上的 LINE：未讀數、聊天室清單、對話與回覆。
 //
@@ -36,6 +38,14 @@ Panel {
   property int reconciliationAttemptedEpoch: -1
   property var ambiguousSendsByChat: ({})
   property var pendingAmbiguousByAccount: ({})
+
+  // Caps for the media bookkeeping tables. They only shed entries when a
+  // retry finishes, a URL is re-asked, or the session ends — so a shell that
+  // pages media for weeks without any of those kept growing them forever.
+  // Object insertion order is age order here (and LINE's numeric ids sort
+  // ascending too), so dropping from the front drops the oldest.
+  readonly property int mediaRetryMax: 200
+  readonly property int imagePathsMax: 2000
 
   function fetchImage(url, invalidate) {
     var key = String(url || "")
@@ -152,10 +162,7 @@ Panel {
   // 選項的值就是顯示文字，改字面不該讓設定靜默失效。認不得的字串一律當預設，
   // 手改壞 shell.json 不該讓面板整個開不出來。
   function placementMode(value) {
-    var v = String(value === undefined || value === null ? "" : value).toLowerCase()
-    if (v.indexOf("app") >= 0) return "app"
-    if (v.indexOf("center") >= 0) return "center"
-    return "bar"
+    return PanelKit.placementMode(value)
   }
 
   readonly property string placement: placementMode(setting("placement", "Below the bar"))
@@ -171,9 +178,7 @@ Panel {
   // App 視窗的大小記在設定裡。範圍要自己夾 —— `omarchy bar set` 不驗 schema，
   // shell.json 裡真的可能是任何數字（或不是數字）。
   function clampWindowSize(value, fallback, min) {
-    var n = Math.round(Number(value))
-    if (!isFinite(n) || n <= 0) n = fallback
-    return Math.max(min, Math.min(4096, n))
+    return PanelKit.clampWindowSize(value, fallback, min)
   }
 
   readonly property int windowWidth: clampWindowSize(setting("windowWidth", 1040), 1040, 560)
@@ -188,9 +193,7 @@ Panel {
   readonly property var scrollSteps: [50, 75, 100, 150, 200, 300]
 
   function clampScroll(value) {
-    var n = Math.round(Number(value))
-    if (!isFinite(n) || n <= 0) n = 100
-    return Math.max(50, Math.min(300, n))
+    return PanelKit.clampScroll(value)
   }
 
   readonly property int scrollPercent: clampScroll(setting("scrollSpeed", 100))
@@ -206,24 +209,17 @@ Panel {
   // 乘在這麼小的基準上，200% 也還是只有 28px，這就是「scroll speed 好像不會生效」。
   // 取大的那個之後方向不能反過來：同一個事件兩個 delta 同號，所以連號帶值一起回。
   function wheelDistance(angleDeltaY, pixelDeltaY) {
-    var px = Number(pixelDeltaY)
-    if (!isFinite(px)) px = 0
-    var deg = Number(angleDeltaY)
-    if (!isFinite(deg)) deg = 0
-    var notch = deg / 120 * Style.space(60)
-    return (Math.abs(notch) > Math.abs(px) ? notch : px) * root.scrollSpeed
+    return PanelKit.wheelDistance(angleDeltaY, pixelDeltaY, Style.space(60), root.scrollSpeed)
   }
 
   // 三個捲動區共用這一條。夾在 originY 和內容底部之間：虛擬化之後內容的頂端不一定
   // 是 0，而超出範圍會被 boundsBehavior 彈回來 —— 彈回來的那幾幀也是 contentYChanged，
   // 訊息清單的「捲到頂就載入上一頁」會被白白觸發。
   function wheelScroll(view, angleDeltaY, pixelDeltaY) {
-    var span = view.contentHeight - view.height
-    if (span <= 0) return                       // 內容比視窗短，沒東西可捲
-    var d = root.wheelDistance(angleDeltaY, pixelDeltaY)
-    if (d === 0) return                         // 橫向滾輪／零位移：別發空的 contentYChanged
-    view.contentY = Math.max(view.originY,
-                             Math.min(view.originY + span, view.contentY - d))
+    var y = PanelKit.wheelTargetY(view.originY, view.contentHeight - view.height,
+                                  view.contentY, angleDeltaY, pixelDeltaY,
+                                  Style.space(60), root.scrollSpeed)
+    if (y !== null) view.contentY = y
   }
 
   // 三個捲動區各掛一顆，實作只有這一份。只吃滾輪：acceptedButtons 是 NoButton，
@@ -258,9 +254,7 @@ Panel {
   readonly property var historySteps: [30, 60, 100, 150]
 
   function clampHistory(value) {
-    var n = Math.round(Number(value))
-    if (!isFinite(n) || n <= 0) n = 60
-    return Math.max(20, Math.min(200, n))
+    return PanelKit.clampHistory(value)
   }
 
   readonly property int historyPage: clampHistory(setting("historyPage", 60))
@@ -456,34 +450,11 @@ Panel {
   // 隱藏的那幾間平常不在清單裡，但**搜尋一打字就回來**（排在沒隱藏的結果後面，
   // 那一列會標「已隱藏」）—— 桌面版 LINE 也是只有搜尋找得回隱藏的聊天。
   function chatRows(all, query, up) {
-    if (!up) return []
-    var q = String(query || "").trim().toLowerCase()
-    // lastText / lastFrom 是選填欄位，舊 state.json 沒有；用 || "" 避免 "undefined" 誤中。
-    function hit(c) {
-      var hay = String(c.name || c.mid) + " " + String(c.lastFrom || "") + " " + String(c.lastText || "")
-      return hay.toLowerCase().indexOf(q) >= 0
-    }
-    // 未讀在前、其餘照時間，最後才是隱藏的那幾間 —— state.chats 只照時間排，
-    // 「未讀在前」一直是面板自己分的（每一堆內部維持原順序）。
-    var unread = []
-    var rest = []
-    var hid = []        // 已隱藏，只有搜尋有字時才會被放進來
-    for (var i = 0; i < all.length; i++) {
-      var c = all[i]
-      if (q.length > 0 && !hit(c)) continue
-      if (c.hidden) hid.push(c)
-      else if (Number(c.unread || 0) > 0) unread.push(c)
-      else rest.push(c)
-    }
-    return q.length === 0 ? unread.concat(rest) : unread.concat(rest, hid)
+    return PanelKit.chatRows(all, query, up)
   }
 
-  // 清單那一列的第二行。隱藏的聊天只有在搜尋結果裡才看得到，所以那一列得自己
-  // 說明為什麼平常找不到它 —— 字級與顏色照舊，這裡只是多一個前綴。
   function rowSubtitle(c) {
-    var line = (c.lastFrom ? c.lastFrom + ": " : "") + (c.lastText || "")
-    if (!c.hidden) return line
-    return line.length > 0 ? "已隱藏 · " + line : "已隱藏"
+    return PanelKit.rowSubtitle(c)
   }
 
   // 清單變短（隱藏一列、搜尋縮小結果）之後選取要跟著夾回來，
@@ -712,8 +683,10 @@ Panel {
     var incoming = root.state && Array.isArray(root.state.chats) ? root.state.chats : []
     var revision = root.state ? Number(root.state.chatsRevision) : NaN
     var chatBoot = root.state ? String(root.state.bootId || "") : ""
+    // revision 只能用 >：推播 patch 會先把 watermark 推到檔案還沒寫到的位置，
+    // 晚到的舊檔不能被允許把新列蓋回去。
     if (!isFinite(revision) || chatBoot !== root.chatBootSeen
-        || revision !== root.chatRevisionSeen) {
+        || revision > root.chatRevisionSeen) {
       if (root.replaceChatSnapshot) root.replaceChatSnapshot(incoming)
       else root.chatSnapshot = incoming
       root.chatRevisionSeen = isFinite(revision) ? revision : -1
@@ -777,7 +750,14 @@ Panel {
       }
     }
     if (nowOk) {
-      if (!wasOk) root.reconciliationEpoch++
+      if (!wasOk) {
+        root.reconciliationEpoch++
+        // An account change that happened while this panel was closed never
+        // reaches the teardown paths above — nothing observed it. The first
+        // settled look at the new session is the last chance to clear the
+        // old account's orphan drafts.
+        if (root.pruneDraftAccountsExcept) root.pruneDraftAccountsExcept(nowMid)
+      }
       root.resumeAttemptBootId = ""
       root.sessionMid = nowMid
       root.sessionEstablished = true
@@ -984,9 +964,17 @@ Panel {
     var attempts = Object.assign({}, root.imageRetryAttempts)
     var attempt = Number(attempts[key] || 0) + 1
     attempts[key] = attempt
-    root.imageRetryAttempts = attempts
     var queued = Object.assign({}, root.imageRetryQueue)
     queued[key] = { invalidate: invalidate === true }
+    // The attempt counter only falls off on a finished retry: a URL whose
+    // image left the visible list mid-congestion kept its entry for the
+    // whole login. A re-asked URL simply starts its backoff again.
+    var qkeys = Object.keys(queued)
+    for (var drop = 0; drop < qkeys.length - root.mediaRetryMax; drop++) {
+      delete queued[qkeys[drop]]
+      delete attempts[qkeys[drop]]
+    }
+    root.imageRetryAttempts = attempts
     root.imageRetryQueue = queued
     imageRetryTimer.interval = Math.min(4000, 250 * Math.pow(2, attempt - 1))
     imageRetryTimer.restart()
@@ -1008,7 +996,6 @@ Panel {
     var attempts = Object.assign({}, root.previewRetryAttempts)
     var attempt = Number(attempts[key] || 0) + 1
     attempts[key] = attempt
-    root.previewRetryAttempts = attempts
     var queued = Object.assign({}, root.previewRetryQueue)
     // chat rides along so the reconnect replay keeps entries belonging to
     // another chat's list instead of dropping them unseen.
@@ -1017,6 +1004,15 @@ Panel {
           || (queued[key] && queued[key].invalidate === true),
       chat: String(chat || ""),
     }
+    // Cap the queue and its attempt counters together (see mediaRetryMax):
+    // entries for chats nobody reopens only leave the replay list on
+    // logout, which for a long-lived session is never.
+    var qkeys = Object.keys(queued)
+    for (var drop = 0; drop < qkeys.length - root.mediaRetryMax; drop++) {
+      delete queued[qkeys[drop]]
+      delete attempts[qkeys[drop]]
+    }
+    root.previewRetryAttempts = attempts
     root.previewRetryQueue = queued
     previewRetryTimer.interval = Math.min(4000, 250 * Math.pow(2, attempt - 1))
     previewRetryTimer.restart()
@@ -1450,6 +1446,7 @@ Panel {
       } else if (root.composerEditedBeforeDraftLoad) root.saveActiveDraft(false)
       else root.restoreDraft(root.activeChat.mid)
     }
+    if (root.pruneDraftAccountsExcept) root.pruneDraftAccountsExcept(root.myMid)
     root.composerEditedBeforeDraftLoad = false
     if (root.flushDeferredDraftActions) root.flushDeferredDraftActions()
   }
@@ -1511,38 +1508,8 @@ Panel {
   }
 
   function accountsWithAmbiguous(accounts, account, byChat, changedChats, removedByChat, clearAll) {
-    var next = Object.assign({}, accounts || {})
-    var chats = Object.assign({}, next[account] || {})
-    var touched = changedChats || byChat || {}
-    for (var chat in touched) {
-      if (!touched[chat]) continue
-      var saved = Object.assign({}, chats[chat] || {})
-      var waiting = Array.isArray(byChat[chat]) ? byChat[chat] : []
-      var previous = Array.isArray(saved.ambiguousSends) ? saved.ambiguousSends : []
-      var removed = (removedByChat || {})[chat] || {}
-      var merged = []
-      var seen = {}
-      if (!clearAll)
-        for (var pi = 0; pi < previous.length; pi++) {
-          var previousId = String((previous[pi] || {}).requestId || "")
-          if (!previousId || removed[previousId] || seen[previousId]) continue
-          seen[previousId] = true
-          merged.push(previous[pi])
-        }
-      for (var wi = 0; wi < waiting.length; wi++) {
-        var waitingId = String((waiting[wi] || {}).requestId || "")
-        if (!waitingId || removed[waitingId] || seen[waitingId]) continue
-        seen[waitingId] = true
-        merged.push(waiting[wi])
-      }
-      if (merged.length > 0) saved.ambiguousSends = merged
-      else delete saved.ambiguousSends
-      if (Object.keys(saved).length > 0) chats[chat] = saved
-      else delete chats[chat]
-    }
-    if (Object.keys(chats).length > 0) next[account] = chats
-    else delete next[account]
-    return next
+    return PanelKit.accountsWithAmbiguous(accounts, account, byChat,
+                                          changedChats, removedByChat, clearAll)
   }
 
   function persistAmbiguousSends(account, byChat, changedChats, clearAll, removedByChat) {
@@ -1679,8 +1646,13 @@ Panel {
   function scheduleDraftSave() {
     if (!root.draftStoreLoaded || root.restoringDraft
         || !root.activeChat || !root.myMid) return
-    draftSaveTimer.stop()
-    root.saveActiveDraft(false)
+    // A real debounce. The stop-and-save-it-here version this replaces made
+    // the 500ms timer below dead code: every keystroke paid a full deep-copy,
+    // serialize and atomic write of the draft store on the UI thread, and
+    // burned a store revision. saveActiveDraft() is self-guarding
+    // (restoringDraft + per-chat dirty), and openChat/backToList flush the
+    // composer themselves before switching, so the trailing save is safe.
+    draftSaveTimer.restart()
   }
 
   function stopDraftSaveTimer() {
@@ -2147,14 +2119,53 @@ Panel {
     root.writeDraftStore(next)
   }
 
+  // Drafts belong to an account and die with its session — that is the rule
+  // clearDraftAccount() implements when the end is OBSERVED. A session that
+  // ended while this panel was closed is never observed (parseState's teardown
+  // arms all require seeing the transition), so its drafts would otherwise
+  // live in the shared file forever: another user's unsent message, on this
+  // disk, under a mid nobody logs into again. When a session settles as
+  // account X, every entry that is not X's is such an orphan, and one daemon
+  // can only have one X at a time.
+  function pruneDraftAccountsExcept(keepAccount) {
+    if (!root.draftStoreLoaded || !keepAccount) return
+    var latest = DraftStore.snapshot()
+    var foreign = false
+    for (var account in latest.accounts) {
+      if (String(account) !== String(keepAccount)) { foreign = true; break }
+    }
+    if (!foreign) return
+    root.draftStore = latest.accounts
+    root.draftLastAccount = keepAccount
+    var next = Object.assign({}, latest.accounts)
+    for (var other in next) {
+      if (String(other) !== String(keepAccount)) delete next[other]
+    }
+    if (!root.writeDraftStore(next)) return
+    var staged = Object.assign({}, root.pendingDraftComposers)
+    for (var s in staged) {
+      if (String(s) !== String(keepAccount)) delete staged[s]
+    }
+    root.pendingDraftComposers = staged
+    var ambiguous = Object.assign({}, root.pendingAmbiguousByAccount)
+    for (var a in ambiguous) {
+      if (String(a) !== String(keepAccount)) delete ambiguous[a]
+    }
+    root.pendingAmbiguousByAccount = ambiguous
+    var clears = Object.assign({}, root.pendingDraftAccountClears)
+    for (var c in clears) {
+      if (String(c) !== String(keepAccount)) delete clears[c]
+    }
+    root.pendingDraftAccountClears = clears
+  }
+
   function clearAllDrafts() {
     if (Object.keys(root.draftStore || {}).length === 0) return
     root.writeDraftStore({})
   }
 
   function chatById(mid) {
-    for (var i = 0; i < chats.length; i++) if (chats[i].mid === mid) return chats[i]
-    return null
+    return PanelKit.chatById(root.chats, mid)
   }
 
   // --------------------------------------------------------------- socket
@@ -2412,7 +2423,12 @@ Panel {
     onConnectionStateChanged: {
       // 斷線時在飛的那次同步永遠不會回來了；不跟著清掉，那顆按鈕就會一直
       // 停在「同步中…」，下次開面板也還是按不動。
-      if (!connected) { root.dropInFlight(); return }
+      // 斷線後補齊靠 events.json：ring 讀完之前推播要先排隊，不然中間那段的
+      // seq 會被當成已吃過而丟掉。
+      if (!connected) {
+        root.dropInFlight()
+        return
+      }
       root.reconciliationEpoch++
       // Events that accrued while disconnected live in events.json — the
       // ring read must settle before pushes resume or the gap in between is
@@ -2547,18 +2563,17 @@ Panel {
   // reply 就是帶引言的 send：一樣有樂觀泡泡、送失敗一樣要把字還回輸入框。
   // 兩個 cmd 名字散在 onReply 的四個分支裡，寫成一支才不會漏掉其中一個。
   function isSendCmd(cmd) {
-    return cmd === "send" || cmd === "reply"
+    return PanelKit.isSendCmd(cmd)
   }
 
   function isMessageSendCmd(cmd) {
-    return root.isSendCmd(cmd) || cmd === "sendSticker" || cmd === "sendFile"
-        || cmd === "sendClipboardImage"
+    return PanelKit.isMessageSendCmd(cmd)
   }
 
   // 送出前先塞了一顆樂觀泡泡的那三支。送失敗都要把那顆拿掉，但只有帶文字的
   // 兩支還要把字還回輸入框 —— 貼圖沒有字可以還，所以拿掉和還字不是同一個判斷。
   function hasPendingBubble(cmd) {
-    return root.isSendCmd(cmd) || cmd === "sendSticker"
+    return PanelKit.hasPendingBubble(cmd)
   }
 
   // 回傳有沒有真的送出去。要「送成功才記」的呼叫端看這個回傳值，別自己再判一次
@@ -2688,10 +2703,15 @@ Panel {
   function onReply(line) {
     var res
     try { res = JSON.parse(String(line || "")) } catch (e) { return }
-    // Unsolicited push: a live event carries no request id, so it would die
-    // at the pending lookup below.
+    // Unsolicited pushes carry no request id, so they would die at the
+    // pending lookup below. `event` is a ring entry; `chat` is a single-row
+    // list patch stamped with the revision it moves to.
     if (res && typeof res === "object" && res.event) {
       root.onPushedEvent(res)
+      return
+    }
+    if (res && typeof res === "object" && res.chat) {
+      root.applyChatPatch(res.chat, res.chatsRevision, res.boot)
       return
     }
     var entry = root.pending[res.id]
@@ -2753,6 +2773,14 @@ Panel {
       var paths = Object.assign({}, root.imagePaths)
       paths[msgId] = res.ok && res.data && res.data.path
         ? "file://" + res.data.path : ""
+      // Age-cap the path table (see imagePathsMax): an entry is cheap, but
+      // it only left on a read error or logout, so the map grew with every
+      // image the shell ever displayed in one login. Forgetting the oldest
+      // just makes fetchImage re-ask the daemon for it.
+      var pkeys = Object.keys(paths)
+      for (var pd = 0; pd < pkeys.length - root.imagePathsMax; pd++) {
+        delete paths[pkeys[pd]]
+      }
       root.imagePaths = paths
       return
     }
@@ -3083,17 +3111,13 @@ Panel {
   // omarchy 4.0.1 沒有把 manifest 的 schema 畫成設定表單的介面，所以自己放一顆鈕。
   // 三種模式輪著換；字面要跟 manifest 的 options 一字不差，那是寫進設定檔的值。
   function nextPlacement(mode) {
-    if (mode === "bar") return "Center of screen"
-    if (mode === "center") return "App window"
-    return "Below the bar"
+    return PanelKit.nextPlacement(mode)
   }
 
   // 按鈕上顯示的是「現在是哪一種」。兩種的時候標「按下去會變成什麼」還講得清楚，
   // 三種輪換就不行了 —— 看到「置中」根本分不出那是現況還是下一步。
   function placementLabel(mode) {
-    if (mode === "app") return "視窗"
-    if (mode === "center") return "置中"
-    return "貼齊 bar"
+    return PanelKit.placementLabel(mode)
   }
 
   function togglePlacement() {
@@ -3105,16 +3129,14 @@ Panel {
   // 捲動速度也是同一條路。按一下換下一段：比現在大的第一段，到頂繞回最小 ——
   // 找「下一個更大的」而不是查現在排第幾，手改成 120 也接得上（下一下是 150）。
   function nextScroll(percent) {
-    for (var i = 0; i < root.scrollSteps.length; i++)
-      if (root.scrollSteps[i] > percent) return root.scrollSteps[i]
-    return root.scrollSteps[0]
+    return PanelKit.nextStep(root.scrollSteps, percent)
   }
 
   // 按鈕標的是現在幾倍，理由同 placementLabel：六段輪替標「下一步」看不懂。
   // 字級按 A−／A+ 當場看得出來，捲動速度看不出來，所以這一顆一定要有讀數。
   // 100 要寫成 1× 不是 1.00×，除以 100 之後讓 JS 自己去尾零。
   function scrollLabel(percent) {
-    return String(root.clampScroll(percent) / 100) + "×"
+    return PanelKit.scrollLabel(percent)
   }
 
   function stepScrollSpeed() {
@@ -3126,15 +3148,13 @@ Panel {
   // 讀取筆數走同一條路：找「下一個更大的段位」而不是查現在排第幾，手改成 37
   // 也接得上（下一下是 60）。
   function nextHistory(count) {
-    for (var i = 0; i < root.historySteps.length; i++)
-      if (root.historySteps[i] > count) return root.historySteps[i]
-    return root.historySteps[0]
+    return PanelKit.nextStep(root.historySteps, count)
   }
 
   // 理由同 scrollLabel：這一顆按下去畫面上當場什麼都不會變（下一次開聊天室、
   // 下一次往上翻才看得出來），沒有讀數就等於按了不知道自己在第幾段。
   function historyLabel(count) {
-    return String(root.clampHistory(count))
+    return PanelKit.historyLabel(count)
   }
 
   function stepHistoryPage() {
@@ -3450,22 +3470,14 @@ Panel {
   // 缺的時候一律當作可用 —— 面板先更新、daemon 還是舊的那半天裡，
   // 附件不該整片變成按不動的死字。
   function mediaUsable(m) {
-    if (!m || !m.hasMedia) return false
-    return m.mediaState === undefined || m.mediaState === "ok"
+    return PanelKit.mediaUsable(m)
   }
 
+  // 打不開的理由寫在名字後面。daemon 連要都不會去要，少了這幾個字，
+  // 使用者看到的只是一行點不動的灰字，會以為是自己按錯地方。
+  // 收回的訊息 hasMedia 是 false，走不到這一行，但燈箱標題也用同一支，還是擋著。
   function mediaLabel(m) {
-    var name = m.fileName || ("[" + m.contentType + "]")
-    if (m.fileSize) {
-      var kb = m.fileSize / 1024
-      name += "  " + (kb > 1024 ? (kb / 1024).toFixed(1) + " MB" : Math.round(kb) + " KB")
-    }
-    // 打不開的理由寫在名字後面。daemon 連要都不會去要，少了這幾個字，
-    // 使用者看到的只是一行點不動的灰字，會以為是自己按錯地方。
-    // 收回的訊息 hasMedia 是 false，走不到這一行，但燈箱標題也用同一支，還是擋著。
-    if (m.mediaState === "expired") return name + "（已過期）"
-    if (m.mediaState === "unsent") return name + "（已收回）"
-    return name
+    return PanelKit.mediaLabel(m)
   }
 
   // ---------------------------------------------------------------- 燈箱
@@ -3476,54 +3488,30 @@ Panel {
   // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
   // ←/→ 會走到一格空白，看起來就是燈箱壞了。
   function pictureList(messages) {
-    var out = []
-    var list = Array.isArray(messages) ? messages : []
-    for (var i = 0; i < list.length; i++) {
-      var m = list[i]
-      if (!m) continue
-      // FLEX 的圖不算 hasMedia，過不了 mediaUsable，收回與否只能自己看。
-      if (m.unsent) continue
-      var flex = m.flexImages
-      if (Array.isArray(flex) && flex.length > 0) {
-        // FLEX 圖是公開 CDN 網址，Image 自己載得動，沒有原檔可以 download，所以 id 留空。
-        for (var j = 0; j < flex.length; j++)
-          out.push({ id: "", source: String(flex[j]), name: "圖片" })
-        continue
-      }
-      if (m.contentType === "IMAGE" && root.mediaUsable(m) && m.mediaPath)
-        out.push({ id: String(m.id), source: "file://" + m.mediaPath, name: String(m.fileName || "圖片") })
-    }
-    return out
+    return PanelKit.pictureList(messages)
   }
 
   // 縮放固定在 [1,4]：小於 1 就沒有放大的意義，大於 4 縮圖會糊成馬賽克。
   // cx/cy 是游標相對於燈箱中心的位置；回傳的 x/y 讓游標底下那一點不動。
   function zoomAt(scale, panX, panY, cx, cy, factor) {
-    var next = Math.max(1, Math.min(4, scale * factor))
-    if (next <= 1) return { scale: 1, x: 0, y: 0 }
-    var k = next / scale
-    return { scale: next, x: cx - (cx - panX) * k, y: cy - (cy - panY) * k }
+    return PanelKit.zoomAt(scale, panX, panY, cx, cy, factor)
   }
 
   // 平移的邊界：放大後的圖不能整片被拖出畫面外（拖到剩一角就等於弄丟了，
   // 而且只能靠雙擊才回得來）。比畫面窄的那一軸沒得動，直接置中。
   function clampPan(x, y, scale, paintedW, paintedH, stageW, stageH) {
-    var lx = Math.max(0, (paintedW * scale - stageW) / 2)
-    var ly = Math.max(0, (paintedH * scale - stageH) / 2)
-    return { x: Math.max(-lx, Math.min(lx, Number(x) || 0)),
-             y: Math.max(-ly, Math.min(ly, Number(y) || 0)) }
+    return PanelKit.clampPan(x, y, scale, paintedW, paintedH, stageW, stageH)
   }
 
   // 按下到放開之間移動超過幾 px 就算拖曳，門檻刻意不看縮放：1× 時圖是不動，
   // 但手上的動作仍然是拖曳，放開那一下不該被當成「點背景」把燈箱關掉。
   function isDrag(dx, dy) {
-    return Math.abs(dx) > 4 || Math.abs(dy) > 4
+    return PanelKit.isDrag(dx, dy)
   }
 
   // 點擊落在圖（放大、平移之後的實際範圍）外面 = 點到背景。
   function outsidePicture(mx, my, stageW, stageH, panX, panY, scale, paintedW, paintedH) {
-    return Math.abs(mx - (stageW / 2 + panX)) > paintedW * scale / 2
-        || Math.abs(my - (stageH / 2 + panY)) > paintedH * scale / 2
+    return PanelKit.outsidePicture(mx, my, stageW, stageH, panX, panY, scale, paintedW, paintedH)
   }
 
   function openPicture(id, source, name, index) {
@@ -3569,23 +3557,12 @@ Panel {
   }
 
   function lightboxCaption() {
-    if (!root.lightbox) return ""
-    var label = String(root.lightbox.name || "圖片")
-    for (var i = 0; i < root.messages.length; i++)
-      if (root.messages[i].id === root.lightbox.id && root.messages[i].fileSize) {
-        label = root.mediaLabel(root.messages[i])
-        break
-      }
-    var n = root.pictureList(root.messages).length
-    return n > 1 ? label + "   " + ((Number(root.lightbox.index) || 0) + 1) + " / " + n : label
+    return PanelKit.lightboxCaption(root.lightbox, root.messages)
   }
 
   // Esc 的去向只有一個地方決定，免得燈箱、聊天室、面板三層各自搶著關。
   function escapeAction() {
-    if (root.lightbox) return "lightbox"
-    // 貼圖選單疊在對話上面，Esc 先收它 —— 不然一按就退出聊天室，選單還開著。
-    if (root.stickerOpen) return "sticker"
-    return root.view === "chat" ? "back" : "close"
+    return PanelKit.escapeAction(root.lightbox, root.stickerOpen, root.view)
   }
 
   // download 回來的原檔往哪去，看的是當初為什麼抓（intent），不是「此刻燈箱在不在
@@ -3658,27 +3635,14 @@ Panel {
   // 讀不到「呼叫函式算出來」的值 —— 所以訊息進 messages 之前就把當天的起點蓋上去。
   // 存字串不存數字：section 只給得到字串，大數字轉回來會是 1.75717e+12。
   function withDay(list) {
-    var out = Array.isArray(list) ? list : []
-    for (var i = 0; i < out.length; i++)
-      if (out[i] && out[i].day === undefined) out[i].day = String(root.dayStart(out[i].time))
-    return out
+    return EventLog.withDay(list)
   }
 
   // 未讀分隔線畫在哪一則之上。daemon 只給得到「這間還有幾則未讀」，所以從最後一則
   // 往回數，只算別人說的（自己送的、系統事件都不進未讀數）。數不滿就回 -1 ——
   // 這一頁還沒讀到那麼舊的地方，寧可不畫也不要畫在錯的位置。
   function firstUnreadIndex(messages, unread) {
-    var list = Array.isArray(messages) ? messages : []
-    var left = Number(unread) || 0
-    if (left <= 0) return -1
-    for (var i = list.length - 1; i >= 0; i--) {
-      var m = list[i]
-      if (!m || m.pending || root.isSystemEvent(m)) continue
-      if (String(m.from || "") === root.myMid) continue
-      left--
-      if (left === 0) return i
-    }
-    return -1
+    return EventLog.firstUnreadIndex(messages, unread, root.myMid)
   }
 
   // ------------------------------------------------------------ 即時事件
@@ -3690,28 +3654,35 @@ Panel {
   //   reload 中間有事件沒看到（daemon 重啟過，或環狀緩衝繞過去把舊的擠掉了），
   //          光靠事件補不齊，正在看的那間要重抓一次歷史
   //   live   這個 daemon 會寫 events。不會的話面板要退回舊做法（lastTime 一動就重抓）
+  // 本體在 EventLog.js —— 事件環對帳、bubble 合併、已讀/表情/收回都是純函式，
+  // 這裡只剩把面板狀態（myMid、readerCount）餵進去的轉接。
   function eventsSince(events, bootId, seenBootId, seenSeq) {
-    var live = Array.isArray(events)
-    var list = live ? events : []
-    var first = String(seenBootId || "").length === 0
-    var restarted = String(bootId || "") !== String(seenBootId || "")
-    // 重啟＝seq 從 1 重來，舊的 watermark 只會把新的那一輪整批擋掉。
-    var seen = restarted ? 0 : (Number(seenSeq) || 0)
-    var out = []
-    var top = seen
-    var oldest = -1
+    return EventLog.eventsSince(events, bootId, seenBootId, seenSeq)
+  }
+
+  // 單列清單 patch：socket 推來的 row 直接蓋進 snapshot，照 lastTime 重排。
+  // 只吃「跟已讀快照同一輪 boot」的推播 —— 還沒讀過檔案（chatBootSeen 空）
+  // 或 daemon 已換輪而檔案還沒到時先丟掉：整份清單會由下一次檔案讀取收口，
+  // 先吃了反而把 watermark 墊過檔案頭、讓整份快照被當成舊的擋掉。
+  function applyChatPatch(row, revision, boot) {
+    if (!row || row.mid === undefined || row.mid === null) return
+    var pushBoot = String(boot || "")
+    var seenBoot = String(root.chatBootSeen || "")
+    if (seenBoot.length === 0) return
+    if (pushBoot.length > 0 && pushBoot !== seenBoot) return
+    var rev = Number(revision)
+    if (isFinite(rev) && rev <= root.chatRevisionSeen) return
+    var list = root.chatSnapshot.slice()
+    var at = -1
     for (var i = 0; i < list.length; i++) {
-      var ev = list[i]
-      // 沒有 seq 的東西沒辦法定位在這一輪的哪裡，寧可不吃。
-      if (!ev || typeof ev.seq !== "number" || !isFinite(ev.seq)) continue
-      if (oldest < 0 || ev.seq < oldest) oldest = ev.seq
-      if (ev.seq > top) top = ev.seq
-      if (ev.seq > seen && !first) out.push(ev)
+      if (String(list[i].mid) === String(row.mid)) { at = i; break }
     }
-    // 緩衝區裡最舊的一筆都比 watermark 的下一號還新 = 中間那幾筆被擠掉了。
-    // 第一次讀不算缺口（那是「還沒開始追」，歷史本來就會抓一次）。
-    return { list: out, seq: top, live: live,
-             reload: !first && (restarted || (seen > 0 && oldest > seen + 1)) }
+    var merged = at >= 0 ? Object.assign({}, list[at], row) : row
+    if (at >= 0) list.splice(at, 1)
+    list.push(merged)
+    list.sort(function(a, b) { return Number(b.lastTime || 0) - Number(a.lastTime || 0) })
+    root.chatSnapshot = list
+    if (isFinite(rev)) root.chatRevisionSeen = rev
   }
 
   // 事件只套在眼前這間聊天室上。清單那半邊是 daemon 寫 chats 時就更新的，
@@ -3752,206 +3723,47 @@ Panel {
   // 參考就當作沒變、連 delegate 都不會重建。patch 裡的 undefined 是「拿掉這個欄位」
   // —— 契約說沒值的欄位是整個不存在。
   function withFields(m, patch) {
-    var out = {}
-    for (var k in m) out[k] = m[k]
-    for (var f in patch) {
-      if (patch[f] === undefined) delete out[f]
-      else out[f] = patch[f]
-    }
-    return out
+    return EventLog.withFields(m, patch)
   }
 
-  // 事件送來的新訊息。已經在清單裡的（自己送的 LINE 會推回來、同一份 state 讀到兩次）
-  // 只換掉不新增；還在等回覆的那顆樂觀泡泡則被真的那則取代 —— 文字一樣、id 不一樣，
-  // 不取代的話畫面上會有兩句一模一樣的話。
   function mergeMessage(list, m) {
-    if (!m || String(m.id || "").length === 0) return list
-    var id = String(m.id)
-    for (var i = 0; i < list.length; i++) {
-      if (String(list[i].id || "") !== id) continue
-      var dup = list.slice()
-      dup[i] = m
-      return dup
-    }
-    if (String(m.from || "") === root.myMid) {
-      var requestId = String(m.requestId || "")
-      if (requestId) {
-        for (var ri = 0; ri < list.length; ri++) {
-          if (!list[ri].pending || String(list[ri].requestId || "") !== requestId) continue
-          var exact = list.slice()
-          exact[ri] = m
-          return exact
-        }
-      }
-      // 舊 daemon 或其他裝置的訊息沒有 token；只配同樣沒有 token 的舊泡泡。
-      for (var j = 0; j < list.length; j++) {
-        // Failed local copies remain available for recovery and must never be
-        // consumed as the echo of a later successful retry.
-        if (!list[j].pending || list[j].failed === true) continue
-        if (String(list[j].requestId || "")) continue
-        if (String(list[j].text || "") !== String(m.text || "")) continue
-        var swap = list.slice()
-        swap[j] = m
-        return swap
-      }
-    }
-    return list.concat([m])
+    return EventLog.mergeMessage(list, m, root.myMid)
   }
 
-  // 編輯跟新訊息的差別就在這裡：清單裡沒有這則（不在這一頁、被收回過）就什麼都
-  // 不做，不能像 mergeMessage 那樣補到尾端 —— 一則舊訊息被編輯，把它插在最後面
-  // 等於畫出一個順序錯的假新訊息。
   function applyEdit(list, m) {
-    if (!m || String(m.id || "").length === 0) return list
-    var id = String(m.id)
-    for (var i = 0; i < list.length; i++) {
-      if (String(list[i].id || "") !== id) continue
-      var out = list.slice()
-      out[i] = m
-      return out
-    }
-    return list
+    return EventLog.applyEdit(list, m)
   }
 
-  // daemon 本地庫先回了舊頁、對帳後發現 LINE 說的不一樣時送來的頭版。
-  // 它是那個區段的權威：同 id 換新；清單裡它沒涵蓋的（往上翻到的舊頁、
-  // 還沒送出的 pending 泡泡）原樣保留，靠 (time, id) 併回正確位置 ——
-  // 不整份替換，使用者捲上去讀的東西就不會被抽走。
   function applyHistory(list, fresh) {
-    if (!Array.isArray(fresh) || fresh.length === 0) return list
-    var freshIds = {}
-    for (var i = 0; i < fresh.length; i++) freshIds[String(fresh[i].id || "")] = true
-    // 本地才有的東西（送出中、送失敗留下的泡泡）永遠不會出現在 wire 頁面裡，
-    // 所以先抽出來、最後放尾巴 —— 對帳換頁不能把它們連帶抹掉。其餘沒被這一頁
-    // 涵蓋的（往上翻到的舊頁）也保留，靠 (time, id) 併回各自的位置。
-    var pending = []
-    var kept = []
-    for (var k = 0; k < list.length; k++) {
-      var m = list[k]
-      if (freshIds[String(m.id || "")]) continue
-      if (m.pending || m.failed) pending.push(m)
-      else kept.push(m)
-    }
-    var merged = kept.concat(fresh)
-    merged.sort(function (a, b) {
-      var ta = Number(a.time || 0), tb = Number(b.time || 0)
-      if (ta !== tb) return ta - tb
-      // 同毫秒的平手用訊息 id 定序：LINE id 是 i64，數字會溢出、字串會把
-      // "123" 排在 "45" 前面 —— 先比長度（長者大）再比字典序才是對的次序。
-      var ia = String(a.id || ""), ib = String(b.id || "")
-      if (ia.length !== ib.length) return ia.length - ib.length
-      return ia < ib ? -1 : ia > ib ? 1 : 0
-    })
-    return merged.concat(pending)
+    return EventLog.applyHistory(list, fresh)
   }
 
-  // 已讀。事件只說「這個人讀到 upTo」，位置就從清單裡找：upTo（含）以前自己傳的
-  // 都被他讀了。找不到 upTo 就什麼都不做 —— 比它舊的本來就不在這一頁上，比它新的
-  // 是還沒收到；寧可少算，也不要把沒人讀的畫成已讀。
   function applyRead(list, upTo, by) {
-    var target = String(upTo || "")
-    var at = -1
-    for (var i = 0; i < list.length; i++)
-      if (String(list[i].id || "") === target) { at = i; break }
-    if (at < 0) return list
-    var who = String(by || "")
-    // op 40 的自我游標是「我讀了別人的」，不是「誰讀了我送的」。把它當讀者計算，
-    // 1:1 就會把自己的泡泡畫成已讀。它擋掉的是：手機上讀了、本端 markRead 的
-    // echo、事件環重放回來的舊自我事件。對方真讀（op 55）與 daemon history 帶的
-    // readBy 都不會以自己為 by，所以不受影響。
-    if (who === String(root.myMid || "")) return list
-    var out = list
-    for (var j = at; j >= 0; j--) {
-      var m = out[j]
-      if (String(m.from || "") !== root.myMid || m.failed === true) continue
-      // LINE 同一個人會重複回報，所以記的是「誰讀過」而不是一個數字 —— 只加數字的話
-      // 對方每讀一次群組就多一個人。
-      var seen = Array.isArray(m.readSeen) ? m.readSeen : []
-      if (who.length > 0 && seen.indexOf(who) >= 0) continue
-      var next = who.length > 0 ? seen.concat([who]) : seen
-      // daemon 開聊天室時算過一次（那一份不知道是誰讀的），兩邊取大的：人重疊
-      // 只會讓數字少算，而少算是可以被下一次載入歷史修好的，多算不是。
-      var count = Math.max(Number((m.readBy || {}).count || 0), next.length)
-      if (count <= 0) continue
-      if (out === list) out = list.slice()
-      out[j] = root.withFields(m, { readSeen: next,
-        readBy: { count: count, all: root.readerCount > 0 && count >= root.readerCount } })
-    }
-    return out
+    return EventLog.applyRead(list, upTo, by, root.myMid, root.readerCount)
   }
 
-  // 表情：事件給的是整串新的（不是差異），直接換掉就好。空的就把欄位拿掉，
-  // 跟契約的「沒值的欄位整個不存在」對齊。
   function applyReaction(list, id, rows) {
-    var target = String(id || "")
-    for (var i = 0; i < list.length; i++) {
-      if (String(list[i].id || "") !== target) continue
-      var bar = Array.isArray(rows) ? rows : []
-      var out = list.slice()
-      out[i] = root.withFields(list[i], { reactions: bar.length > 0 ? bar : undefined })
-      return out
-    }
-    return list
+    return EventLog.applyReaction(list, id, rows)
   }
 
-  // 收回：daemon 對歷史訊息做的那一套，這裡照做一次。少拿掉一樣，畫面上就會是
-  // 一張照常顯示的貼圖旁邊寫著它已經被收回。mentions 也一定要拿掉 —— 位移是照
-  // 原本那句話算的，套在「已收回訊息」上會把顏色塗在別的字上。
   function applyUnsend(list, id) {
-    var target = String(id || "")
-    for (var i = 0; i < list.length; i++) {
-      if (String(list[i].id || "") !== target) continue
-      var out = list.slice()
-      out[i] = root.withFields(list[i], {
-        text: "已收回訊息", unsent: true, mediaState: "unsent", hasMedia: false,
-        mentions: undefined, reactions: undefined, readBy: undefined, readSeen: undefined,
-        mediaPath: undefined, stickerUrl: undefined, flexImages: undefined, altText: undefined
-      })
-      return out
-    }
-    return list
+    return EventLog.applyUnsend(list, id)
   }
 
-  // 自己傳的訊息底下那行小字。什麼都不知道的時候契約是「整個欄位不存在」，
-  // 那就什麼都不畫 —— 不能把「不知道」畫成「沒人讀」。
   function readText(m) {
-    if (!m || m.failed === true || String(m.from || "") !== root.myMid) return ""
-    var r = m.readBy
-    if (!r) return ""
-    var n = Number(r.count || 0)
-    if (!(n > 0)) return ""
-    return r.all === true ? "已讀" : "已讀 " + n
+    return EventLog.readText(m, root.myMid)
   }
 
-  // LINE 那六個表情的圖是它自己的素材，這裡挑意思最接近的 emoji —— 名字
-  //（NICE／LOVE／…）才是契約，emoji 只是畫面。認不得的型別就把名字原樣印出來：
-  // LINE 之後多加一種，畫面上會是那個名字，不會是一個看不懂的空白。
   function reactionEmoji(type) {
-    var t = String(type || "")
-    if (t === "NICE") return "👍"
-    if (t === "LOVE") return "❤️"
-    if (t === "FUN") return "😆"
-    if (t === "AMAZING") return "😲"
-    if (t === "SAD") return "😢"
-    if (t === "OMG") return "😱"
-    return t.length > 0 ? t : "？"
+    return EventLog.reactionEmoji(type)
   }
 
-  // 自己在這一則上選的那個表情，沒有就是空字串。一個人只會有一個 —— 契約寫死的。
   function myReaction(m) {
-    var rows = m && Array.isArray(m.reactions) ? m.reactions : []
-    for (var i = 0; i < rows.length; i++)
-      if (rows[i] && rows[i].mine === true) return String(rows[i].type || "")
-    return ""
+    return EventLog.myReaction(m)
   }
 
-  // 這一則能不能回覆／加表情／收回。系統事件沒有一則訊息可以指，樂觀泡泡的 id 是
-  // 面板自己編的（daemon 不認得），已經收回的沒有東西可以再收回一次。
   function canActOn(m) {
-    if (!m || m.pending === true) return false
-    if (String(m.id || "").length === 0) return false
-    if (m.unsent === true || root.isSystemEvent(m)) return false
-    return true
+    return EventLog.canActOn(m)
   }
 
   // 點表情：點自己已經選的那個就是收回。LINE 一個人在同一則上只有一個表情，
@@ -3980,11 +3792,7 @@ Panel {
   // 引言那一行。daemon 查不到原文時 replyTo 只有 id（契約寫的「盡力而為」），
   // 那就退成「訊息」——「某某：」後面接一片空白看起來像壞掉。
   function quoteText(r) {
-    if (!r) return ""
-    var name = String(r.fromName || "")
-    var body = root.oneLine(String(r.text || ""))
-    if (body.length === 0) body = "訊息"
-    return name.length > 0 ? name + "：" + body : body
+    return EventLog.quoteText(r)
   }
 
   // 引言點下去跳回原訊息。翻不到那麼舊的時候要說一聲 —— 按了沒反應是最難查的
@@ -4048,31 +3856,12 @@ Panel {
   }
 
   function rememberFailedMessage(chat, message) {
-    var mid = String(chat || "")
-    if (!mid || !message) return
-    var next = Object.assign({}, root.failedMessagesByChat)
-    var rows = Array.isArray(next[mid]) ? next[mid].filter(function(m) {
-      return String(m.id || "") !== String(message.id || "")
-    }) : []
-    rows.push(message)
-    // Recovery state is deliberately bounded: at most five failures in each
-    // of the twenty most recently touched chats.
-    delete next[mid]
-    next[mid] = rows.slice(-5)
-    var chatsWithFailures = Object.keys(next)
-    while (chatsWithFailures.length > 20) {
-      delete next[chatsWithFailures.shift()]
-    }
-    root.failedMessagesByChat = next
+    var next = EventLog.recordFailure(root.failedMessagesByChat, chat, message)
+    if (next) root.failedMessagesByChat = next
   }
 
   function mergeFailedMessages(chat, list) {
-    var delivered = Array.isArray(list) ? list.slice() : []
-    var failed = root.failedMessagesByChat[String(chat || "")]
-    if (!Array.isArray(failed) || failed.length === 0) return delivered
-    var merged = delivered.concat(failed)
-    merged.sort(function(a, b) { return Number(a.time || 0) - Number(b.time || 0) })
-    return merged
+    return EventLog.mergeFailedMessages(root.failedMessagesByChat[String(chat || "")], list)
   }
 
   // atBottom 不在這裡設：這支只是把請求送出去，回來要停在哪由 setMessages
@@ -4153,21 +3942,13 @@ Panel {
   // contentHeight > height 這一條是原本就有的：內容比視窗短時 contentY 恆等於
   // originY，不擋的話一開聊天室就永遠算在門檻內。
   function nearOlderEdge(contentY, originY, contentHeight, height) {
-    if (!(contentHeight > height)) return false
-    return contentY - originY <= height
+    return PanelKit.nearOlderEdge(contentY, originY, contentHeight, height)
   }
 
-  // 前置一頁之後視窗要停在哪。錨點（positionViewAtIndex）只把「原本的第 0 則」放回
-  // 視窗頂端，那在捲到頂才翻頁的年代剛好對：那時人離頂端 0 px，錨點就是眼前那一則。
-  // 提早一個畫面預抓之後不再是這樣 —— 換模型的那一刻人可能還在往上捲的路上，離頂端
-  // 有 keep px，只擺錨點會把畫面往上拉走 keep（最多一整屏）。keep 是換之前量到的
-  // 距離，補回去人才會停在原地。
-  // 這一條同時讓預抓自己收斂：位置補回去之後，每多一頁離頂端就多一頁的高度，累積到
-  // 超過一個畫面就跳出門檻。不補的話每一頁都把人放回「離頂端一頁高」，訊息短、視窗
-  // 高（一頁比一個畫面矮）時就會沒人碰滑鼠也一頁接一頁抓到最舊。
+  // 前置一頁之後視窗要停在哪：keep 是換模型之前量到的「人離頂端幾 px」，
+  // 錨點定位完再補回去，人才會停在原地，預抓也才不會無限連抓。
   function anchoredContentY(afterY, originY, keep, contentHeight, height) {
-    if (!(keep > 0)) return afterY
-    return Math.min(afterY + keep, originY + Math.max(0, contentHeight - height))
+    return PanelKit.anchoredContentY(afterY, originY, keep, contentHeight, height)
   }
 
   function openChat(chat) {
@@ -4327,15 +4108,7 @@ Panel {
   // ---------------------------------------------------------------- utils
 
   function agoText(ms) {
-    // 沒有最後一則訊息的聊天室 lastTime 是 0，算出來會是兩萬多天。
-    if (Number(ms || 0) <= 0) return ""
-    var mins = Math.floor((nowMs - Number(ms || 0)) / 60000)
-    // 徽章欄很窄，單位只留一個字，不用「分鐘/小時/天前」。
-    if (mins < 1) return "剛剛"
-    if (mins < 60) return mins + " 分"
-    var hours = Math.floor(mins / 60)
-    if (hours < 24) return hours + " 時"
-    return Math.floor(hours / 24) + " 天"
+    return PanelKit.agoText(ms, root.nowMs)
   }
 
   // state.link 是選填欄位：舊的 daemon 和 stub.py 都不送，缺的時候一律當作正常，
@@ -4343,42 +4116,13 @@ Panel {
   // 徽章不動 —— 未讀數是斷線前抓到的，還是真的，只是可能不夠新。
   function partialListNoticeText() {
     var cl = root.state && root.state.chatList ? root.state.chatList : null
-    if (!cl || cl.complete !== false) return ""
-    var count = Number(cl.loaded || root.chats.length || 0)
-    return "目前顯示 " + count + " 個聊天室，尚有聊天室未載入"
-      + (root.search.length > 0 ? "；搜尋範圍僅限已載入資料" : "")
+    return PanelKit.partialListNoticeText(cl, root.chats.length,
+                                          root.search.length > 0)
   }
 
   function linkNoticeText() {
-    var partial = root.partialListNoticeText()
-    if (!root.online) return partial
-    var l = root.state && root.state.link ? root.state.link : null
-    if (l && String(l.push || "") === "down") {
-      // since 是選填／可能是 0，agoText 這時會回空字串，就不要留一個空括號。
-      var ago = root.agoText(Number(l.since || 0))
-      var t = ago ? "LINE 連線中斷，重連中（" + ago + "）" : "LINE 連線中斷，重連中"
-      // 這一行本身就是「現在就重連」那顆按鈕。純文字看不出來點得下去，
-      // 所以把動作寫進句子裡 —— 斷線時人最想按的就是這個。
-      return t + "，點此立即重連" + (partial ? "；" + partial : "")
-    }
-    // state.refresh 也是選填欄位（README 契約）：link.push 說的是 push 那條連線，
-    // 這裡說的是聊天室清單那條路（getMessageBoxes），兩者可以一好一壞 ——
-    // 09-11 就是 push 剛重建好、清單卻在死掉的連線池上連錯 33 次，面板整整
-    // 18 分鐘顯示 22 小時前的內容。兩句同時成立只印上面那句 —— 連線斷了本來
-    // 就拓不到清單，那句更根本。門檻 2：一次 30 秒的 timeout 手機熱點下就會
-    // 發生，單次就跳字太吵，連續兩次（≥ 60 秒）才算真的。
-    var r = root.state && root.state.refresh ? root.state.refresh : null
-    if (!r || Number(r.failures || 0) < 2) {
-      return partial
-    }
-    // at 是選填／可能是 0；「剛剛」接上「前」不成話，而且剛更新過的括號
-    // 本來就沒有資訊，一併省掉。
-    var upd = root.agoText(Number(r.at || 0))
-    var s = upd && upd !== "剛剛" ? "LINE 清單可能過期（最後更新 " + upd + "前）"
-                                  : "LINE 清單可能過期"
-    // 後綴同上：這一行同時是重連按鈕，走同一個 syncNow。徽章不動 ——
-    // 未讀數是斷線前抓到的，還是真的，只是不夠新。
-    return s + "，點此立即重連" + (partial ? "；" + partial : "")
+    return PanelKit.linkNoticeText(root.state, root.online, root.nowMs,
+                                   root.search.length > 0, root.chats.length)
   }
 
   // 清單標題下那一行實際顯示什麼。單欄時對話那半邊整個不可見（chatPane 的 visible
@@ -4386,46 +4130,27 @@ Panel {
   // 不然按「同步」在單欄清單裡等於什麼都沒發生。兩欄時 noticeLine 一直在畫面上，
   // 再借一次只是把同一句話同時印兩遍。
   function listNoticeText() {
-    if (String(root.draftWriteError || "").length > 0) return root.draftWriteError
     var cl = root.state && root.state.chatList ? root.state.chatList : null
-    if (cl && cl.complete === false) {
-      var partial = root.linkNoticeText()
-      if (!root.twoPane && root.notice.length > 0)
-        return root.notice + (partial ? "；" + partial : "")
-      return partial
-    }
-    if (!root.twoPane && root.notice.length > 0) return root.notice
-    return root.linkNoticeText()
+    return PanelKit.listNoticeText(root.draftWriteError, cl, root.twoPane,
+                                   root.notice, root.linkNoticeText())
   }
 
-  // login.reason 同樣是選填。舊 daemon 只有 error，那就照舊把原字串放出來 ——
-  // 那是英文的函式庫訊息，但比一句沒有內容的「登入失敗」有用。
   function loginErrorDetail() {
-    var info = root.loginInfo
-    var reason = info ? String(info.reason || "") : ""
-    if (reason === "token_expired") return "登入已過期，請重新掃描"
-    if (reason === "network") return "連不上 LINE，稍後重試"
-    return info ? String(info.error || "") : ""
+    return PanelKit.loginErrorDetail(root.loginInfo)
   }
 
-  // 兩欄時清單那半邊有多寬。上限照字級縮放 —— TUI 的左欄是固定 34 個字寬，字放大
-  // 時清單也要跟著寬，不然一列塞不下一個聊天室名字。但視窗被 Hyprland 切窄的時候
-  // （實測 718px）那個上限會把對話擠成一條，所以再夾一層「最多占可用寬度三成五」。
-  // 扣掉的 24+1 是分隔線兩側各 12px 的邊距加分隔線本身，也就是兩欄真正分得到的寬。
   function listPaneWidth(parentWidth, fontScale) {
-    return Math.round(Math.min(Style.space(300) * fontScale,
-      Math.max(0, parentWidth - Style.space(24) - 1) * 0.35))
+    return PanelKit.listPaneWidth(parentWidth, fontScale,
+                                  Style.space(300), Style.space(24))
   }
 
-  // 搜尋框和右邊那排操作按鈕要不要拆成上下兩列。門檻是按鈕寬度再加 160 ——
-  // 只比按鈕寬度的話，搜尋框會被壓成一條連 placeholder 都放不下的縫。
   function toolsStacked(paneWidth, toolsWidth) {
-    return paneWidth < toolsWidth + Style.space(160)
+    return PanelKit.toolsStacked(paneWidth, toolsWidth, Style.space(160))
   }
 
   // 訊息可能含換行；elide 只處理單行，多行會把列高撐爆疊到別的列上。
   function oneLine(t) {
-    return String(t || "").replace(/\s+/g, " ").trim()
+    return EventLog.oneLine(t)
   }
 
   function clockText(ms) {
@@ -4437,43 +4162,18 @@ Panel {
   // 沒有大頭貼時畫的那顆圓的底色。照 mid 的雜湊挑，同一個人每次都是同一個顏色 ——
   // 隨機或照清單位置挑的話，未讀往前排一次整排顏色就跟著換，看起來像換了一批人。
   function avatarColor(mid) {
-    // 八個都是深色：縮寫一律白字，主題換成淺色的也讀得到。
-    var palette = ["#c0392b", "#b8621b", "#8f7300", "#2e7d32",
-                   "#00796b", "#1565c0", "#6a1b9a", "#ad1457"]
-    var s = String(mid || "")
-    var h = 0
-    for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) % 1000003
-    return palette[h % palette.length]
+    return PanelKit.avatarColor(mid)
   }
 
-  // 縮寫取第一個字。字串是 UTF-16，charAt(0) 會把 emoji 開頭的名字切成半個代理對，
-  // 畫出來是一個空白方塊。
   function avatarInitial(text) {
-    var s = String(text || "").trim()
-    if (s.length === 0) return ""
-    var c = s.charCodeAt(0)
-    if (c >= 0xd800 && c <= 0xdbff && s.length > 1) return s.substring(0, 2)
-    return s.charAt(0).toUpperCase()
+    return PanelKit.avatarInitial(text)
   }
 
   // 這一則旁邊要不要掛大頭貼：群組裡、不是自己講的、而且是同一個人連著講的那一串的
   // 第一則。1:1 只有兩個人，每一則都掛一張臉只是噪音。
   function showAvatarAt(list, i) {
-    if (!root.activeChat || !/^[cr]/.test(String(root.activeChat.mid || ""))) return false
-    if (!list || i < 0 || i >= list.length) return false
-    var m = list[i]
-    if (!m || root.isSystemEvent(m)) return false
-    var from = String(m.from || "")
-    if (from.length === 0 || from === root.myMid) return false
-    for (var j = i - 1; j >= 0; j--) {
-      var p = list[j]
-      // 中間夾一則入群通知，不該把同一個人講的那一串切成兩段。
-      if (!p || root.isSystemEvent(p)) continue
-      // 隔了一天就重新算一串：日期分隔線底下第一則沒有臉，會像是接在分隔線上面那串。
-      if (root.dayStart(Number(p.time || 0)) !== root.dayStart(Number(m.time || 0))) return true
-      return String(p.from || "") !== from
-    }
-    return true
+    var group = !!root.activeChat && /^[cr]/.test(String(root.activeChat.mid || ""))
+    return EventLog.showAvatarAt(list, i, group, root.myMid)
   }
 
   // 圓形大頭貼。圓角遮罩要一張材質，材質要一個 FBO —— 沒有圖的那幾列不該付這個錢，
@@ -4547,47 +4247,23 @@ Panel {
   // 這一則屬於哪一天：當天凌晨的毫秒。日期分隔線是 ListView 的 section，
   // 同一天的訊息要算出同一個值才會歸在同一段。
   function dayStart(ms) {
-    var d = new Date(Number(ms || 0))
-    d.setHours(0, 0, 0, 0)
-    return d.getTime()
+    return EventLog.dayStart(ms)
   }
 
-  // 以 nowMs 為基準，跨午夜時 30 秒的計時器會讓「今天」自己往前挪。
-  // 「昨天」不用 nowMs - 86400000 直接比：夏令時間那兩天差的不是 24 小時，
-  // 先歸到今天凌晨再退 12 小時，落在哪一天都還是昨天。
   function dayLabel(ms, nowMs) {
-    var day = root.dayStart(ms)
-    var today = root.dayStart(nowMs)
-    if (day === today) return "今天"
-    if (day === root.dayStart(today - 43200000)) return "昨天"
-    var d = new Date(day)
-    var md = (d.getMonth() + 1) + "月" + d.getDate() + "日"
-    // 跨年之後只寫「1月3日」會讓人以為是今年的：不同年就把年份補上。
-    return d.getFullYear() === new Date(today).getFullYear() ? md : d.getFullYear() + "年" + md
+    return EventLog.dayLabel(ms, nowMs)
   }
 
   function isSystemEvent(m) {
-    return m.contentType === "CHATEVENT" || m.contentType === "POSTNOTIFICATION"
+    return EventLog.isSystemEvent(m)
   }
 
-  // 這兩種事件的 text 幾乎都是空的，走 bodyText 會印出 [CHATEVENT] 這種內部代號。
   function systemEventText(m) {
-    var label = m.contentType === "POSTNOTIFICATION" ? "貼文通知" : "系統事件"
-    // LINE 常把事件名本身塞進 text（text === "POSTNOTIFICATION"），
-    // 照印就變成聊天視窗裡的英文代碼，所以只有真的人話才用 text。
-    var t = m.text || ""
-    if (t.length === 0 || t.toUpperCase() === (m.contentType || "")) return label
-    return t
+    return EventLog.systemEventText(m)
   }
 
   function bodyText(m) {
-    if (m.decryptFailed) return "[E2EE 解密失敗]"
-    if (m.text && m.text.length > 0) return m.text
-    // FLEX/RICH 這類版面訊息，LINE 自己附了純文字備援，比印 [FLEX] 有用得多。
-    if (m.altText && m.altText.length > 0) return m.altText
-    // 舊 daemon 沒有 stickerUrl，貼圖只能落到這裡，別印 [STICKER]。
-    if (m.contentType === "STICKER") return "[貼圖]"
-    return "[" + (m.contentType || "非文字") + "]"
+    return PanelKit.bodyText(m)
   }
 
   // ------------------------------------------------------ 選取、連結、複製
@@ -4596,124 +4272,37 @@ Panel {
   // 使用者打的 < 和 & 本來就該原樣顯示。所以先全部跳脫，畫面上剩下的標記
   // 只會有 linkify 自己包的那些 —— 訊息內容沒有任何一條路徑能變成標記。
   function escapeHtml(t) {
-    return String(t === undefined || t === null ? "" : t)
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+    return PanelKit.escapeHtml(t)
   }
 
-  // 純函式。跳脫要在包 <a> 之前，反過來的話我們自己包的標記也會被跳脫掉。
-  // linkColor 直接寫進標記：TextEdit 沒有 Text 那個 linkColor 屬性，不指定的話
-  // Qt 給的是寫死的 #0000ff，在深色主題上幾乎看不見。空的就不上色。
   function linkify(text, linkColor) {
-    var s = root.escapeHtml(text)
-    var c = String(linkColor === undefined || linkColor === null ? "" : linkColor)
-    var openTag = c.length > 0 ? "<a style=\"color:" + c + "\" href=\"" : "<a href=\""
-    // 網址只吃 RFC 3986 允許的那些 ASCII。不能用「吃到空白為止」——
-    // 中文訊息常常網址後面直接接字，沒有空白，那樣會把整句話都吞進網址。
-    // 這組字元也蓋得住跳脫後的實體（&amp; 就是 & a m p ;）。
-    var re = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]+/g
-    // 句尾標點是句子的，不是網址的。中英文各挑常見的收尾符號。
-    var trailing = ",.;:!?)]}」』、。"
-    var out = ""
-    var last = 0
-    var m
-    while ((m = re.exec(s)) !== null) {
-      // 前面黏著英數字的不是網址開頭（swww.example.com），往後挪一格再找。
-      if (m.index > 0 && /[A-Za-z0-9]/.test(s.charAt(m.index - 1))) {
-        re.lastIndex = m.index + 1
-        continue
-      }
-      var url = m[0]
-      // 前綴要在砍句尾標點之前先認，不然「www.,」會被砍成「www」，
-      // 反而變成一個看起來很像主機名的東西。
-      var www = url.indexOf("www.") === 0
-      var head = www ? 4 : url.indexOf("://") + 3
-      // &amp; 這種實體結尾的分號不是句尾標點，砍掉只會剩半截 &amp。
-      while (url.length > head && trailing.indexOf(url.charAt(url.length - 1)) >= 0
-             && !/&(amp|lt|gt|quot|#39);$/.test(url))
-        url = url.slice(0, url.length - 1)
-      // 砍完只剩前綴的不是網址（「http://.」「www.,」這種），原樣留著。
-      if (url.length <= head) { re.lastIndex = m.index + m[0].length; continue }
-      out += s.slice(last, m.index)
-      out += openTag + (www ? "https://" + url : url) + "\">" + url + "</a>"
-      last = m.index + url.length
-      re.lastIndex = last
-    }
-    out += s.slice(last)
-    // RichText 不認 \n，而真實訊息約七分之一含換行。
-    return out.replace(/\r?\n/g, "<br>")
+    return PanelKit.linkify(text, linkColor)
   }
 
-  // pre-wrap：訊息裡的連續空白和縮排是使用者自己打的，HTML 預設會把它們併成
-  // 一格。加上它就留得住，長行照樣自動換行（在 Qt 6.11 量過）。
   // 顏色去掉 alpha 再轉字串：帶 alpha 的 QML 顏色會變成 #AARRGGBB，CSS 讀不懂。
   function bodyHtml(m) {
     var accent = String(Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 1))
-    var text = root.bodyText(m)
-    // mentions 的位移是照 m.text 算的。bodyText 換成「[貼圖]」這種替代文字的時候
-    // 套上去會切在別的地方，所以只有本文真的就是 m.text 時才上色。
-    var spans = (m && m.text && text === String(m.text))
-      ? root.mentionRanges(m.mentions, text.length) : []
-    return "<div style=\"white-space: pre-wrap\">"
-      + root.markupBody(text, spans, accent) + "</div>"
+    return PanelKit.bodyHtml(m, accent)
   }
 
   // 純函式。把本文照 mention 切段：mention 那幾段只跳脫再上色（人名裡不會有網址），
   // 其餘每一段各自 linkify。跳脫一定要切完之後各段自己做 —— 先跳脫整段的話
   // 一個 & 會變成五個字，後面每一個位移都被推掉，mention 就切在錯的地方。
   function markupBody(text, spans, color) {
-    var t = String(text === undefined || text === null ? "" : text)
-    var list = Array.isArray(spans) ? spans : []
-    var out = ""
-    var last = 0
-    for (var i = 0; i < list.length; i++) {
-      out += root.linkify(t.slice(last, list[i].start), color)
-      // linkify 會把換行換成 <br>，這一段沒走 linkify，得自己補一次；
-      // 顯示名稱理論上不含換行，但那是別人的帳號設定，不是我們說了算。
-      out += "<span style=\"color:" + color + "\">"
-        + root.escapeHtml(t.slice(list[i].start, list[i].end)).replace(/\r?\n/g, "<br>")
-        + "</span>"
-      last = list[i].end
-    }
-    return out + root.linkify(t.slice(last), color)
+    return PanelKit.markupBody(text, spans, color)
   }
 
   // 純函式。daemon 送來的 mentions 在畫之前先過一次：切段的迴圈只走一趟，
   // 兩個蓋在同一個字上的框會把那段字畫兩次，超出範圍的則會把後半段吃掉。
   function mentionRanges(mentions, len) {
-    var list = Array.isArray(mentions) ? mentions : []
-    var out = []
-    for (var i = 0; i < list.length; i++) {
-      var s = list[i] ? list[i].start : undefined
-      var e = list[i] ? list[i].end : undefined
-      // 位移只認真正的整數。不先 Number() 是因為它太好說話 —— true 是 1、
-      // null 和 [] 是 0、"0x10" 是 16 —— 沒帶位移的那一筆照樣會湊出一個能用的
-      // 數字，然後把顏色塗在沒人指定的那幾個字上。daemon 送過來的本來就是整數
-      // （它自己也是這樣擋的，mentionOffset），對不上的就是沒有這個標記。
-      if (typeof s !== "number" || typeof e !== "number") continue
-      if (!isFinite(s) || !isFinite(e)) continue
-      if (Math.floor(s) !== s || Math.floor(e) !== e) continue
-      if (s < 0 || e <= s || e > len) continue
-      out.push({ start: s, end: e })
-    }
-    out.sort(function(a, b) { return a.start - b.start })
-    var kept = []
-    for (var j = 0; j < out.length; j++)
-      if (kept.length === 0 || out[j].start >= kept[kept.length - 1].end) kept.push(out[j])
-    return kept
+    return PanelKit.mentionRanges(mentions, len)
   }
 
   // 只放行 http/https。<a> 是上面自己包的，理論上不會有別的 scheme，但
   // onLinkActivated 收到什麼字串是引擎說了算，交給 xdg-open 前一定要再擋一次。
   // 回傳正規化後的網址；空字串代表不放行。
   function linkTarget(url) {
-    var u = String(url === undefined || url === null ? "" : url).trim()
-    if (u.toLowerCase().indexOf("www.") === 0) u = "https://" + u
-    var low = u.toLowerCase()
-    if (low.indexOf("http://") !== 0 && low.indexOf("https://") !== 0) return ""
-    // 中間夾空白或控制字元的一律不開：那不會是使用者看到的那一條。
-    if (/[\s\x00-\x1f\x7f]/.test(u)) return ""
-    return u
+    return PanelKit.linkTarget(url)
   }
 
   function openLink(url) {
@@ -4789,9 +4378,7 @@ Panel {
   // 聊天清單那一列的右鍵選單。跟訊息共用同一個 Popup —— 選單只有這一份實作。
   // 二選一：同一列不會同時給兩個相反的動作，看到哪一個就代表現在是哪一種狀態。
   function chatMenuItems(c) {
-    return [c && c.hidden
-            ? { action: "unhide", label: "取消隱藏" }
-            : { action: "hide", label: "隱藏聊天" }]
+    return PanelKit.chatMenuItems(c)
   }
 
   // 選單現在列的是哪一組。msgMenu.chat 非 null 就代表這次右鍵壓在清單那一列上。
@@ -4885,99 +4472,23 @@ Panel {
   // 純函式。names 任一個對得上就算：「全部」那一列 All 和 全部 兩種打法都認。
   // 回傳 −1 不符、0 從開頭就對（排前面）、1 中間才對。
   function mentionRank(names, q) {
-    var best = -1
-    for (var i = 0; i < names.length; i++) {
-      var at = q.length === 0 ? 0 : String(names[i] || "").toLowerCase().indexOf(q)
-      if (at === 0) return 0
-      if (at > 0) best = 1
-    }
-    return best
+    return PanelKit.mentionRank(names, q)
   }
 
-  // 純函式。游標左邊那個 @ 在哪、後面打了什麼。@ 前面一定要是空白或行首，
-  // 不然 a@b.com 這種 email 一打就會冒出選單。
   function mentionQuery(text, cursor) {
-    var t = String(text === undefined || text === null ? "" : text)
-    var pos = Math.max(0, Math.min(Number(cursor) || 0, t.length))
-    if (pos <= 0) return null
-    var at = t.lastIndexOf("@", pos - 1)
-    if (at < 0) return null
-    if (at > 0 && !/\s/.test(t.charAt(at - 1))) return null
-    var q = t.slice(at + 1, pos)
-    // 顯示名稱裡有空白很常見（「STUB Alice」），所以空白不當結束符 ——
-    // 打到沒有人對得上，選單自己就收起來了。換行才真的是另一段。
-    if (/[\r\n]/.test(q)) return null
-    if (q.length > 32) return null
-    return { start: at, query: q }
+    return PanelKit.mentionQuery(text, cursor)
   }
 
-  // 純函式。最多 8 列：再多就蓋掉半個對話，而且沒人會往下捲到第九個名字。
   function mentionMatches(members, query) {
-    var q = String(query === undefined || query === null ? "" : query).toLowerCase()
-    var rows = []
-    // 「全部」不是群組成員，但它是最常用的一個 @，所以跟人名排在同一份清單裡。
-    var allRank = root.mentionRank(["All", "全部"], q)
-    if (allRank >= 0) rows.push({ name: "全部", insert: "All", all: true, rank: allRank })
-    var list = Array.isArray(members) ? members : []
-    for (var i = 0; i < list.length; i++) {
-      var name = String(list[i] && list[i].name ? list[i].name : "")
-      if (name.length === 0) continue
-      var rank = root.mentionRank([name], q)
-      if (rank < 0) continue
-      rows.push({ name: name, insert: name, mid: String(list[i].mid || ""), rank: rank })
-    }
-    // 開頭就對的排前面，其餘照 daemon 給的順序（已經照名字排好）。
-    var head = rows.filter(function(r) { return r.rank === 0 })
-    var tail = rows.filter(function(r) { return r.rank !== 0 })
-    return head.concat(tail).slice(0, 8)
+    return PanelKit.mentionMatches(members, query)
   }
 
-  // 純函式。把 @查詢那一段換成「@名字 」，回傳新的文字和游標該停在哪。
-  // 後面補一個空白：不補的話下一個字會黏在名字上，送出前回頭找就找不到了。
   function mentionInsert(text, cursor, row) {
-    var t = String(text === undefined || text === null ? "" : text)
-    var pos = Math.max(0, Math.min(Number(cursor) || 0, t.length))
-    var token = root.mentionQuery(t, pos)
-    if (!token || !row) return { text: t, cursor: pos }
-    var head = t.slice(0, token.start) + "@" + String(row.insert || row.name || "") + " "
-    return { text: head + t.slice(pos), cursor: head.length }
+    return PanelKit.mentionInsert(text, cursor, row)
   }
 
-  // 純函式。送出前才算位移：挑完之後那句話還會被繼續編輯，挑的當下記下來的
-  // 位置早就不對了。照名字回頭在文字裡找一次 —— 找不到就是被刪掉或改掉了，
-  // 那一個就不送，寧可少一個通知也不要把別人的名字標成另一個人。
   function deriveMentions(text, picks) {
-    var t = String(text === undefined || text === null ? "" : text)
-    var list = (Array.isArray(picks) ? picks : []).slice()
-    // 同名的人 LINE 上很常見。start 會被編輯弄歪，但它仍然是「誰在前面」唯一的
-    // 線索，所以先照它排，再照出現順序一個配一個。
-    list.sort(function(a, b) { return (Number(a.start) || 0) - (Number(b.start) || 0) })
-    var out = []
-    for (var i = 0; i < list.length; i++) {
-      var token = "@" + String(list[i].name || "")
-      if (token.length < 2) continue
-      var from = 0
-      var at = -1
-      while (from <= t.length) {
-        at = t.indexOf(token, from)
-        if (at < 0) break
-        // 已經被別人佔走的那一段不能再用：@小明 是 @小明明 的前綴，
-        // 兩段疊在一起送出去，LINE 會把中間那幾個字算兩次。
-        var clash = false
-        for (var j = 0; j < out.length; j++)
-          if (at < out[j].end && at + token.length > out[j].start) clash = true
-        if (!clash) break
-        from = at + 1
-        at = -1
-      }
-      if (at < 0) continue
-      var m = { start: at, end: at + token.length }
-      if (list[i].all) m.all = true
-      else m.mid = String(list[i].mid || "")
-      out.push(m)
-    }
-    out.sort(function(a, b) { return a.start - b.start })
-    return out
+    return PanelKit.deriveMentions(text, picks)
   }
 
   // 選單開著的時候 ↑↓ 換人。照鐵則 11 這裡改的是 int，不是 property var。
@@ -5081,23 +4592,7 @@ Panel {
   // 純函式：一份存檔 ＋ 一個帳號 → 畫得出來的那幾張。每個欄位都自己轉一次型別，
   // 這是外部檔案，手改壞了不該讓選單整個畫不出來。
   function storedRecent(store, mid) {
-    var key = String(mid || "")
-    if (key.length === 0 || !store) return []
-    var list = store[key]
-    if (!Array.isArray(list)) return []
-    var out = []
-    for (var i = 0; i < list.length && out.length < root.recentStickerMax; i++) {
-      var e = list[i]
-      var sid = e ? String(e.stickerId || "") : ""
-      var pid = e ? String(e.packageId || "") : ""
-      var url = e ? root.stickerStill(e.url) : ""
-      // 三個欄位缺一個，這一格就是「畫不出來又送不出去」：沒有網址是一片空白
-      // （連載入失敗的 ? 都不會有），沒有貼圖包編號按下去只會被 daemon 退回來。
-      // stickerCells 早就把沒編號的整包丟掉了，存檔讀回來的這一排照同一個標準。
-      if (sid.length === 0 || pid.length === 0 || url.length === 0) continue
-      out.push({ packageId: pid, stickerId: sid, url: url })
-    }
-    return out
+    return PanelKit.storedRecent(store, mid, root.recentStickerMax)
   }
 
   // 動態貼圖的 sticker_animation.png 是 APNG：Qt 只畫得出第一格，一張卻要
@@ -5110,60 +4605,36 @@ Panel {
   // 那一排和訊息泡泡都走這裡，所以收到的貼圖、樂觀泡泡和 LINE 推回來的那則畫的
   // 是同一張 —— daemon 從 2.4.0 起帶 STKOPT，推回來的網址是動態的那條。
   function stickerStill(url) {
-    return String(url === undefined || url === null ? "" : url)
-      .replace("/sticker_animation.png", "/sticker.png")
+    return PanelKit.stickerStill(url)
   }
 
   // 一包貼圖攤成格子。沒有編號的那幾張直接不畫：按下去 daemon 會回「貼圖編號
   // 不對」，畫一格按了只會被罵的東西沒有意義。
   function stickerCells(pack) {
-    if (!pack || !Array.isArray(pack.stickers)) return []
-    var pid = String(pack.id || "")
-    if (pid.length === 0) return []
-    var version = Math.round(Number(pack.version || 0))
-    var out = []
-    for (var i = 0; i < pack.stickers.length; i++) {
-      var s = pack.stickers[i]
-      var sid = s ? String(s.id || "") : ""
-      if (sid.length === 0) continue
-      out.push({ packageId: pid, stickerId: sid, url: root.stickerStill(s.url),
-                 version: isFinite(version) ? version : 0 })
-    }
-    return out
+    return PanelKit.stickerCells(pack)
   }
 
   // 貼圖包編號 → 分頁列上的第幾格。找不到回 -1：清單還沒回來，或那一包已經
   // 不在清單裡了。分頁要捲到哪、←/→ 走到哪一包，都從這個位置算。
   function stickerTabIndex(id) {
-    var want = String(id || "")
-    if (want.length === 0) return -1
-    for (var i = 0; i < root.stickerPacks.length; i++)
-      if (String(root.stickerPacks[i].id || "") === want) return i
-    return -1
+    return PanelKit.stickerTabIndex(root.stickerPacks, id)
   }
 
   // 貼圖包編號 → 那一包。找不到回 null：最近用過的那幾張可能來自已經不在清單
   // 裡的貼圖包，那時候送出去由 daemon 拒絕、理由由它說。
   function stickerPack(id) {
-    var i = root.stickerTabIndex(id)
-    return i < 0 ? null : root.stickerPacks[i]
+    return PanelKit.stickerPack(root.stickerPacks, id)
   }
 
   // 分頁上的名字。小舖沒給名字的那幾包不能變成一格空白 —— 認不出來就沒得選。
   function stickerPackName(pack) {
-    if (!pack) return ""
-    var name = String(pack.name || "").trim()
-    return name.length > 0 ? name : "貼圖包 " + String(pack.id || "")
+    return PanelKit.stickerPackName(pack)
   }
 
   // 分頁列捲到哪裡，永遠夾在 0（第一包）和捲到底之間。內容比列還窄時只有 0：
   // 不夾的話滾一下就能把整列推出畫面，看起來會像貼圖包全不見了。
   function stickerTabClamp(x, viewWidth, contentWidth) {
-    var want = Number(x)
-    if (!isFinite(want)) return 0
-    var max = Number(contentWidth) - Number(viewWidth)
-    if (!isFinite(max) || max < 0) max = 0
-    return Math.max(0, Math.min(want, max))
+    return PanelKit.stickerTabClamp(x, viewWidth, contentWidth)
   }
 
   // 滑鼠的滾輪。橫向的 Flickable 根本不吃滾輪（Qt 6.11 量過：垂直、水平兩軸
@@ -5175,26 +4646,15 @@ Panel {
   // 得到這裡。wheelDistance 的一格是 Style.space(60)，這兩列的一格是 step，按
   // 比例換算過去 —— 滑鼠一個刻度還是剛好一個 step，手感不變。
   function stickerTabScroll(contentX, angleY, pixelY, step, viewWidth, contentWidth) {
-    var notch = Style.space(60)
-    var by = notch > 0 ? root.wheelDistance(angleY, pixelY) / notch * Number(step) : 0
-    return root.stickerTabClamp(Number(contentX) - (isFinite(by) ? by : 0),
-                                viewWidth, contentWidth)
+    return PanelKit.stickerTabScroll(contentX, angleY, pixelY, step, viewWidth,
+                                     contentWidth, Style.space(60), root.scrollSpeed)
   }
 
   // 選到的那一包要在畫面裡：偏左就把左緣貼齊，偏右就把右緣貼齊，已經看得見
   // 就不動 —— 每次換包都置中會讓整列在腳下跳。一格寬過整列時左緣優先，
   // 名字是從左邊開始讀的。
   function stickerTabInView(contentX, itemX, itemWidth, viewWidth, contentWidth) {
-    var x = Number(contentX)
-    var left = Number(itemX)
-    var w = Number(itemWidth)
-    var view = Number(viewWidth)
-    if (!isFinite(x) || !isFinite(left) || !isFinite(w) || !isFinite(view))
-      return root.stickerTabClamp(x, viewWidth, contentWidth)
-    var want = x
-    if (left + w > x + view) want = left + w - view
-    if (left < want) want = left
-    return root.stickerTabClamp(want, viewWidth, contentWidth)
+    return PanelKit.stickerTabInView(contentX, itemX, itemWidth, viewWidth, contentWidth)
   }
 
   // ←/→ 換貼圖包。到頭就停，不繞回去 —— 跟燈箱的上一張／下一張同一條規矩。
@@ -5213,53 +4673,26 @@ Panel {
 
   // 最近用過：剛用的排最前面，同一張不重複，超過 max 就從最舊的砍掉。
   function recentPush(list, item, max) {
-    var cap = Math.round(Number(max))
-    if (!isFinite(cap) || cap <= 0) return []
-    var src = Array.isArray(list) ? list : []
-    var sid = item ? String(item.stickerId || "") : ""
-    if (sid.length === 0) return src.slice(0, cap)
-    var key = String(item.packageId || "") + ":" + sid
-    var out = [item]
-    for (var i = 0; i < src.length && out.length < cap; i++) {
-      var e = src[i]
-      if (!e) continue
-      if (String(e.packageId || "") + ":" + String(e.stickerId || "") === key) continue
-      out.push(e)
-    }
-    return out
+    return PanelKit.recentPush(list, item, max)
   }
 
   // sendSticker 的請求內容。version 只在真的知道的時候帶 —— 契約說不帶就用
   // daemon 清單裡那一包的，那一份一定比面板手上的新。
   function stickerRequest(chat, sticker) {
-    var req = {
-      chat: String(chat || ""),
-      packageId: String(sticker ? sticker.packageId || "" : ""),
-      stickerId: String(sticker ? sticker.stickerId || "" : "")
-    }
-    var v = Math.round(Number(sticker ? sticker.version : 0))
-    if (isFinite(v) && v > 0) req.version = v
-    return req
+    return PanelKit.stickerRequest(chat, sticker)
   }
 
   // 選單裡那一行字。三種「一片空白」要分得出來：還在讀、這個帳號沒有貼圖包、
   // 這一包這次讀不到（契約：讀不到時 stickers 是空陣列，不是把整包藏起來）。
   function stickerStatusText() {
-    if (root.stickerError.length > 0) return root.stickerError
-    if (root.stickerLoading && root.stickerPacks.length === 0) return "載入中…"
-    if (root.stickerPacks.length === 0) return "這個帳號沒有貼圖包"
-    if (root.stickerGridModel.length === 0) return "這個貼圖包這次讀不到，按 ⟳ 再試一次"
-    return ""
+    return PanelKit.stickerStatusText(root.stickerError, root.stickerLoading,
+                                      root.stickerPacks, root.stickerGridModel.length)
   }
 
   // 格子高度：最多 maxRows 列，不夠就只給需要的高度 —— 一包只有八張的時候
   // 底下不該空著兩列。
   function stickerGridHeight(count, width, cell, maxRows) {
-    var n = Math.max(0, Math.round(Number(count) || 0))
-    if (n === 0) return 0
-    var side = Math.max(1, Math.round(Number(cell) || 0))
-    var cols = Math.max(1, Math.floor(Number(width) / side))
-    return Math.max(1, Math.min(Math.round(Number(maxRows) || 1), Math.ceil(n / cols))) * side
+    return PanelKit.stickerGridHeight(count, width, cell, maxRows)
   }
 
   // 開關只有這一支：😊、Esc、點選單以外的地方，三個入口走同一條路 ——

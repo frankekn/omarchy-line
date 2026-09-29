@@ -35,6 +35,10 @@ const STORE_INDEX_MAX = 8_000;
 const STORE_FILES_MAX = 64;
 /** Writes coalesce for this long -- a burst of pushes is one append. */
 const FLUSH_MS = 150;
+/** Below this many lines a chat file is never worth rewriting. */
+const COMPACT_MIN_LINES = 1_000;
+/** Rewrite once disk lines exceed live records by this factor. */
+const COMPACT_RATIO = 2;
 
 /**
  * JSON.stringify drops bigint; the wire uses i64 for ids and times. Same
@@ -72,7 +76,11 @@ function idCompare(a: string, b: string): number {
 
 interface ChatFile {
   path: string;
+  /** `${myMid}/${chat}` -- the live-entry check for a deferred rewrite. */
+  key: string;
   loaded: boolean;
+  /** Non-empty lines currently on disk; the compaction trigger's dividend. */
+  diskLines: number;
   /** ids in ascending message order. */
   order: string[];
   /** O(1) membership for `order`; the two never disagree. */
@@ -81,8 +89,59 @@ interface ChatFile {
   recs: Map<string, Json>;
   /** serialized lines awaiting the next flush. */
   pending: string[];
+  /** A rewrite is in flight -- eviction must skip this file (see compact). */
+  compacting: boolean;
   writing: Promise<void>;
   timer: ReturnType<typeof setTimeout> | null;
+}
+
+/**
+ * The persisted reviver: wire binary fields arrive as Buffer and JSON keeps
+ * them in the tagged {type:"Buffer",data:[...]} form Buffer.toJSON emits.
+ * They have to come back as Uint8Array or the E2EE decryptor's
+ * chunk[1].subarray fails -- and the whole message renders as a decrypt
+ * error. The second shape covers a re-serialized Uint8Array, which JSON sees
+ * as a plain {0:..,1:..} object (integer keys enumerate in numeric order).
+ */
+function reviveJson(_k: string, v: unknown): unknown {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+  const o = v as Record<string, unknown>;
+  if (o.type === "Buffer" && Array.isArray(o.data)) {
+    return Uint8Array.from(o.data as number[]);
+  }
+  const keys = Object.keys(o);
+  if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
+    return Uint8Array.from(Object.values(o) as number[]);
+  }
+  return v;
+}
+
+/**
+ * One line folded into the merged-records map. `full` reports whether the
+ * line was a whole wire struct -- only those belong in the message order;
+ * tombstones and reaction overlays mutate an existing record (or leave a
+ * bare tombstone behind) without adding a row.
+ */
+function mergeInto(recs: Map<string, Json>, line: Json): {
+  id: string;
+  full: boolean;
+} {
+  const id = messageIdOf(line);
+  if (!id) return { id, full: false };
+  if (line._unsent === true) {
+    const base = recs.get(id) ?? { id };
+    const meta = { ...((base.contentMetadata ?? {}) as Json), UNSENT: "true" };
+    recs.set(id, { ...base, ...line, contentMetadata: meta });
+    return { id, full: false };
+  }
+  if (Array.isArray(line._reactions)) {
+    const base = recs.get(id);
+    if (base) recs.set(id, { ...base, reactions: line._reactions });
+    return { id, full: false };
+  }
+  // A full wire struct: edits arrive the same shape as first delivery.
+  recs.set(id, line);
+  return { id, full: true };
 }
 
 /**
@@ -95,37 +154,30 @@ function applyLine(
   order: string[],
   seen: Set<string>,
   line: Json,
+  indexMax: number = STORE_INDEX_MAX,
 ): void {
-  const id = messageIdOf(line);
-  if (!id) return;
-  if (line._unsent === true) {
-    const base = recs.get(id) ?? { id };
-    const meta = { ...((base.contentMetadata ?? {}) as Json), UNSENT: "true" };
-    recs.set(id, { ...base, ...line, contentMetadata: meta });
-    return;
-  }
-  if (Array.isArray(line._reactions)) {
-    const base = recs.get(id);
-    if (base) recs.set(id, { ...base, reactions: line._reactions });
-    return;
-  }
-  // A full wire struct: edits arrive the same shape as first delivery.
-  recs.set(id, line);
-  if (!seen.has(id)) {
-    seen.add(id);
-    // Almost always the tail; insert sorted so an out-of-order page fetch
-    // cannot wedge an old message behind newer ones.
-    let i = order.length;
-    while (i > 0 && idCompare(order[i - 1], id) > 0) i--;
-    order.splice(i, 0, id);
-    if (order.length > STORE_INDEX_MAX) {
-      const drop = order.splice(0, order.length - STORE_INDEX_MAX);
-      for (const d of drop) {
-        recs.delete(d);
-        seen.delete(d);
-      }
+  const { id, full } = mergeInto(recs, line);
+  if (!id || !full || seen.has(id)) return;
+  seen.add(id);
+  // Almost always the tail; insert sorted so an out-of-order page fetch
+  // cannot wedge an old message behind newer ones.
+  let i = order.length;
+  while (i > 0 && idCompare(order[i - 1], id) > 0) i--;
+  order.splice(i, 0, id);
+  if (order.length > indexMax) {
+    const drop = order.splice(0, order.length - indexMax);
+    for (const d of drop) {
+      recs.delete(d);
+      seen.delete(d);
     }
   }
+}
+
+/** A record as it should persist: merge artifacts (`_unsent`) never store. */
+function stripped(rec: Json): Json {
+  const out: Json = {};
+  for (const k of Object.keys(rec)) if (!k.startsWith("_")) out[k] = rec[k];
+  return out;
 }
 
 async function loadFile(f: ChatFile): Promise<void> {
@@ -140,26 +192,10 @@ async function loadFile(f: ChatFile): Promise<void> {
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
+    f.diskLines++;
     let parsed: Json;
     try {
-      // Wire binary fields arrive as Buffer; JSON.stringify keeps them in the
-      // tagged {type:"Buffer",data:[...]} form Buffer.toJSON emits. They have
-      // to come back as Uint8Array or the E2EE decryptor's chunk[1].subarray
-      // fails -- and the whole message renders as a decrypt error. The second
-      // shape covers a re-serialized Uint8Array, which JSON sees as a plain
-      // {0:..,1:..} object (integer keys enumerate in numeric order already).
-      parsed = JSON.parse(t, (_k, v: unknown) => {
-        if (!v || typeof v !== "object" || Array.isArray(v)) return v;
-        const o = v as Record<string, unknown>;
-        if (o.type === "Buffer" && Array.isArray(o.data)) {
-          return Uint8Array.from(o.data as number[]);
-        }
-        const keys = Object.keys(o);
-        if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
-          return Uint8Array.from(Object.values(o) as number[]);
-        }
-        return v;
-      }) as Json;
+      parsed = JSON.parse(t, reviveJson) as Json;
     } catch {
       continue; // a torn tail line loses only itself
     }
@@ -198,8 +234,20 @@ export interface MessageStore {
   flush(): Promise<void>;
 }
 
-export function createMessageStore(rootDir: string): MessageStore {
+export interface MessageStoreOptions {
+  /** Test hook: lower the rewrite floor. Defaults to COMPACT_MIN_LINES. */
+  compactMinLines?: number;
+  /** Test hook: lower the rewrite ratio. Defaults to COMPACT_RATIO. */
+  compactRatio?: number;
+}
+
+export function createMessageStore(
+  rootDir: string,
+  opts: MessageStoreOptions = {},
+): MessageStore {
   const files = new Map<string, ChatFile>();
+  const compactMinLines = opts.compactMinLines ?? COMPACT_MIN_LINES;
+  const compactRatio = opts.compactRatio ?? COMPACT_RATIO;
 
   function fileFor(myMid: string, chat: string): ChatFile {
     const key = `${myMid}/${chat}`;
@@ -207,11 +255,14 @@ export function createMessageStore(rootDir: string): MessageStore {
     if (!f) {
       f = {
         path: `${rootDir}/${myMid}/${chat}.jsonl`,
+        key,
         loaded: false,
+        diskLines: 0,
         order: [],
         seen: new Set(),
         recs: new Map(),
         pending: [],
+        compacting: false,
         writing: Promise.resolve(),
         timer: null,
       };
@@ -220,7 +271,15 @@ export function createMessageStore(rootDir: string): MessageStore {
     }
     files.set(key, f);
     while (files.size > STORE_FILES_MAX) {
-      const oldest = files.keys().next().value;
+      // Skip a file mid-rewrite: dropping it would let a re-created ChatFile
+      // append to the old inode while compact's rename is still in flight.
+      let oldest: string | undefined;
+      for (const k of files.keys()) {
+        if (!files.get(k)?.compacting) {
+          oldest = k;
+          break;
+        }
+      }
       if (oldest === undefined) break;
       const drop = files.get(oldest);
       files.delete(oldest);
@@ -229,6 +288,77 @@ export function createMessageStore(rootDir: string): MessageStore {
       if (drop && drop.pending.length) void flushFile(drop);
     }
     return f;
+  }
+
+  /**
+   * Rewrite the chat file as the merged view of itself: one full line per
+   * live message (overlays already folded in), tombstone-only stubs last.
+   * The private `_unsent`/`_reactions` keys are dropped -- their effects are
+   * baked into `contentMetadata.UNSENT` / `reactions`, and readers never see
+   * the underscore keys. Tombstone stubs without a base keep `_unsent` so a
+   * reload still leaves them out of the message order.
+   *
+   * Runs on `f.writing`, so pending appends can only land before the read
+   * (already part of the merged file) or after the rename (appended to the
+   * new file). The `compacting` flag keeps LRU eviction from swapping the
+   * file object out from under the rename.
+   */
+  async function compactFile(f: ChatFile): Promise<void> {
+    if (files.get(f.key) !== f) return;
+    f.compacting = true;
+    try {
+      let text = "";
+      try {
+        text = await Deno.readTextFile(f.path);
+      } catch {
+        return; // gone mid-flight; nothing to rewrite
+      }
+      const recs = new Map<string, Json>();
+      const order: string[] = [];
+      const seen = new Set<string>();
+      for (const line of text.split("\n")) {
+        const t = line.trim();
+        if (!t) continue;
+        let parsed: Json;
+        try {
+          parsed = JSON.parse(t, reviveJson) as Json;
+        } catch {
+          continue;
+        }
+        // Uncapped replay: compaction answers to the disk file, not the
+        // in-memory index -- a capped index would silently drop old rows.
+        applyLine(recs, order, seen, parsed, Number.POSITIVE_INFINITY);
+      }
+      const body = order.map((id) => safeLine(stripped(recs.get(id)!)) + "\n");
+      for (const id of recs.keys()) {
+        if (seen.has(id)) continue;
+        const rec = recs.get(id)!;
+        body.push(safeLine({ chatMid: rec.chatMid, id, _unsent: true }) + "\n");
+      }
+      const tmp = `${f.path}.tmp`;
+      await Deno.writeTextFile(tmp, body.join(""), { mode: 0o600 });
+      if (files.get(f.key) !== f) {
+        // Evicted mid-read; a new ChatFile owns the path now.
+        await Deno.remove(tmp).catch(() => {});
+        return;
+      }
+      await Deno.rename(tmp, f.path);
+      f.diskLines = body.length;
+    } catch {
+      // A failed rewrite leaves the append-only file exactly as it was.
+    } finally {
+      f.compacting = false;
+    }
+  }
+
+  /**
+   * The file is worth rewriting once dead lines dominate live records. Only
+   * loaded files qualify: an unread one has recs.size of 0 (a degenerate
+   * ratio) and nobody pays its reparse cost anyway.
+   */
+  function maybeCompact(f: ChatFile): boolean {
+    return f.loaded && files.get(f.key) === f && !f.compacting &&
+      f.diskLines > compactMinLines && f.diskLines > f.recs.size * compactRatio;
   }
 
   async function flushFile(f: ChatFile): Promise<void> {
@@ -247,6 +377,21 @@ export function createMessageStore(rootDir: string): MessageStore {
       append: true,
       mode: 0o600,
     }).catch(() => {});
+    f.diskLines += lines.length;
+    if (maybeCompact(f)) await compactFile(f);
+  }
+
+  /**
+   * The read path's open: load the index, then queue a rewrite when the file
+   * turned out to be mostly dead lines -- the parse cost that just ran is the
+   * one compaction exists to shrink.
+   */
+  async function openFile(f: ChatFile): Promise<void> {
+    await loadFile(f);
+    if (maybeCompact(f)) {
+      f.writing = f.writing.then(() => compactFile(f));
+      void f.writing;
+    }
   }
 
   function enqueue(f: ChatFile, line: Json): void {
@@ -285,13 +430,13 @@ export function createMessageStore(rootDir: string): MessageStore {
     async get(myMid, chat, id) {
       if (!myMid || !id) return null;
       const f = fileFor(myMid, chat);
-      await loadFile(f);
+      await openFile(f);
       return f.recs.get(id) ?? null;
     },
     async tail(myMid, chat, count) {
       if (!myMid) return null;
       const f = fileFor(myMid, chat);
-      await loadFile(f);
+      await openFile(f);
       if (!f.order.length) return null;
       const ids = f.order.slice(-Math.max(1, count));
       return ids.map((id) => f.recs.get(id)).filter((r): r is Json => !!r);
@@ -299,7 +444,7 @@ export function createMessageStore(rootDir: string): MessageStore {
     async pageBefore(myMid, chat, anchorId, count) {
       if (!myMid) return null;
       const f = fileFor(myMid, chat);
-      await loadFile(f);
+      await openFile(f);
       const at = f.order.indexOf(anchorId);
       if (at < 0) return null;
       const ids = f.order.slice(Math.max(0, at - Math.max(1, count)), at);
