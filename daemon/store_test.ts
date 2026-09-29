@@ -181,3 +181,23 @@ Deno.test("bigint wire fields survive the round trip", async () => {
     assertEquals(String(tail?.[0]?.deliveredTime), "456");
   });
 });
+
+Deno.test("binary wire fields revive as Uint8Array, not tagged objects", async () => {
+  await withStore(async (store, dir) => {
+    // Write the exact shape Buffer.toJSON leaves on disk, because the wire
+    // path hands chunks: Buffer[] and the decryptor needs .subarray back.
+    await Deno.mkdir(`${dir}/messages/${ME}`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/messages/${ME}/${CHAT}.jsonl`,
+      JSON.stringify({
+        ...msg(9, "enc"),
+        contentType: "IMAGE",
+        chunks: [{ type: "Buffer", data: [217, 177, 9] }],
+      }) + "\n",
+    );
+    const got = await store.get(ME, CHAT, "9");
+    const chunk = (got?.chunks as unknown[])?.[0];
+    assert(chunk instanceof Uint8Array);
+    assertEquals([...(chunk as Uint8Array)], [217, 177, 9]);
+  });
+});

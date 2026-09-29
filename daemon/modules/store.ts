@@ -142,7 +142,24 @@ async function loadFile(f: ChatFile): Promise<void> {
     if (!t) continue;
     let parsed: Json;
     try {
-      parsed = JSON.parse(t) as Json;
+      // Wire binary fields arrive as Buffer; JSON.stringify keeps them in the
+      // tagged {type:"Buffer",data:[...]} form Buffer.toJSON emits. They have
+      // to come back as Uint8Array or the E2EE decryptor's chunk[1].subarray
+      // fails -- and the whole message renders as a decrypt error. The second
+      // shape covers a re-serialized Uint8Array, which JSON sees as a plain
+      // {0:..,1:..} object (integer keys enumerate in numeric order already).
+      parsed = JSON.parse(t, (_k, v: unknown) => {
+        if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+        const o = v as Record<string, unknown>;
+        if (o.type === "Buffer" && Array.isArray(o.data)) {
+          return Uint8Array.from(o.data as number[]);
+        }
+        const keys = Object.keys(o);
+        if (keys.length && keys.every((k) => /^\d+$/.test(k))) {
+          return Uint8Array.from(Object.values(o) as number[]);
+        }
+        return v;
+      }) as Json;
     } catch {
       continue; // a torn tail line loses only itself
     }
