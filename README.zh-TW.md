@@ -4,9 +4,9 @@
 
 Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息、傳檔案。
 
-| ![中文對話——mention、表情、已讀、收回、過期檔案](docs/screenshot-zh.png) | ![英文內容——FLEX 部署卡、引言回覆、檔案與影片附件](docs/screenshot-en.png) |
+| ![中文對話——mention、表情、已讀、收回、過期檔案](docs/screenshot-zh.png) | ![英文訊息內容——FLEX 部署卡、引言回覆、檔案與影片附件](docs/screenshot-en.png) |
 | :-: | :-: |
-| 中文對話 — mention、表情、已讀、收回、過期檔案 | English content — FLEX card, quote reply, file & video attachments |
+| 中文對話 — mention、表情、已讀、收回、過期檔案 | English chat content — FLEX card, quote replies, file & video attachments |
 
 這個 repo 有兩半：
 

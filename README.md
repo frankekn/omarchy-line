@@ -5,9 +5,12 @@
 Unread LINE count in the bar. Click it to search chats, read messages, reply,
 and send files.
 
-| ![Chinese conversation — mentions, reactions, read receipts, an unsent message and an expired file](docs/screenshot-zh.png) | ![English-leaning conversation — a FLEX deploy card, a quote reply, a file and video attachments](docs/screenshot-en.png) |
+| ![Chinese conversation — mentions, reactions, read receipts, an unsent message and an expired file](docs/screenshot-zh.png) | ![English chat content — a FLEX deploy card, quote replies, file and video attachments](docs/screenshot-en.png) |
 | :-: | :-: |
-| 中文對話 — mention、表情、已讀、收回、過期檔案 | English content — FLEX card, quote reply, file & video attachments |
+| 中文對話 — mention、表情、已讀、收回、過期檔案 | English chat content — FLEX card, quote replies, file & video attachments |
+
+*UI strings are Traditional Chinese (the shell is zh-TW); message content in
+any language renders fine, as shown above.*
 
 This repo has two halves:
 
@@ -1350,6 +1353,7 @@ map back at `jsr:@evex/linejs`.
 ## Known limits
 
 - Unofficial client — account risk (see above)
+- Panel UI strings are Traditional Chinese only — no English UI yet
 - Multi-person rooms (`r…` mids) can't take files — linejs's
   `uploadMediaByE2EE` only accepts `u`/`c`
 - E2EE videos show 📎 rather than a thumbnail: the thumbnail is encrypted
