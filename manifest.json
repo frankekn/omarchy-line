@@ -24,6 +24,7 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "language": "System",
       "textScale": 100,
       "placement": "Below the bar",
       "windowWidth": 1040,
@@ -32,6 +33,18 @@
       "historyPage": 60
     },
     "schema": [
+      {
+        "key": "language",
+        "type": "enum",
+        "label": "Language",
+        "options": [
+          "System",
+          "繁體中文",
+          "English"
+        ],
+        "defaultValue": "System",
+        "description": "Panel language. System follows your OS locale (zh* → 繁體中文, anything else → English). Pick 繁體中文 to keep Chinese on an English system."
+      },
       {
         "key": "placement",
         "type": "enum",

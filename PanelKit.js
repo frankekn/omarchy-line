@@ -33,10 +33,10 @@ function clampHistory(value) {
   return Math.max(20, Math.min(200, n))
 }
 
-function placementLabel(mode) {
-  if (mode === "app") return "視窗"
-  if (mode === "center") return "置中"
-  return "貼齊 bar"
+function placementLabel(mode, tr) {
+  if (mode === "app") return tr("place.app")
+  if (mode === "center") return tr("place.center")
+  return tr("place.bar")
 }
 
 // 按一下換下一段：找「下一個更大的」而不是查現在排第幾 —— shell.json 手改
@@ -114,10 +114,10 @@ function chatRows(all, query, up) {
 
 // 清單那一列的第二行。隱藏的聊天只有在搜尋結果裡才看得到，所以那一列得自己
 // 說明為什麼平常找不到它 —— 字級與顏色照舊，這裡只是多一個前綴。
-function rowSubtitle(c) {
+function rowSubtitle(c, tr) {
   var line = (c.lastFrom ? c.lastFrom + ": " : "") + (c.lastText || "")
   if (!c.hidden) return line
-  return line.length > 0 ? "已隱藏 · " + line : "已隱藏"
+  return line.length > 0 ? tr("hidden.row", line) : tr("hidden.only")
 }
 
 function mediaUsable(m) {
@@ -125,7 +125,7 @@ function mediaUsable(m) {
   return m.mediaState === undefined || m.mediaState === "ok"
 }
 
-function mediaLabel(m) {
+function mediaLabel(m, tr) {
   var name = m.fileName || ("[" + m.contentType + "]")
   if (m.fileSize) {
     var kb = m.fileSize / 1024
@@ -134,8 +134,8 @@ function mediaLabel(m) {
   // 打不開的理由寫在名字後面。daemon 連要都不會去要，少了這幾個字，
   // 使用者看到的只是一行點不動的灰字，會以為是自己按錯地方。
   // 收回的訊息 hasMedia 是 false，走不到這一行，但燈箱標題也用同一支，還是擋著。
-  if (m.mediaState === "expired") return name + "（已過期）"
-  if (m.mediaState === "unsent") return name + "（已收回）"
+  if (m.mediaState === "expired") return name + tr("media.expired")
+  if (m.mediaState === "unsent") return name + tr("media.unsent")
   return name
 }
 
@@ -196,13 +196,13 @@ function outsidePicture(mx, my, stageW, stageH, panX, panY, scale, paintedW, pai
 }
 
 // 燈箱標題：檔名（有大小就換成 mediaLabel 那行完整資訊）加上「n / m」。
-function lightboxCaption(lightbox, messages) {
+function lightboxCaption(lightbox, messages, tr) {
   if (!lightbox) return ""
-  var label = String(lightbox.name || "圖片")
+  var label = String(lightbox.name || tr("image"))
   var list = Array.isArray(messages) ? messages : []
   for (var i = 0; i < list.length; i++)
     if (list[i].id === lightbox.id && list[i].fileSize) {
-      label = mediaLabel(list[i])
+      label = mediaLabel(list[i], tr)
       break
     }
   var n = pictureList(list).length
@@ -218,15 +218,15 @@ function escapeAction(lightbox, stickerOpen, view) {
 }
 
 // 徽章欄很窄，單位只留一個字，不用「分鐘/小時/天前」。
-function agoText(ms, nowMs) {
+function agoText(ms, nowMs, tr) {
   // 沒有最後一則訊息的聊天室 lastTime 是 0，算出來會是兩萬多天。
   if (Number(ms || 0) <= 0) return ""
   var mins = Math.floor((Number(nowMs || 0) - Number(ms || 0)) / 60000)
-  if (mins < 1) return "剛剛"
-  if (mins < 60) return mins + " 分"
+  if (mins < 1) return tr("ago.now")
+  if (mins < 60) return tr("ago.min", mins)
   var hours = Math.floor(mins / 60)
-  if (hours < 24) return hours + " 時"
-  return Math.floor(hours / 24) + " 天"
+  if (hours < 24) return tr("ago.hour", hours)
+  return tr("ago.day", Math.floor(hours / 24))
 }
 
 // ---------------------------------------------------------------- 訊息文字
@@ -328,22 +328,25 @@ function mentionRanges(mentions, len) {
   return kept
 }
 
-function bodyText(m) {
-  if (m.decryptFailed) return "[E2EE 解密失敗]"
+function bodyText(m, tr) {
+  if (m.decryptFailed) return tr("ct.e2eeFail")
+  // 收回看旗標不看 text：墓碑的字（daemon 線上值、applyUnsend 寫的）
+  // 都是中文，介面語言要在這一層換掉。
+  if (m.unsent === true) return tr("msg.unsent")
   if (m.text && m.text.length > 0) return m.text
   // FLEX/RICH 這類版面訊息，LINE 自己附了純文字備援，比印 [FLEX] 有用得多。
   if (m.altText && m.altText.length > 0) return m.altText
   // 舊 daemon 沒有 stickerUrl，貼圖只能落到這裡，別印 [STICKER]。
-  if (m.contentType === "STICKER") return "[貼圖]"
-  return "[" + (m.contentType || "非文字") + "]"
+  if (m.contentType === "STICKER") return tr("ct.sticker")
+  return "[" + (m.contentType || tr("ct.nonText")) + "]"
 }
 
 // pre-wrap：訊息裡的連續空白和縮排是使用者自己打的，HTML 預設會把它們併成
 // 一格。加上它就留得住，長行照樣自動換行（在 Qt 6.11 量過）。
 // accent 是已去掉 alpha 的 CSS 色字串：帶 alpha 的 QML 顏色會變成 #AARRGGBB，
 // CSS 讀不懂，所以轉字串這一步留在呼叫端。
-function bodyHtml(m, accent) {
-  var text = bodyText(m)
+function bodyHtml(m, accent, tr) {
+  var text = bodyText(m, tr)
   // mentions 的位移是照 m.text 算的。bodyText 換成「[貼圖]」這種替代文字的時候
   // 套上去會切在別的地方，所以只有本文真的就是 m.text 時才上色。
   var spans = (m && m.text && text === String(m.text))
@@ -395,12 +398,14 @@ function mentionRank(names, q) {
 }
 
 // 最多 8 列：再多就蓋掉半個對話，而且沒人會往下捲到第九個名字。
-function mentionMatches(members, query) {
+function mentionMatches(members, query, tr) {
   var q = String(query === undefined || query === null ? "" : query).toLowerCase()
   var rows = []
   // 「全部」不是群組成員，但它是最常用的一個 @，所以跟人名排在同一份清單裡。
+  // 名字顯示跟介面語言走，比對仍是雙語（使用者打 all 或 全部 都找得到）。
   var allRank = mentionRank(["All", "全部"], q)
-  if (allRank >= 0) rows.push({ name: "全部", insert: "All", all: true, rank: allRank })
+  if (allRank >= 0)
+    rows.push({ name: tr("mention.all"), insert: "All", all: true, rank: allRank })
   var list = Array.isArray(members) ? members : []
   for (var i = 0; i < list.length; i++) {
     var name = String(list[i] && list[i].name ? list[i].name : "")
@@ -499,11 +504,11 @@ function anchoredContentY(afterY, originY, keep, contentHeight, height) {
 }
 
 // state.chatList 是選填欄位：舊的 daemon 和 stub.py 都不送，缺的時候一律當作正常。
-function partialListNoticeText(chatList, chatsCount, searching) {
+function partialListNoticeText(chatList, chatsCount, searching, tr) {
   if (!chatList || chatList.complete !== false) return ""
   var count = Number(chatList.loaded || chatsCount || 0)
-  return "目前顯示 " + count + " 個聊天室，尚有聊天室未載入"
-    + (searching ? "；搜尋範圍僅限已載入資料" : "")
+  return tr("list.partial", count)
+    + (searching ? tr("list.partialSearch") : "")
 }
 
 // state.link / state.refresh 都是選填欄位（README 契約）：link.push 說的是 push
@@ -512,18 +517,18 @@ function partialListNoticeText(chatList, chatsCount, searching) {
 // 18 分鐘顯示 22 小時前的內容。兩句同時成立只印上面那句 —— 連線斷了本來
 // 就拓不到清單，那句更根本。門檻 2：一次 30 秒的 timeout 手機熱點下就會
 // 發生，單次就跳字太吵，連續兩次（≥ 60 秒）才算真的。
-function linkNoticeText(state, online, nowMs, searching, chatsCount) {
+function linkNoticeText(state, online, nowMs, searching, chatsCount, tr) {
   var cl = state && state.chatList ? state.chatList : null
-  var partial = partialListNoticeText(cl, chatsCount, searching)
+  var partial = partialListNoticeText(cl, chatsCount, searching, tr)
   if (!online) return partial
   var l = state && state.link ? state.link : null
   if (l && String(l.push || "") === "down") {
     // since 是選填／可能是 0，agoText 這時會回空字串，就不要留一個空括號。
-    var ago = agoText(Number(l.since || 0), nowMs)
-    var t = ago ? "LINE 連線中斷，重連中（" + ago + "）" : "LINE 連線中斷，重連中"
+    var ago = agoText(Number(l.since || 0), nowMs, tr)
+    var t = ago ? tr("link.downAgo", ago) : tr("link.down")
     // 這一行本身就是「現在就重連」那顆按鈕。純文字看不出來點得下去，
     // 所以把動作寫進句子裡 —— 斷線時人最想按的就是這個。
-    return t + "，點此立即重連" + (partial ? "；" + partial : "")
+    return t + tr("link.reconnectHint") + (partial ? tr("sep.semi") + partial : "")
   }
   var r = state && state.refresh ? state.refresh : null
   if (!r || Number(r.failures || 0) < 2) {
@@ -531,22 +536,22 @@ function linkNoticeText(state, online, nowMs, searching, chatsCount) {
   }
   // at 是選填／可能是 0；「剛剛」接上「前」不成話，而且剛更新過的括號
   // 本來就沒有資訊，一併省掉。
-  var upd = agoText(Number(r.at || 0), nowMs)
-  var s = upd && upd !== "剛剛" ? "LINE 清單可能過期（最後更新 " + upd + "前）"
-                                : "LINE 清單可能過期"
+  var upd = agoText(Number(r.at || 0), nowMs, tr)
+  var s = upd && upd !== tr("ago.now") ? tr("list.staleAgo", upd)
+                                       : tr("list.stale")
   // 後綴同上：這一行同時是重連按鈕。徽章不動 —— 未讀數是斷線前抓到的，
   // 還是真的，只是不夠新。
-  return s + "，點此立即重連" + (partial ? "；" + partial : "")
+  return s + tr("list.staleHint") + (partial ? tr("sep.semi") + partial : "")
 }
 
 // 清單標題下那一行實際顯示什麼。單欄時對話那半邊整個不可見，提示只能借這一行 ——
 // 不然按「同步」在單欄清單裡等於什麼都沒發生。兩欄時 noticeLine 一直在畫面上，
 // 再借一次只是把同一句話同時印兩遍。linkText 是呼叫端算好的 linkNoticeText()。
-function listNoticeText(draftWriteError, chatList, twoPane, notice, linkText) {
+function listNoticeText(draftWriteError, chatList, twoPane, notice, linkText, tr) {
   if (String(draftWriteError || "").length > 0) return draftWriteError
   if (chatList && chatList.complete === false) {
     if (!twoPane && notice.length > 0)
-      return notice + (linkText ? "；" + linkText : "")
+      return notice + (linkText ? tr("sep.semi") + linkText : "")
     return linkText
   }
   if (!twoPane && notice.length > 0) return notice
@@ -555,10 +560,10 @@ function listNoticeText(draftWriteError, chatList, twoPane, notice, linkText) {
 
 // login.reason 同樣是選填。舊 daemon 只有 error，那就照舊把原字串放出來 ——
 // 那是英文的函式庫訊息，但比一句沒有內容的「登入失敗」有用。
-function loginErrorDetail(loginInfo) {
+function loginErrorDetail(loginInfo, tr) {
   var reason = loginInfo ? String(loginInfo.reason || "") : ""
-  if (reason === "token_expired") return "登入已過期，請重新掃描"
-  if (reason === "network") return "連不上 LINE，稍後重試"
+  if (reason === "token_expired") return tr("login.tokenExpired")
+  if (reason === "network") return tr("login.network")
   return loginInfo ? String(loginInfo.error || "") : ""
 }
 
@@ -588,10 +593,10 @@ function avatarInitial(text) {
 
 // 清單那一列的右鍵選單。二選一：同一列不會同時給兩個相反的動作，
 // 看到哪一個就代表現在是哪一種狀態。
-function chatMenuItems(c) {
+function chatMenuItems(c, tr) {
   return [c && c.hidden
-          ? { action: "unhide", label: "取消隱藏" }
-          : { action: "hide", label: "隱藏聊天" }]
+          ? { action: "unhide", label: tr("menu.unhide") }
+          : { action: "hide", label: tr("menu.hide") }]
 }
 
 // 兩欄時清單那半邊有多寬。上限照字級縮放 —— TUI 的左欄是固定 34 個字寬，字放大
@@ -654,10 +659,10 @@ function stickerPack(packs, id) {
 }
 
 // 分頁上的名字。小舖沒給名字的那幾包不能變成一格空白 —— 認不出來就沒得選。
-function stickerPackName(pack) {
+function stickerPackName(pack, tr) {
   if (!pack) return ""
   var name = String(pack.name || "").trim()
-  return name.length > 0 ? name : "貼圖包 " + String(pack.id || "")
+  return name.length > 0 ? name : tr("sticker.pack", pack.id || "")
 }
 
 // 分頁列捲到哪裡，永遠夾在 0（第一包）和捲到底之間。內容比列還窄時只有 0：
@@ -767,11 +772,11 @@ function stickerGridHeight(count, width, cell, maxRows) {
 
 // 選單裡那一行字。三種「一片空白」要分得出來：還在讀、這個帳號沒有貼圖包、
 // 這一包這次讀不到（契約：讀不到時 stickers 是空陣列，不是把整包藏起來）。
-function stickerStatusText(error, loading, packs, gridCount) {
+function stickerStatusText(error, loading, packs, gridCount, tr) {
   if (String(error || "").length > 0) return String(error)
-  if (loading && (!packs || packs.length === 0)) return "載入中…"
-  if (!packs || packs.length === 0) return "這個帳號沒有貼圖包"
-  if (gridCount === 0) return "這個貼圖包這次讀不到，按 ⟳ 再試一次"
+  if (loading && (!packs || packs.length === 0)) return tr("sticker.loading")
+  if (!packs || packs.length === 0) return tr("sticker.none")
+  if (gridCount === 0) return tr("sticker.packFail")
   return ""
 }
 

@@ -196,13 +196,13 @@ function applyUnsend(list, id) {
 
 // 自己傳的訊息底下那行小字。什麼都不知道的時候契約是「整個欄位不存在」，
 // 那就什麼都不畫 —— 不能把「不知道」畫成「沒人讀」。
-function readText(m, myMid) {
+function readText(m, myMid, tr) {
   if (!m || m.failed === true || String(m.from || "") !== myMid) return ""
   var r = m.readBy
   if (!r) return ""
   var n = Number(r.count || 0)
   if (!(n > 0)) return ""
-  return r.all === true ? "已讀" : "已讀 " + n
+  return r.all === true ? tr("read.all") : tr("read.n", n)
 }
 
 // LINE 那六個表情的圖是它自己的素材，這裡挑意思最接近的 emoji —— 名字
@@ -232,8 +232,8 @@ function isSystemEvent(m) {
 }
 
 // 這兩種事件的 text 幾乎都是空的，走 bodyText 會印出 [CHATEVENT] 這種內部代號。
-function systemEventText(m) {
-  var label = m.contentType === "POSTNOTIFICATION" ? "貼文通知" : "系統事件"
+function systemEventText(m, tr) {
+  var label = tr(m.contentType === "POSTNOTIFICATION" ? "sys.post" : "sys.event")
   // LINE 常把事件名本身塞進 text（text === "POSTNOTIFICATION"），
   // 照印就變成聊天視窗裡的英文代碼，所以只有真的人話才用 text。
   var t = m.text || ""
@@ -254,12 +254,12 @@ function oneLine(t) {
   return String(t || "").replace(/\s+/g, " ").trim()
 }
 
-function quoteText(r) {
+function quoteText(r, tr) {
   if (!r) return ""
   var name = String(r.fromName || "")
   var body = oneLine(String(r.text || ""))
-  if (body.length === 0) body = "訊息"
-  return name.length > 0 ? name + "：" + body : body
+  if (body.length === 0) body = tr("notif.msg")
+  return name.length > 0 ? name + tr("sep.colon") + body : body
 }
 
 // 分隔線的「天」：訊息進清單時就把 day 蓋上去，delegate 就不用每列各算一次。
@@ -280,15 +280,17 @@ function dayStart(ms) {
 // 以 nowMs 為基準，跨午夜時 30 秒的計時器會讓「今天」自己往前挪。
 // 「昨天」不用 nowMs - 86400000 直接比：夏令時間那兩天差的不是 24 小時，
 // 先歸到今天凌晨再退 12 小時，落在哪一天都還是昨天。
-function dayLabel(ms, nowMs) {
+function dayLabel(ms, nowMs, tr) {
   var day = dayStart(ms)
   var today = dayStart(nowMs)
-  if (day === today) return "今天"
-  if (day === dayStart(today - 43200000)) return "昨天"
+  if (day === today) return tr("day.today")
+  if (day === dayStart(today - 43200000)) return tr("day.yesterday")
   var d = new Date(day)
-  var md = (d.getMonth() + 1) + "月" + d.getDate() + "日"
+  var md = tr("day.md", d.getMonth() + 1, d.getDate())
   // 跨年之後只寫「1月3日」會讓人以為是今年的：不同年就把年份補上。
-  return d.getFullYear() === new Date(today).getFullYear() ? md : d.getFullYear() + "年" + md
+  return d.getFullYear() === new Date(today).getFullYear()
+    ? md
+    : tr("day.ymd", d.getFullYear(), d.getMonth() + 1, d.getDate())
 }
 
 // 未讀分隔線畫在哪一則之上。daemon 只給得到「這間還有幾則未讀」，所以從最後一則

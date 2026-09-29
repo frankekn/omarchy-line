@@ -26,6 +26,15 @@ const EventLog = new Function(
     " withDay, dayStart, dayLabel, firstUnreadIndex, mergeFailedMessages," +
     " recordFailure, showAvatarAt };",
 )();
+// Strings.js is the same file the panel imports; zh is the historical wire
+// language, so binding tr/trErr to "zh" keeps every old assertion verbatim-true.
+const Strings = new Function(
+  fs.readFileSync(path.join(REPO, "Strings.js"), "utf8") +
+    "; return { STRINGS, normalizeLang, t, fmt, err };",
+)();
+const Tzh = (key, ...a) => Strings.fmt(key, "zh", ...a);
+const Ezh = (x) => Strings.err(x, "zh");
+
 const kitSrc = fs.readFileSync(path.join(REPO, "PanelKit.js"), "utf8");
 const PanelKit = new Function(
   kitSrc.replace(/^\.pragma library\s*/, "") +
@@ -45,6 +54,24 @@ const PanelKit = new Function(
     " recentPush, stickerGridHeight, stickerStatusText, nextPlacement," +
     " chatById, accountsWithAmbiguous };",
 )();
+
+// Helpers take a trailing `tr` translator for visible strings. Old call sites
+// in this harness (and the language-agnostic assertions below) exercise the zh
+// default: append Tzh whenever a caller leaves `tr` off.
+for (const [lib, names] of [
+  [PanelKit, ["placementLabel", "rowSubtitle", "mediaLabel", "lightboxCaption",
+    "agoText", "bodyText", "bodyHtml", "mentionMatches", "partialListNoticeText",
+    "linkNoticeText", "listNoticeText", "loginErrorDetail", "chatMenuItems",
+    "stickerPackName", "stickerStatusText"]],
+  [EventLog, ["readText", "systemEventText", "quoteText", "dayLabel"]],
+]) {
+  for (const name of names) {
+    const orig = lib[name];
+    lib[name] = (...a) =>
+      orig(...(a.length >= orig.length ? a : [...a, Tzh]));
+  }
+}
+
 const lines = src.split("\n");
 
 // Slice from the line after `<header>` to the line before its closing `  }`
@@ -417,16 +444,16 @@ function makeStatusRoot(opts) {
   // agoText() reads a bare `nowMs` (QML resolves it on root), so it is passed
   // as a parameter rather than rewriting the sliced body.
   const ago = (ms) =>
-    new Function("root", "PanelKit", "ms", B.agoText)(root, PanelKit, ms);
-  const notice = new Function("root", "PanelKit", B.linkNoticeText);
-  const partial = new Function("root", "PanelKit", B.partialListNoticeText);
-  const detail = new Function("root", "PanelKit", B.loginErrorDetail);
-  const listNotice = new Function("root", "PanelKit", B.listNoticeText);
+    new Function("root", "PanelKit", "ms", "tr", B.agoText)(root, PanelKit, ms, Tzh);
+  const notice = new Function("root", "PanelKit", "tr", B.linkNoticeText);
+  const partial = new Function("root", "PanelKit", "tr", B.partialListNoticeText);
+  const detail = new Function("root", "PanelKit", "tr", "trErr", B.loginErrorDetail);
+  const listNotice = new Function("root", "PanelKit", "tr", B.listNoticeText);
   root.agoText = (ms) => ago(ms);
-  root.partialListNoticeText = () => partial(root, PanelKit);
-  root.linkNoticeText = () => notice(root, PanelKit);
-  root.listNoticeText = () => listNotice(root, PanelKit);
-  root.loginErrorDetail = () => detail(root, PanelKit);
+  root.partialListNoticeText = () => partial(root, PanelKit, Tzh);
+  root.linkNoticeText = () => notice(root, PanelKit, Tzh);
+  root.listNoticeText = () => listNotice(root, PanelKit, Tzh);
+  root.loginErrorDetail = () => detail(root, PanelKit, Tzh, Ezh);
   return root;
 }
 
@@ -469,6 +496,9 @@ const ARGS = [
   "DraftWriter",
   "EventLog",
   "PanelKit",
+  // sliced bodies translate UI text through these two (zh-bound here)
+  "tr",
+  "trErr",
 ];
 
 function makeEnv(opts) {
@@ -1407,6 +1437,8 @@ function makeEnv(opts) {
       DraftWriter,
       EventLog,
       PanelKit,
+      Tzh,
+      Ezh,
     );
   const mk = (name, params) =>
     new Function(...ARGS, ...(params || []), B[name]);
@@ -1995,7 +2027,7 @@ ok(
   "A remains surfaced as a failed selectable bubble",
 );
 ok(
-  src.includes('text: "傳送失敗；內容保留在這裡"') &&
+  src.includes('text: tr("send.failedKept")') &&
     src.includes("visible: modelData.failed === true"),
   "the failed bubble is visibly distinguished from a delivered message",
 );
@@ -3404,7 +3436,7 @@ ok(
 );
 ok(
   /path === "__NO_ZENITY__"/.test(pickerBlock) &&
-    pickerBlock.includes("找不到 zenity，請 sudo pacman -S zenity"),
+    pickerBlock.includes('tr("zenity.missing")'),
   "the sentinel becomes a visible notice",
 );
 // Cancel prints nothing; that must stay silent rather than nag.
@@ -3911,7 +3943,7 @@ const scaleRowBlock = src.slice(
   src.indexOf("            id: logoutLabel"),
 );
 ok(
-  /text:\s*root\.syncing \? "同步中…" : "同步"/.test(scaleRowBlock),
+  /text: root\.syncing \? tr\("syncing"\) : tr\("sync"\)/.test(scaleRowBlock),
   "the label shows the in-flight state",
 );
 ok(scaleRowBlock.includes("onClicked: root.syncNow()"), "clicking it syncs");
@@ -7437,7 +7469,7 @@ ok(
   "the 📎 and the thumbnail still route through openMedia/showPicture",
 );
 ok(
-  /root\.unreadMarkId/.test(msgRows) && /未讀訊息/.test(msgRows),
+  /root\.unreadMarkId/.test(msgRows) && /tr\("chat\.unreadDivider"\)/.test(msgRows),
   "and the unread separator is a row of the delegate -- it appears once, it is not a group",
 );
 ok(
@@ -7571,11 +7603,11 @@ ok(
     "copy of the rule, so the table above cannot pass while the panel does something else",
 );
 ok(
-  /meta: !root\.online \? "DAEMON 離線"/.test(listPaneBlock),
+  /meta: !root\.online \? tr\("daemon\.offline"\)/.test(listPaneBlock),
   "the hero still names the offline state",
 );
 ok(
-  /detail: root\.online \? "" : "daemon 沒在跑：systemctl --user start enil"/
+  /detail: root\.online \? "" : tr\("daemon\.notRunningHint"\)/
     .test(listPaneBlock),
   "and says what to type to get it back -- 「離線」 alone leaves the reader stuck",
 );
@@ -8866,7 +8898,7 @@ const stripBlock = src.slice(
 ok(stripBlock.length > 0, "the quote strip block was found in Panel.qml");
 ok(
   /visible: !!root\.replyTarget/.test(stripBlock) &&
-    /text: "回覆 " \+ root\.quoteText\(root\.replyTarget\)/.test(stripBlock),
+    /text: tr\("reply\.quote", root\.quoteText\(root\.replyTarget\)\)/.test(stripBlock),
   "the strip above the box says who is being replied to",
 );
 ok(
@@ -10242,14 +10274,14 @@ const arrowRight = tabStripBlock.slice(
 );
 for (
   const [glyph, block, label, notches] of [
-    ["\u2039", arrowLeft, "往左捲貼圖包分頁", "1"],
-    ["\u203a", arrowRight, "往右捲貼圖包分頁", "-1"],
+    ["\u2039", arrowLeft, 'tr("sticker.scrollL")', "1"],
+    ["\u203a", arrowRight, 'tr("sticker.scrollR")', "-1"],
   ]
 ) {
   ok(block.length > 0, glyph + " was found in the package row");
   ok(
     block.includes("Accessible.role: Accessible.Button") &&
-      block.includes('Accessible.name: "' + label + '"'),
+      block.includes("Accessible.name: " + label),
     glyph + " is a Button with a name to assistive tech, not an unlabelled " +
       "Rectangle: " + JSON.stringify(label),
   );
@@ -10682,7 +10714,9 @@ const composerHint = src.slice(
   src.indexOf("              wrapMode: TextArea.Wrap"),
 );
 ok(
-  /Ctrl\+V/.test(composerHint),
+  /tr\("send\.placeholder"\)/.test(composerHint) &&
+    /Ctrl\+V/.test(Strings.STRINGS["send.placeholder2"].zh) &&
+    /Ctrl\+V/.test(Strings.STRINGS["send.placeholder2"].en),
   "and the placeholder says the key exists, next to /file -- nothing else on screen " +
     "would ever tell anyone to try it",
 );
@@ -10737,9 +10771,11 @@ group("public images use daemon paths and recover after disconnect");
     "one daemon request per remote image",
   );
   root.pending[1] = { cmd: "image", msgId: url };
-  new Function("root", "line", B.onReply)(
+  new Function("root", "line", "tr", "trErr", B.onReply)(
     root,
     JSON.stringify({ id: 1, ok: true, data: { path: "/tmp/image.png" } }),
+    Tzh,
+    Ezh,
   );
   ok(
     root.imagePaths[url] === "file:///tmp/image.png",
@@ -10750,9 +10786,11 @@ group("public images use daemon paths and recover after disconnect");
     "background image replies preserve the notice",
   );
   root.pending[2] = { cmd: "image", msgId: url };
-  new Function("root", "line", B.onReply)(
+  new Function("root", "line", "tr", "trErr", B.onReply)(
     root,
     JSON.stringify({ id: 2, ok: false }),
+    Tzh,
+    Ezh,
   );
   ok(
     root.imagePaths[url] === "",
@@ -10760,13 +10798,15 @@ group("public images use daemon paths and recover after disconnect");
   );
   delete root.imagePaths[url];
   root.pending[3] = { cmd: "image", msgId: url, invalidate: true };
-  new Function("root", "line", B.onReply)(
+  new Function("root", "line", "tr", "trErr", B.onReply)(
     root,
     JSON.stringify({
       id: 3,
       ok: false,
       error: "媒體請求過多，請稍後再試",
     }),
+    Tzh,
+    Ezh,
   );
   ok(
     root.imageRetries.length === 1 &&
@@ -10778,7 +10818,7 @@ group("public images use daemon paths and recover after disconnect");
   fetchImage(root, sock, url);
   root.pending[4] = { cmd: "image", msgId: url, invalidate: true };
   root.imageRequests[url] = true;
-  new Function("root", B.dropInFlight)(root);
+  new Function("root", "tr", B.dropInFlight)(root, Tzh);
   ok(
     root.imageRetryQueue[url].invalidate === true,
     "disconnect retains an in-flight invalidation for the visible image",
@@ -10793,7 +10833,7 @@ group("public images use daemon paths and recover after disconnect");
     "url",
     body("  function forgetImage(url) {"),
   );
-  new Function("root", B.dropInFlight)(root);
+  new Function("root", "tr", B.dropInFlight)(root, Tzh);
   root.imagePaths[url] = "file:///tmp/image.png";
   root.imagePaths["https://example.com/other.png"] = "file:///tmp/other.png";
   fetchImage(root, sock, url);
@@ -10822,7 +10862,7 @@ group("public images use daemon paths and recover after disconnect");
     frames[3].extra.invalidate === true,
     "a decode failure tells the daemon to discard the corrupt cached bytes",
   );
-  new Function("root", B.dropInFlight)(root);
+  new Function("root", "tr", B.dropInFlight)(root, Tzh);
   root.imageRetryQueue[url] = { invalidate: true };
   fetchImage(root, sock, url);
   ok(
@@ -10837,13 +10877,15 @@ group("public images use daemon paths and recover after disconnect");
   };
   root.imagePathsMax = 2;
   root.pending[5] = { cmd: "image", msgId: "https://example.com/d.png" };
-  new Function("root", "line", B.onReply)(
+  new Function("root", "line", "tr", "trErr", B.onReply)(
     root,
     JSON.stringify({
       id: 5,
       ok: true,
       data: { path: "/tmp/d.png" },
     }),
+    Tzh,
+    Ezh,
   );
   ok(
     root.imagePaths["https://example.com/d.png"] === "file:///tmp/d.png" &&
@@ -11383,7 +11425,7 @@ ok(
   "the scroll-speed control was found in the tools row",
 );
 ok(
-  /text: "捲動 " \+ root\.scrollLabel\(root\.scrollPercent\)/.test(speedBlock),
+  /text: tr\("label\.scroll", root\.scrollLabel\(root\.scrollPercent\)\)/.test(speedBlock),
   "it carries the readout -- unlike A-/A+ nothing on screen changes when the speed does, " +
     "so a stepper without a number could not be read back",
 );
@@ -11394,7 +11436,7 @@ ok(
   "clicking it steps, and it is a Button to assistive tech rather than an unlabelled Text",
 );
 ok(
-  /Accessible\.description: "切換到 " \+ root\.scrollLabel\(root\.nextScroll\(root\.scrollPercent\)\)/
+  /Accessible\.description: tr\("switch\.to", root\.scrollLabel\(root\.nextScroll\(root\.scrollPercent\)\)\)/
     .test(speedBlock),
   "which is also told where the next press lands",
 );
@@ -11417,9 +11459,9 @@ const chatRows = (all, query, up) =>
   new Function("PanelKit", "all", "query", "up", B.chatRows)(
     PanelKit, all, query, up);
 const rowSubtitle = (c) =>
-  new Function("PanelKit", "c", B.rowSubtitle)(PanelKit, c);
+  new Function("PanelKit", "c", "tr", "trErr", B.rowSubtitle)(PanelKit, c, Tzh, Ezh);
 const chatMenuItems = (c) =>
-  new Function("PanelKit", "c", B.chatMenuItems)(PanelKit, c);
+  new Function("PanelKit", "c", "tr", B.chatMenuItems)(PanelKit, c, Tzh);
 const HID = [
   { mid: "cwork", name: "工作", unread: 2, lastFrom: "同事", lastText: "明天" },
   { mid: "umom", name: "媽", unread: 0, lastFrom: "我", lastText: "好" },
@@ -11843,7 +11885,7 @@ const pageBlock = src.slice(
 );
 ok(pageBlock.length > 0, "the page-size control was found in the tools row");
 ok(
-  /text: "讀取 " \+ root\.historyLabel\(root\.historyPage\)/.test(pageBlock),
+  /text: tr\("label\.history", root\.historyLabel\(root\.historyPage\)\)/.test(pageBlock),
   "it carries the readout -- nothing on screen changes until the next chat opens, " +
     "so a stepper without a number could not be read back",
 );
@@ -11854,7 +11896,7 @@ ok(
   "clicking it steps, and it is a Button to assistive tech rather than an unlabelled Text",
 );
 ok(
-  /Accessible\.description: "切換到 " \+ root\.historyLabel\(root\.nextHistory\(root\.historyPage\)\)/
+  /Accessible\.description: tr\("switch\.to", root\.historyLabel\(root\.nextHistory\(root\.historyPage\)\)\)/
     .test(pageBlock),
   "which is also told where the next press lands",
 );
@@ -12548,7 +12590,7 @@ const disconnectedDraftRoot = {
     this.draftStore = next;
   },
 };
-new Function("root", B.dropInFlight)(disconnectedDraftRoot);
+new Function("root", "tr", B.dropInFlight)(disconnectedDraftRoot, Tzh);
 saveDraft(disconnectedDraftRoot, { text: "", cursorPosition: 0 }, false);
 ok(
   Object.keys(disconnectedDraftRoot.pending).length === 0 &&
@@ -14333,7 +14375,7 @@ ok(
 );
 ok(
   /draftStoreUnavailable = true/.test(draftBlock) &&
-    /本次不會覆寫/.test(draftBlock) &&
+    /tr\("draft\.(unreadable|verCap)"\)/.test(draftBlock) &&
     /!root\.draftStoreUnavailable/.test(B.request),
   "exhausted draft retries become an explicit recoverable state",
 );
@@ -15013,7 +15055,7 @@ ok(
 );
 ok(
   /mediaLoading:[\s\S]*previewRequests/.test(src) &&
-    /mediaLoading \? "載入中…"/.test(src),
+    /mediaLoading \? tr\("loading"\)/.test(src),
   "an in-flight thumbnail is labelled as loading rather than failed",
 );
 ok(
@@ -15511,7 +15553,7 @@ const exhaustedPanelRoot = {
     this.flushed++;
   },
 };
-new Function("root", B.markDraftStoreUnavailable)(exhaustedPanelRoot);
+new Function("root", "tr", B.markDraftStoreUnavailable)(exhaustedPanelRoot, Tzh);
 ok(
   exhaustedPanelRoot.draftStoreLoaded === true &&
     exhaustedPanelRoot.draftStoreUnavailable === true &&
@@ -15542,6 +15584,7 @@ const handleDraftFailure = new Function(
   "FileViewError",
   "draftLoadRetryTimer",
   "error",
+  "tr",
   B.handleDraftLoadFailure,
 );
 malformedLoadRoot.handleDraftLoadFailure = (error) =>
@@ -15550,6 +15593,7 @@ malformedLoadRoot.handleDraftLoadFailure = (error) =>
     draftLoadErrors,
     draftRetryTimer,
     error,
+    Tzh,
   );
 malformedLoadRoot.loadDraftStore = () =>
   malformedLoadRoot.handleDraftLoadFailure(draftLoadErrors.Unknown);
@@ -15699,7 +15743,7 @@ ok(
 );
 ok(
   /property string draftWriteError: ""/.test(src) &&
-    /function onWriteFailed\(error\)[\s\S]*?草稿尚未保存/.test(src) &&
+    /function onWriteFailed\(error\)[\s\S]*?draft\.notSaved/.test(src) &&
     /function onWriteSucceeded\(content\)[\s\S]*?confirmDraftSaved\(content\)/
       .test(src) &&
     /function listNoticeText\(\)[\s\S]*?draftWriteError/.test(src),
@@ -15985,6 +16029,89 @@ ok(
   "a thumbnail-only patch preserves follow mode for the next incoming message",
 );
 ok(!e.root.previewRequests.m1, "the in-flight preview flag is released");
+
+// ------------------------------------------------- (y) Strings.js i18n
+// The translation table is the same file the panel imports; these pin the
+// contract the panel relies on: zh is the wire language (daemon strings and
+// stored data stay zh), en is display-only.
+
+group("(y1) Strings.t / Strings.fmt cover both languages and every key");
+{
+  const keys = Object.keys(Strings.STRINGS);
+  ok(keys.length > 60, "the table is not a stub: " + keys.length + " keys");
+  let missing = [];
+  for (const k of keys) {
+    const row = Strings.STRINGS[k];
+    if (typeof row.zh !== "string" || typeof row.en !== "string")
+      missing.push(k);
+  }
+  ok(
+    missing.length === 0,
+    "every key has both zh and en" +
+      (missing.length ? " — missing: " + missing.join(",") : ""),
+  );
+  ok(
+    Strings.t("read.all", "zh") === "已讀" &&
+      Strings.t("read.all", "en") === "Read",
+    "t() returns each language's own string",
+  );
+  ok(Strings.t("no.such.key", "en") === "no.such.key",
+    "an unknown key falls back to the key itself, never a crash");
+  ok(
+    Strings.fmt("read.n", "zh", 3) === "已讀 3" &&
+      Strings.fmt("read.n", "en", 3) === "Read 3",
+    "fmt() interpolates %1 positionally in both languages",
+  );
+  ok(
+    Strings.fmt("day.ymd", "en", 2024, 1, 3) === "1/3/2024" &&
+      Strings.fmt("day.ymd", "zh", 2024, 1, 3) === "2024年1月3日",
+    "fmt() can reorder arguments across languages",
+  );
+}
+
+group("(y2) normalizeLang maps the setting enum to zh/en");
+{
+  ok(
+    Strings.normalizeLang("繁體中文", "en_US.UTF-8") === "zh" &&
+      Strings.normalizeLang("English", "zh_TW.UTF-8") === "en",
+    "an explicit pick beats the system locale, in both directions",
+  );
+  ok(
+    Strings.normalizeLang("System", "zh_TW.UTF-8") === "zh" &&
+      Strings.normalizeLang("System", "en_US.UTF-8") === "en" &&
+      Strings.normalizeLang("System", "") === "en",
+    "System follows the locale, defaulting to English",
+  );
+}
+
+group("(y3) err() translates daemon wire strings for display only");
+{
+  ok(
+    Strings.err("尚未登入", "zh") === "尚未登入" &&
+      Strings.err("尚未登入", "en") === "Not logged in",
+    "zh display is untouched; en display translates the wire string",
+  );
+  ok(
+    Strings.err("同步失敗：timeout", "en") === "Sync failed: timeout",
+    "a prefixed wire error keeps its tail",
+  );
+  ok(
+    Strings.err("已隱藏 · 我: [貼圖]", "en") === "Hidden · me: [Sticker]",
+    "wire tokens embedded in a composed row are translated in place",
+  );
+  ok(
+    Strings.err("我們家的群組", "en") === "我們家的群組",
+    "a bare 我 inside user text is never touched",
+  );
+  ok(
+    Strings.err("some English error", "en") === "some English error",
+    "an unknown string passes through unchanged",
+  );
+  ok(
+    Strings.err(undefined, "en") === "" && Strings.err(null, "en") === "",
+    "missing errors stay empty, not 'undefined'",
+  );
+}
 
 console.log("\n" + (failed === 0 ? "ALL PASS" : failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

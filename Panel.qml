@@ -8,6 +8,7 @@ import qs.Ui
 import "DraftStore.js" as DraftStore
 import "EventLog.js" as EventLog
 import "PanelKit.js" as PanelKit
+import "Strings.js" as Strings
 
 // bar 上的 LINE：未讀數、聊天室清單、對話與回覆。
 //
@@ -259,6 +260,23 @@ Panel {
 
   readonly property int historyPage: clampHistory(setting("historyPage", 60))
 
+  // 介面語言。setting 存的是 manifest 的 enum 字（"System" / "繁體中文" /
+  // "English"），normalizeLang 換成 "zh"/"en"。所有可見字串都經過 tr() ——
+  // 綁定裡用 tr(key) 代表切語言會重估（uiLang 是 property，變了就重算）。
+  readonly property string uiLang: Strings.normalizeLang(
+      setting("language", "System"), Qt.locale().name)
+
+  function tr(key) {
+    var a = Array.prototype.slice.call(arguments, 1)
+    return Strings.fmt.apply(Strings, [key, uiLang].concat(a))
+  }
+
+  // daemon 線上字串（錯誤訊息、預覽佔位字）的顯示層翻譯 —— 比對仍用原文，
+  // 畫出來才過 trErr()。
+  function trErr(text) {
+    return Strings.err(text, uiLang)
+  }
+
   readonly property string stateDir:
     (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") || "") + "/.local/state") + "/enil"
 
@@ -454,7 +472,7 @@ Panel {
   }
 
   function rowSubtitle(c) {
-    return PanelKit.rowSubtitle(c)
+    return trErr(PanelKit.rowSubtitle(c, tr))
   }
 
   // 清單變短（隱藏一列、搜尋縮小結果）之後選取要跟著夾回來，
@@ -617,7 +635,7 @@ Panel {
   Connections {
     target: DraftWriter
     function onWriteFailed(error) {
-      root.draftWriteError = "草稿尚未保存：" + String(error || "寫入失敗")
+      root.draftWriteError = tr("draft.notSaved", error ? trErr(String(error)) : tr("draft.writeFail"))
     }
     function onWriteSucceeded(content) {
       root.draftWriteError = ""
@@ -1066,7 +1084,7 @@ Panel {
       draftLoadRetryTimer.restart()
     } else {
       root.draftStoreUnavailable = true
-      root.notice = "草稿檔無法讀取；本次不會覆寫"
+      root.notice = tr("draft.unreadable")
       if (root.flushDeferredDraftActions) root.flushDeferredDraftActions()
     }
   }
@@ -1454,7 +1472,7 @@ Panel {
   function markDraftStoreUnavailable() {
     root.draftRevisionExhausted = true
     root.draftStoreUnavailable = true
-    root.notice = "草稿版本已達上限；本次不會覆寫"
+    root.notice = tr("draft.verCap")
     if (root.flushDeferredDraftActions) root.flushDeferredDraftActions()
   }
 
@@ -2544,8 +2562,8 @@ Panel {
     if (uncertainSend) {
       root.historyRefreshNeeded = Object.keys(ambiguous).length > 0
           || Object.keys(root.historyRefreshRemovedByChat || {}).length > 0
-      root.notice = "連線中斷，請確認訊息是否送出"
-    } else if (interruptedClipboardProbe) root.notice = "連線中斷，圖片尚未送出"
+      root.notice = tr("drop.msg")
+    } else if (interruptedClipboardProbe) root.notice = tr("drop.img")
     root.openWanted = ({})
     root.syncing = false
     // 貼圖清單跟同步是同一件事：那一趟回不來了。旗子留著，下次開選單就一直
@@ -2579,7 +2597,7 @@ Panel {
   // 回傳有沒有真的送出去。要「送成功才記」的呼叫端看這個回傳值，別自己再判一次
   // sock.connected —— 同一個條件寫在兩個地方，遲早會不一致，這次的 bug 就是這樣來的。
   function request(cmd, extra, msgId) {
-    if (!sock.connected) { root.notice = "daemon 沒在跑"; return false }
+    if (!sock.connected) { root.notice = tr("daemon.notRunning"); return false }
     var spendsDraft = root.isSendCmd(cmd) || !!(extra && extra._spendsDraft)
     // A pre-load draft has no stable version yet. Sending it with version 0
     // lets an early acknowledgement miss the staged revision and resurrect it
@@ -2587,7 +2605,7 @@ Panel {
     if (spendsDraft && !root.draftStoreLoaded && !root.draftStoreUnavailable) {
       var pendingChat = String(extra && extra.chat || "")
       if (root.deferredDraftSend(pendingChat)) {
-        root.notice = "前一則正在等待草稿載入"
+        root.notice = tr("send.draftWait")
         return false
       }
       var queued = (root.deferredDraftRequests || []).slice()
@@ -2617,7 +2635,7 @@ Panel {
         account: root.myMid
       })
       root.deferredDraftRequests = queued
-      root.notice = "草稿載入後傳送"
+      root.notice = tr("send.afterDraft")
       return true
     }
     var reservedId = extra && Number(extra._requestId || 0)
@@ -2790,13 +2808,13 @@ Panel {
       // 也不能掉進下面那串「換聊天室就吞掉」的規則裡 —— 人按了就要有回音。
       if (cmd === "sync") {
         root.syncing = false
-        root.notice = String(res.error || "同步失敗")
+        root.notice = res.error ? trErr(String(res.error)) : tr("err.sync")
         return
       }
       // 隱藏／取消隱藏帶著 chat，但它是對清單那一列做的，跟現在停在哪一間無關 ——
       // 掉進下面那條 stale 規則就會變成「按了右鍵、什麼都沒發生、也沒說為什麼」。
       if (cmd === "hide" || cmd === "unhide") {
-        root.notice = String(res.error || (cmd === "hide" ? "隱藏失敗" : "取消隱藏失敗"))
+        root.notice = res.error ? trErr(String(res.error)) : tr(cmd === "hide" ? "err.hide" : "err.unhide")
         return
       }
       // 失敗的是別間聊天室的請求：現在這間的輸入框、提示、轉圈都不能動，
@@ -2809,13 +2827,13 @@ Panel {
       // 那顆等著開的旗子也照拿掉，不然失敗一次就永遠留在 openWanted 裡。
       if (cmd === "download") {
         if (msgId) root.forgetOpen(msgId)
-        if (stale) { root.notice = String(res.error || "下載失敗"); return }
+        if (stale) { root.notice = res.error ? trErr(String(res.error)) : tr("err.download"); return }
       }
       // A queued picker can intentionally finish after the user moved to a
       // different chat. Its failure is still the result of a visible action,
       // but it must not restore anything into the current chat's composer.
       if (cmd === "sendFile" && stale) {
-        root.notice = String(res.error || "傳送檔案失敗")
+        root.notice = res.error ? trErr(String(res.error)) : tr("send.fileFailed")
         return
       }
       if (stale) {
@@ -2828,12 +2846,12 @@ Panel {
       if (cmd === "markRead") return
       // 成員名單是開聊天室時自己送的，人沒按過任何東西 —— 失敗跳一條紅字
       // 等於每開一次 room 就罵一次。留著原因，等使用者真的打 @ 再說。
-      if (cmd === "members") { root.membersError = String(res.error || "讀不到成員名單"); return }
+      if (cmd === "members") { root.membersError = res.error ? trErr(String(res.error)) : tr("members.none"); return }
       // 貼圖清單也是選單自己送的，而選單就疊在橫幅上面 —— 理由留在選單裡，
       // 不然按了 ⟳ 看起來像什麼都沒發生。
       if (cmd === "stickers") {
         root.stickerLoading = false
-        root.stickerError = String(res.error || "貼圖清單讀不到")
+        root.stickerError = res.error ? trErr(String(res.error)) : tr("err.stickers")
         return
       }
       // 過期的那趟連旗子都不能碰：重讀之後新送出去的那趟才是 loadingOlder 的主人，
@@ -2849,7 +2867,7 @@ Panel {
         replyField.paste()
         return
       }
-      root.notice = String(res.error || "失敗")
+      root.notice = res.error ? trErr(String(res.error)) : tr("err.generic")
       // 送失敗時，空輸入框可直接還原原稿。若使用者已經在打下一句，不能用
       // 舊稿蓋掉它，也不能刪掉唯一仍看得到的舊內容；把樂觀泡泡標成失敗，
       // 讓原稿留在畫面上供複製，新的輸入與其持久化草稿都保持不動。
@@ -2872,7 +2890,7 @@ Panel {
             if (failedMessage.id === msgId) {
               retainedFailure = root.withFields(failedMessage, {
                   failed: true,
-                  failure: String(res.error || "傳送失敗")
+                  failure: res.error ? trErr(String(res.error)) : tr("send.failed")
                 })
               failedMessages.push(retainedFailure)
             } else failedMessages.push(failedMessage)
@@ -2886,7 +2904,7 @@ Panel {
               id: msgId, chat: askedFor, from: root.myMid, fromName: "我",
               text: lost, time: Date.now(), contentType: "NONE",
               decryptFailed: false, hasMedia: false, pending: true, failed: true,
-              failure: String(res.error || "傳送失敗"),
+              failure: res.error ? trErr(String(res.error)) : tr("send.failed"),
               mentions: root.deriveMentions(
                 lost, Array.isArray(displayed.mentions) ? displayed.mentions : [])
             }
@@ -3013,20 +3031,20 @@ Panel {
       root.syncing = false
       // at 是 daemon 的時鐘；舊的 daemon 不送就用自己的，這個時間戳只拿來顯示。
       root.syncedAt = res.data && res.data.at ? Number(res.data.at) : Date.now()
-      root.notice = "已同步 " + root.clockText(root.syncedAt)
+      root.notice = tr("synced", root.clockText(root.syncedAt))
       // 清單是 daemon 寫 state.json、面板自己重讀的，對話那半邊沒有那條路 ——
       // 不自己再抓一次，「同步」對眼前正在看的訊息等於沒做事。
       if (root.activeChat) root.loadHistory(root.activeChat.mid)
     } else if (cmd === "probeClipboardImage") {
       var stage = String(res.data && res.data.stage ? res.data.stage : "")
       if (stage.length === 0) {
-        if (!stale) root.notice = "剪貼簿暫存已失效"
+        if (!stale) root.notice = tr("wire.clipExpired")
         return
       }
       // Only this second request can create a LINE message, so it is the first
       // point that receives a reconciliation token. A failed probe above is a
       // plain read and cannot survive disconnect as an ambiguous send.
-      if (!stale) root.notice = "傳送中…"
+      if (!stale) root.notice = tr("send.sending")
       // Switching chats changes where the result is displayed, not the send
       // destination captured when Ctrl+V was pressed.
       if (!root.request("sendClipboardImage", { chat: askedFor, stage: stage }))
@@ -3072,11 +3090,11 @@ Panel {
   // 這顆是人按的 —— 睡醒、網路抖一下、或只是不確定手上這份是不是最新的 ——
   // 按下去 daemon 就重建 push 連線並立刻重抓，幾秒內給答案。
   function syncNow() {
-    if (!sock.connected) { root.notice = "daemon 沒在跑"; return }
+    if (!sock.connected) { root.notice = tr("daemon.notRunning"); return }
     // 已經在同步了：再送一次只是多抓一輪，daemon 那邊也會併成同一次。
     if (root.syncing) return
     root.syncing = true
-    root.notice = "同步中…"
+    root.notice = tr("syncing")
     request("sync", {})
   }
 
@@ -3117,7 +3135,7 @@ Panel {
   // 按鈕上顯示的是「現在是哪一種」。兩種的時候標「按下去會變成什麼」還講得清楚，
   // 三種輪換就不行了 —— 看到「置中」根本分不出那是現況還是下一步。
   function placementLabel(mode) {
-    return PanelKit.placementLabel(mode)
+    return PanelKit.placementLabel(mode, tr)
   }
 
   function togglePlacement() {
@@ -3202,7 +3220,7 @@ Panel {
     property bool originSpendsDraft: false
     command: ["sh", "-c",
       "command -v zenity >/dev/null 2>&1 || { echo __NO_ZENITY__; exit 0; }; " +
-      "exec zenity --file-selection --title='選擇要傳送的檔案'"]
+      "exec zenity --file-selection --title='" + tr("picker.title") + "'"]
     running: false
     stdout: StdioCollector {
       waitForEnd: true
@@ -3211,9 +3229,9 @@ Panel {
         if (picker.originChat && picker.originAccount === root.myMid
             && picker.originSession === root.sessionEpoch) {
           if (path === "__NO_ZENITY__") {
-            root.notice = "找不到 zenity，請 sudo pacman -S zenity"
+            root.notice = tr("zenity.missing")
           } else if (path.length > 0) {
-            root.notice = "傳送中…"
+            root.notice = tr("send.sending")
             if (root.request("sendFile", {
               chat: picker.originChat, path: path,
               _spendsDraft: picker.originSpendsDraft,
@@ -3259,7 +3277,7 @@ Panel {
         version: 0
       })
       root.deferredDraftPickers = deferredPickers
-      root.notice = "草稿載入後開啟選檔"
+      root.notice = tr("picker.afterDraft")
       return
     }
     if (!picker.running) {
@@ -3349,7 +3367,7 @@ Panel {
     // 跟 📎 同一句：上傳幾秒鐘之內畫面上不能什麼都沒有。樂觀泡泡則不畫 ——
     // 按下去的這一刻還不知道剪貼簿裡是不是圖片，先畫一顆再為了一次貼字收回來，
     // 等於每貼一段文字都閃一顆泡泡。
-    root.notice = "傳送中…"
+    root.notice = tr("send.sending")
     return true
   }
 
@@ -3477,7 +3495,7 @@ Panel {
   // 使用者看到的只是一行點不動的灰字，會以為是自己按錯地方。
   // 收回的訊息 hasMedia 是 false，走不到這一行，但燈箱標題也用同一支，還是擋著。
   function mediaLabel(m) {
-    return PanelKit.mediaLabel(m)
+    return PanelKit.mediaLabel(m, tr)
   }
 
   // ---------------------------------------------------------------- 燈箱
@@ -3516,7 +3534,7 @@ Panel {
 
   function openPicture(id, source, name, index) {
     // 先用縮圖把燈箱撐開，按下去就有反應；原圖 0.5 秒後回來再換。
-    root.lightbox = { id: String(id || ""), source: String(source), name: String(name || "圖片"),
+    root.lightbox = { id: String(id || ""), source: String(source), name: String(name || tr("image")),
                       index: Number(index) || 0 }
     root.lightScale = 1
     root.lightX = 0
@@ -3557,7 +3575,7 @@ Panel {
   }
 
   function lightboxCaption() {
-    return PanelKit.lightboxCaption(root.lightbox, root.messages)
+    return PanelKit.lightboxCaption(root.lightbox, root.messages, tr)
   }
 
   // Esc 的去向只有一個地方決定，免得燈箱、聊天室、面板三層各自搶著關。
@@ -3573,7 +3591,7 @@ Panel {
   // 平白把人家正在看的東西收走。
   // execDetached 走 argv，不經過 shell，也不像舊的 Process 那樣一次只能開一個。
   function deliverMedia(id, path, intent) {
-    if (path.length === 0) { root.notice = "下載失敗"; return }
+    if (path.length === 0) { root.notice = tr("err.download"); return }
     if (intent === "lightbox") {
       // 燈箱還開在這張才換圖。人已經按 Esc、翻到下一張或換了聊天室的話，這份
       // 原檔就只是躺在快取裡，沒有別的事要做 —— 尤其不能拿去開外部程式：
@@ -3751,7 +3769,7 @@ Panel {
   }
 
   function readText(m) {
-    return EventLog.readText(m, root.myMid)
+    return EventLog.readText(m, root.myMid, tr)
   }
 
   function reactionEmoji(type) {
@@ -3792,7 +3810,7 @@ Panel {
   // 引言那一行。daemon 查不到原文時 replyTo 只有 id（契約寫的「盡力而為」），
   // 那就退成「訊息」——「某某：」後面接一片空白看起來像壞掉。
   function quoteText(r) {
-    return EventLog.quoteText(r)
+    return EventLog.quoteText(r, tr)
   }
 
   // 引言點下去跳回原訊息。翻不到那麼舊的時候要說一聲 —— 按了沒反應是最難查的
@@ -3804,7 +3822,7 @@ Panel {
       msgList.positionViewAtIndex(i, ListView.Center)
       return true
     }
-    root.notice = "原訊息不在這一頁裡，往上捲可以載入更舊的"
+    root.notice = tr("reply.missOrigin")
     return false
   }
 
@@ -4108,7 +4126,7 @@ Panel {
   // ---------------------------------------------------------------- utils
 
   function agoText(ms) {
-    return PanelKit.agoText(ms, root.nowMs)
+    return PanelKit.agoText(ms, root.nowMs, tr)
   }
 
   // state.link 是選填欄位：舊的 daemon 和 stub.py 都不送，缺的時候一律當作正常，
@@ -4117,12 +4135,12 @@ Panel {
   function partialListNoticeText() {
     var cl = root.state && root.state.chatList ? root.state.chatList : null
     return PanelKit.partialListNoticeText(cl, root.chats.length,
-                                          root.search.length > 0)
+                                          root.search.length > 0, tr)
   }
 
   function linkNoticeText() {
     return PanelKit.linkNoticeText(root.state, root.online, root.nowMs,
-                                   root.search.length > 0, root.chats.length)
+                                   root.search.length > 0, root.chats.length, tr)
   }
 
   // 清單標題下那一行實際顯示什麼。單欄時對話那半邊整個不可見（chatPane 的 visible
@@ -4132,11 +4150,11 @@ Panel {
   function listNoticeText() {
     var cl = root.state && root.state.chatList ? root.state.chatList : null
     return PanelKit.listNoticeText(root.draftWriteError, cl, root.twoPane,
-                                   root.notice, root.linkNoticeText())
+                                   root.notice, root.linkNoticeText(), tr)
   }
 
   function loginErrorDetail() {
-    return PanelKit.loginErrorDetail(root.loginInfo)
+    return trErr(PanelKit.loginErrorDetail(root.loginInfo, tr))
   }
 
   function listPaneWidth(parentWidth, fontScale) {
@@ -4251,7 +4269,7 @@ Panel {
   }
 
   function dayLabel(ms, nowMs) {
-    return EventLog.dayLabel(ms, nowMs)
+    return EventLog.dayLabel(ms, nowMs, tr)
   }
 
   function isSystemEvent(m) {
@@ -4259,11 +4277,11 @@ Panel {
   }
 
   function systemEventText(m) {
-    return EventLog.systemEventText(m)
+    return EventLog.systemEventText(m, tr)
   }
 
   function bodyText(m) {
-    return PanelKit.bodyText(m)
+    return PanelKit.bodyText(m, tr)
   }
 
   // ------------------------------------------------------ 選取、連結、複製
@@ -4282,7 +4300,7 @@ Panel {
   // 顏色去掉 alpha 再轉字串：帶 alpha 的 QML 顏色會變成 #AARRGGBB，CSS 讀不懂。
   function bodyHtml(m) {
     var accent = String(Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 1))
-    return PanelKit.bodyHtml(m, accent)
+    return PanelKit.bodyHtml(m, accent, tr)
   }
 
   // 純函式。把本文照 mention 切段：mention 那幾段只跳脫再上色（人名裡不會有網址），
@@ -4308,7 +4326,7 @@ Panel {
   function openLink(url) {
     var target = root.linkTarget(url)
     // 網址是訊息內容，任何情況都不進 log。
-    if (target.length === 0) { root.notice = "這個連結打不開"; return }
+    if (target.length === 0) { root.notice = tr("link.bad"); return }
     // 面板是整片的 WlrLayer.Overlay，不先收掉的話瀏覽器會開在它下面，使用者
     // 只會覺得「按了沒反應」（理由同 deliverMedia）。App window 不是 overlay。
     if (!root.appWindow) root.close()
@@ -4332,7 +4350,7 @@ Panel {
     // 排隊掛在 running 上而不是 exited：起不來的那種失敗沒有 exited 可以接。
     onRunningChanged: {
       if (clipWriter.running) return
-      if (!root.copyStarted) root.notice = "複製失敗：系統裡找不到 wl-copy"
+      if (!root.copyStarted) root.notice = tr("copy.noWlcopy")
       root.flushCopy()
     }
   }
@@ -4363,14 +4381,14 @@ Panel {
   // 點不到東西的選項比沒有這個選項更糟。回覆／收回同理：指不到一則真的訊息就不給，
   // 收回更只給自己傳的（daemon 也會擋，但選單先擋掉才不會讓人按了才被罵）。
   function messageMenuItems(link, m) {
-    var items = [{ action: "body", label: "複製訊息" }]
+    var items = [{ action: "body", label: tr("ctx.copy") }]
     if (String(link === undefined || link === null ? "" : link).length > 0) {
-      items.push({ action: "link", label: "複製連結" })
-      items.push({ action: "open", label: "開啟連結" })
+      items.push({ action: "link", label: tr("ctx.copyLink") })
+      items.push({ action: "open", label: tr("ctx.openLink") })
     }
     if (root.canActOn(m)) {
-      items.push({ action: "reply", label: "回覆" })
-      if (String(m.from || "") === root.myMid) items.push({ action: "unsend", label: "收回" })
+      items.push({ action: "reply", label: tr("reply") })
+      if (String(m.from || "") === root.myMid) items.push({ action: "unsend", label: tr("ctx.unsend") })
     }
     return items
   }
@@ -4378,7 +4396,7 @@ Panel {
   // 聊天清單那一列的右鍵選單。跟訊息共用同一個 Popup —— 選單只有這一份實作。
   // 二選一：同一列不會同時給兩個相反的動作，看到哪一個就代表現在是哪一種狀態。
   function chatMenuItems(c) {
-    return PanelKit.chatMenuItems(c)
+    return PanelKit.chatMenuItems(c, tr)
   }
 
   // 選單現在列的是哪一組。msgMenu.chat 非 null 就代表這次右鍵壓在清單那一列上。
@@ -4480,7 +4498,7 @@ Panel {
   }
 
   function mentionMatches(members, query) {
-    return PanelKit.mentionMatches(members, query)
+    return PanelKit.mentionMatches(members, query, tr)
   }
 
   function mentionInsert(text, cursor, row) {
@@ -4628,7 +4646,7 @@ Panel {
 
   // 分頁上的名字。小舖沒給名字的那幾包不能變成一格空白 —— 認不出來就沒得選。
   function stickerPackName(pack) {
-    return PanelKit.stickerPackName(pack)
+    return PanelKit.stickerPackName(pack, tr)
   }
 
   // 分頁列捲到哪裡，永遠夾在 0（第一包）和捲到底之間。內容比列還窄時只有 0：
@@ -4686,7 +4704,8 @@ Panel {
   // 這一包這次讀不到（契約：讀不到時 stickers 是空陣列，不是把整包藏起來）。
   function stickerStatusText() {
     return PanelKit.stickerStatusText(root.stickerError, root.stickerLoading,
-                                      root.stickerPacks, root.stickerGridModel.length)
+                                      root.stickerPacks, root.stickerGridModel.length,
+                                      tr)
   }
 
   // 格子高度：最多 maxRows 列，不夠就只給需要的高度 —— 一包只有八張的時候
@@ -4952,15 +4971,15 @@ Panel {
         PanelHero {
           width: parent.width
           title: "LINE"
-          meta: root.loginStatus === "qr" ? "掃描登入"
-            : (root.loginStatus === "pin" ? "手機輸入 PIN"
-            : (root.loginStatus === "error" ? "登入失敗"
-            : (root.loginStatus === "idle" ? "尚未登入" : "啟動中")))
-          detail: root.loginStatus === "qr" ? "手機 LINE →「加入好友」→ 行動條碼"
-            : (root.loginStatus === "pin" ? "在手機上輸入這組數字"
+          meta: root.loginStatus === "qr" ? tr("login.qr")
+            : (root.loginStatus === "pin" ? tr("login.pin")
+            : (root.loginStatus === "error" ? tr("login.error")
+            : (root.loginStatus === "idle" ? tr("login.idle") : tr("login.starting"))))
+          detail: root.loginStatus === "qr" ? tr("login.qr.detail")
+            : (root.loginStatus === "pin" ? tr("login.pin.detail")
             : (root.loginStatus === "error" ? root.loginErrorDetail()
-            : (root.loginStatus === "idle" ? "按下面的按鈕開始登入，手機要在手邊"
-            : "daemon 正在啟動…")))
+            : (root.loginStatus === "idle" ? tr("login.idle.detail")
+            : tr("login.starting.detail"))))
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconComponent: Component {
@@ -4986,7 +5005,7 @@ Panel {
 
           Text {
             anchors.centerIn: parent
-            text: root.loginStatus === "error" ? "再試一次" : "登入 LINE"
+            text: tr(root.loginStatus === "error" ? "login.retry" : "login.line")
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: root.fontBody
@@ -5025,7 +5044,7 @@ Panel {
         Text {
           width: parent.width
           visible: root.loginStatus === "qr"
-          text: "掃完會出現一組 PIN，要在手機上輸入。"
+          text: tr("login.qr.note")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: root.fontBody
@@ -5052,13 +5071,13 @@ Panel {
           anchors.left: parent.left
           anchors.right: parent.right
           title: "LINE"
-          meta: !root.online ? "DAEMON 離線"
+          meta: !root.online ? tr("daemon.offline")
             : (root.totalUnread > 0
-               ? root.unreadChats.length + " 個聊天共 " + root.totalUnread + " 則未讀"
-               : root.chats.length + " 個聊天，沒有待處理")
+               ? tr("summary.unread", root.unreadChats.length, root.totalUnread)
+               : tr("summary.quiet", root.chats.length))
           // 連線時 meta 已經寫著幾個聊天、幾則未讀，這裡再寫一次只是重複，留空。
           // 離線時 meta 只說得出「離線」，把人救回來的那句指令沒有別的地方可以放。
-          detail: root.online ? "" : "daemon 沒在跑：systemctl --user start enil"
+          detail: root.online ? "" : tr("daemon.notRunningHint")
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconComponent: Component {
@@ -5136,9 +5155,9 @@ Panel {
             font.pixelSize: root.fontBody
 
             Accessible.role: Accessible.Button
-            Accessible.name: "面板位置：" + root.placementLabel(root.placement)
-            Accessible.description: "切換到「" + root.placementLabel(
-              root.placementMode(root.nextPlacement(root.placement))) + "」"
+            Accessible.name: tr("acc.placement", root.placementLabel(root.placement))
+            Accessible.description: tr("switch.to", root.placementLabel(
+              root.placementMode(root.nextPlacement(root.placement))))
             Accessible.onPressAction: root.togglePlacement()
 
             MouseArea {
@@ -5176,14 +5195,14 @@ Panel {
           // 跟位置那顆一樣標「現在是哪一段」，而且一定要有讀數 —— 字級按下去當場
           // 看得出來，捲動速度不捲一下根本不知道自己在第幾段。
           Text {
-            text: "捲動 " + root.scrollLabel(root.scrollPercent)
+            text: tr("label.scroll", root.scrollLabel(root.scrollPercent))
             color: speedHover.containsMouse ? Color.accent : root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fontBody
 
             Accessible.role: Accessible.Button
-            Accessible.name: "捲動速度：" + root.scrollLabel(root.scrollPercent)
-            Accessible.description: "切換到 " + root.scrollLabel(root.nextScroll(root.scrollPercent))
+            Accessible.name: tr("acc.scroll", root.scrollLabel(root.scrollPercent))
+            Accessible.description: tr("switch.to", root.scrollLabel(root.nextScroll(root.scrollPercent)))
             Accessible.onPressAction: root.stepScrollSpeed()
 
             MouseArea {
@@ -5199,14 +5218,14 @@ Panel {
           // 讀取筆數：按一下換下一段（30 → 60 → 100 → 150 → 30）。開聊天室的第一頁
           // 和往上翻的每一頁都是這個數字。
           Text {
-            text: "讀取 " + root.historyLabel(root.historyPage)
+            text: tr("label.history", root.historyLabel(root.historyPage))
             color: pageHover.containsMouse ? Color.accent : root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fontBody
 
             Accessible.role: Accessible.Button
-            Accessible.name: "讀取筆數：" + root.historyLabel(root.historyPage)
-            Accessible.description: "切換到 " + root.historyLabel(root.nextHistory(root.historyPage))
+            Accessible.name: tr("acc.history", root.historyLabel(root.historyPage))
+            Accessible.description: tr("switch.to", root.historyLabel(root.nextHistory(root.historyPage)))
             Accessible.onPressAction: root.stepHistoryPage()
 
             MouseArea {
@@ -5224,14 +5243,14 @@ Panel {
           Text {
             id: syncLabel
             visible: root.loggedIn
-            text: root.syncing ? "同步中…" : "同步"
+            text: root.syncing ? tr("syncing") : tr("sync")
             color: (syncHover.containsMouse || syncLabel.activeFocus) ? Color.accent : root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fontBody
             activeFocusOnTab: true
 
             Accessible.role: Accessible.Button
-            Accessible.name: "同步"
+            Accessible.name: tr("acc.sync")
             Accessible.onPressAction: root.syncNow()
             Keys.onReturnPressed: root.syncNow()
             Keys.onEnterPressed: root.syncNow()
@@ -5267,13 +5286,13 @@ Panel {
           Text {
             id: logoutLabel
             visible: root.loggedIn
-            text: "登出"
+            text: tr("logout")
             color: (logoutHover.containsMouse || logoutLabel.activeFocus) ? Color.accent : root.dim
             font.family: root.fontFamily
             font.pixelSize: root.fontBody
 
             Accessible.role: Accessible.Button
-            Accessible.name: "登出"
+            Accessible.name: tr("acc.logout")
             Accessible.onPressAction: root.request("logout", {})
             Keys.onReturnPressed: root.request("logout", {})
             Keys.onEnterPressed: root.request("logout", {})
@@ -5313,7 +5332,7 @@ Panel {
           anchors.left: parent.left
           anchors.right: listPane.stackedTools ? parent.right : scaleRow.left
           anchors.rightMargin: listPane.stackedTools ? 0 : Style.space(10)
-          placeholderText: "搜尋聊天室…"
+          placeholderText: tr("search.placeholder")
           foreground: root.foreground
           accent: Color.accent
           font.family: root.fontFamily
@@ -5467,7 +5486,7 @@ Panel {
           anchors.right: parent.right
           text: root.activeChat
             ? (root.twoPane ? "" : "‹  ") + (root.activeChat.name || root.activeChat.mid)
-            : "選一個聊天室"
+            : tr("chat.pick")
           color: root.activeChat ? root.foreground : root.dim
           font.family: root.fontFamily
           font.pixelSize: root.fontTitle
@@ -5658,7 +5677,7 @@ Panel {
                 id: unreadLabel
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.right: parent.right
-                text: "未讀訊息"
+                text: tr("chat.unreadDivider")
                 color: root.urgent
                 font.family: root.fontFamily
                 font.pixelSize: Math.max(1, root.fontBody - 1)
@@ -5699,8 +5718,8 @@ Panel {
                 width: Math.max(0, parent.width - x)
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.clockText(modelData.time) + "  "
-                  + (modelData.from === root.myMid ? "我" : (modelData.fromName || "?"))
-                  + (modelData.edited === true ? "  已編輯" : "")
+                  + (modelData.from === root.myMid ? tr("me") : (modelData.fromName || "?"))
+                  + (modelData.edited === true ? "  " + tr("msg.edited") : "")
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: root.fontBody
@@ -5808,7 +5827,7 @@ Panel {
             Text {
               width: parent.width
               visible: modelData.failed === true
-              text: "傳送失敗；內容保留在這裡"
+              text: tr("send.failedKept")
               color: root.urgent
               font.family: root.fontFamily
               font.pixelSize: Math.max(1, root.fontBody - 1)
@@ -5872,7 +5891,7 @@ Panel {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.showPicture("", flexImg.modelData, "圖片")
+                    onClicked: root.showPicture("", flexImg.modelData, tr("image"))
                   }
                 }
               }
@@ -5917,7 +5936,7 @@ Panel {
                   }
                   if (modelData.contentType === "IMAGE")
                     root.showPicture(modelData.id, "file://" + modelData.mediaPath,
-                                     modelData.fileName || "圖片")
+                                     modelData.fileName || tr("image"))
                   else root.openMedia(modelData.id, "external")
                 }
               }
@@ -5930,9 +5949,9 @@ Panel {
               // 過期的圖片沒有縮圖可看，但那不是「載入失敗」—— 那句話正是
               // U39 要拿掉的謊。過不了 mediaUsable 就一律走 📎 那條，
               // 名字後面自己會帶（已過期）。
-              text: msgDelegate.mediaLoading ? "載入中…"
+              text: msgDelegate.mediaLoading ? tr("loading")
                 : modelData.contentType === "IMAGE" && msgDelegate.mediaOk
-                  ? "[圖片載入失敗，點此重試]" : "📎 " + root.mediaLabel(modelData)
+                  ? tr("image.retry") : "📎 " + root.mediaLabel(modelData)
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: root.fontBody
@@ -6027,10 +6046,10 @@ Panel {
           anchors.right: msgList.right
           visible: root.messages.length === 0
           // 少數聊天室有未讀卻讀不到歷史；別讓它停在「載入中」騙人。
-          text: !root.activeChat ? "左邊選一個聊天室"
+          text: !root.activeChat ? tr("chat.pickLeft")
             : (root.draftWriteError.length > 0 ? root.draftWriteError
             : (root.notice.length > 0 ? root.notice
-            : (root.loading ? "載入中…" : "這個聊天室讀不到歷史訊息")))
+            : (root.loading ? tr("loading") : tr("chat.noHistory"))))
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: root.fontBody
@@ -6122,8 +6141,8 @@ Panel {
               id: replyField
               enabled: !!root.activeChat
               // 「貼圖」在這個面板裡是 sticker，所以剪貼簿那條寫「剪貼簿的圖」。
-              placeholderText: "回訊息，Enter 送出，Shift+Enter 換行"
-                + "（/file <路徑> 傳檔案，Ctrl+V 送剪貼簿的圖）"
+              placeholderText: tr("send.placeholder")
+                + tr("send.placeholder2")
               wrapMode: TextArea.Wrap
               background: null
               font.family: root.fontFamily
@@ -6154,7 +6173,7 @@ Panel {
                 var body = text.trim()
                 if (body.length === 0 || !root.activeChat) return
                 if (root.deferredDraftSend(root.activeChat.mid)) {
-                  root.notice = "前一則正在等待草稿載入"
+                  root.notice = tr("send.draftWait")
                   return
                 }
                 // Persist the exact composer state before clearing it. The
@@ -6171,7 +6190,7 @@ Panel {
                   if (!root.request("sendFile", {
                     chat: root.activeChat.mid, path: path, _spendsDraft: true
                   })) return
-                  root.notice = "傳送中…"
+                  root.notice = tr("send.sending")
                   root.resetComposerAfterSuccessfulSend()
                   return
                 }
@@ -6276,7 +6295,7 @@ Panel {
             anchors.right: quoteStripClose.left
             anchors.rightMargin: Style.space(6)
             anchors.verticalCenter: parent.verticalCenter
-            text: "回覆 " + root.quoteText(root.replyTarget)
+            text: tr("reply.quote", root.quoteText(root.replyTarget))
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Math.max(1, root.fontBody - 1)
@@ -6592,7 +6611,7 @@ Panel {
                 // 按得下去就得報得出名字：這一列在沒有滾輪的機器上只剩這兩顆，
                 // 而讀螢幕的人聽到的本來只有一個「‹」。
                 Accessible.role: Accessible.Button
-                Accessible.name: "往左捲貼圖包分頁"
+                Accessible.name: tr("sticker.scrollL")
                 Accessible.onPressAction: stickerTabStrip.scrollTabs(1)
 
                 Text {
@@ -6622,7 +6641,7 @@ Panel {
                 color: Color.background
 
                 Accessible.role: Accessible.Button
-                Accessible.name: "往右捲貼圖包分頁"
+                Accessible.name: tr("sticker.scrollR")
                 Accessible.onPressAction: stickerTabStrip.scrollTabs(-1)
 
                 Text {
@@ -6839,7 +6858,7 @@ Panel {
           anchors.right: parent.right
           anchors.bottom: parent.bottom
           horizontalAlignment: Text.AlignHCenter
-          text: "滾輪縮放 · 拖曳平移 · ←/→ 換圖 · o 用外部程式開 · Esc 關閉"
+          text: tr("lightbox.hint")
           color: root.dim
           font.family: root.fontFamily
           font.pixelSize: Math.max(1, root.fontBody - 1)
