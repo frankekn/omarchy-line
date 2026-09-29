@@ -5,6 +5,8 @@
 Unread LINE count in the bar. Click it to search chats, read messages, reply,
 and send files.
 
+![Chat list and a conversation — mentions, reactions, read receipts, an unsent message and an expired file, all on stub data](docs/screenshot.png)
+
 This repo has two halves:
 
 - **The plugin** (`Panel.qml`, `LinePanel.qml`, `LineWindow.qml`, `manifest.json`,

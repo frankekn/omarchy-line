@@ -4,6 +4,8 @@
 
 Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息、傳檔案。
 
+![聊天室清單與對話畫面——mention、表情、已讀、收回、過期檔案，全部是 stub 假資料](docs/screenshot.png)
+
 這個 repo 有兩半：
 
 - **外掛**（`Panel.qml`、`LinePanel.qml`、`LineWindow.qml`、`manifest.json`，加上
