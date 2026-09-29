@@ -529,6 +529,120 @@ Panel {
     onLoadFailed: root.clearStateAfterLoadFailure()
   }
 
+  // events.json carries the live-event ring — up to a few hundred KB of
+  // message payloads. While the socket is connected, the daemon pushes each
+  // event over it in under a millisecond, so watching this file then would
+  // only pay a giant JSON re-parse per message for data already applied.
+  // Disconnected is exactly when the file matters: the ring is the catch-up
+  // layer for what push could not deliver.
+  FileView {
+    id: eventsView
+    path: root.stateDir + "/events.json"
+    watchChanges: !sock.connected
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: root.parseEventsText(text())
+    onLoadFailed: root.finishEventsSync()
+  }
+
+  // Pushes that land while a catch-up read is in flight must not jump the
+  // watermark — the file's older events have to settle first or the gap
+  // between them is silently dropped. Queued, then drained by
+  // finishEventsSync once the file read publishes its watermark.
+  property bool eventsSyncing: false
+  property var queuedPushes: []
+  // True once this daemon has proven it publishes events -- either the ring
+  // file parsed or a live push arrived. False means gaps have no backstop,
+  // so parseState falls back to refetching on lastTime movement.
+  property bool eventsLive: false
+  // False until the panel has actually consumed an events read or push. The
+  // first consumption adopts the ring's watermark without applying it --
+  // the panel fetched its own history when it opened the chat.
+  property bool eventsConsumed: false
+
+  function parseEventsText(content) {
+    var parsed = null
+    try { parsed = JSON.parse(String(content || "")) } catch (e) {
+      console.warn("line", "Ignoring bad events file", e)
+    }
+    root.consumeEventsFile(parsed && typeof parsed === "object" ? parsed : null)
+    root.finishEventsSync()
+  }
+
+  function finishEventsSync() {
+    root.eventsSyncing = false
+    var queued = root.queuedPushes
+    if (queued.length === 0) return
+    root.queuedPushes = []
+    for (var i = 0; i < queued.length; i++) root.onPushedEvent(queued[i])
+  }
+
+  // A live event pushed over the socket: same shape as a ring entry. seq
+  // only ever climbs within a boot, so skipping what the file path already
+  // delivered (or vice versa) is free.
+  function onPushedEvent(res) {
+    if (!res || typeof res !== "object") return
+    var ev = res.event
+    if (!ev || typeof ev.seq !== "number" || !isFinite(ev.seq)) return
+    var boot = String(res.boot || "")
+    if (boot.length > 0 && boot !== root.lastBootId) {
+      root.lastBootId = boot
+      root.lastSeq = 0
+    }
+    if (root.eventsSyncing) {
+      var held = root.queuedPushes
+      held.push(res)
+      root.queuedPushes = held
+      return
+    }
+    if (ev.seq <= root.lastSeq) return
+    root.lastSeq = ev.seq
+    // A push arriving at all proves this daemon publishes events.
+    root.eventsLive = true
+    root.eventsConsumed = true
+    root.applyEvents([ev])
+  }
+
+  // The watermark-and-apply half of a state read, now fed by events.json
+  // instead of state.json. watermark 一律往前推，就算這一刻沒人在看對話 ——
+  // 不推的話面板關著的那段時間累積下來的事件會在重開的瞬間整批重放一次。
+  function consumeEventsFile(evState) {
+    // 第一次消費走收編：watermark 直接跟到 ring 頂端、事件一則不套用 —— 面板開
+    // 聊天室時自己抓過歷史，ring 裡的東西都已經在。lastBootId 可能被 state.json
+    // 先記成同一輪的 boot，所以不能靠它是不是空來判「第一次」；lastSeq > 0 也
+    // 代表早就在消費了。
+    var consumed = root.eventsConsumed || root.lastSeq > 0
+    var evs = root.eventsSince(evState ? evState.events : null,
+                               evState ? evState.bootId : "",
+                               consumed ? root.lastBootId : "",
+                               root.lastSeq)
+    root.lastBootId = evState ? String(evState.bootId || "") : root.lastBootId
+    root.lastSeq = evs.seq
+    root.eventsLive = evs.live
+    if (evState) root.eventsConsumed = true
+
+    // A new message in the chat you are reading should just appear.
+    // twoPane 時對話一直開著，view 會是 "list" 也照樣要更新。
+    // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
+    if (sock.connected && (root.view === "chat" || root.twoPane) && root.activeChat) {
+      var fresh = root.chatById(root.activeChat.mid)
+      var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
+      // 會寫 events 的 daemon：一則新訊息就只是接一顆泡泡，不再重抓整頁歷史。
+      // loadedAt 是 0 代表手上根本還沒有這一份（重開面板時 socket 常常還沒接上），
+      // 事件補不了一份不存在的歷史。
+      if (evs.live && root.loadedAt > 0 && !evs.reload) root.applyEvents(evs.list)
+      else if (moved || evs.reload) {
+        root.historyReloadAfterGeneration = Math.max(root.historyReloadAfterGeneration,
+                                                     root.historyGen + 1)
+        root.historyReloadChat = String(root.activeChat.mid || "")
+        if (!root.loading) {
+          root.reconciliationAttemptedEpoch = root.reconciliationEpoch
+          root.loadHistory(root.activeChat.mid)
+        }
+      }
+    }
+  }
+
   Connections {
     target: DraftWriter
     function onWriteFailed(error) {
@@ -687,25 +801,24 @@ Panel {
       root.clearDraftAccount(root.draftLastAccount)
     }
 
-    // watermark 一律往前推，就算這一刻沒人在看對話 —— 不推的話面板關著的那段時間
-    // 累積下來的事件會在重開的瞬間整批重放一次。
-    var evs = root.eventsSince(root.state ? root.state.events : null,
-                               root.state ? root.state.bootId : "",
-                               root.lastBootId, root.lastSeq)
-    root.lastBootId = root.state ? String(root.state.bootId || "") : ""
-    root.lastSeq = evs.seq
+    // 與事件網域同一個 bootId：state.json 先到就把「見過哪一輪」記下，讓
+    // events.json 的 catch-up 能判 daemon 重啟。反過來，這裡先看到 boot 換了
+    // 也代表重啟 —— 上一輪的事件已不可得，直接重抓。
+    var stBoot = root.state ? String(root.state.bootId || "") : ""
+    var bootChanged = stBoot.length > 0 && root.lastBootId.length > 0
+                      && stBoot !== root.lastBootId
+    if (stBoot.length > 0) root.lastBootId = stBoot
 
-    // A new message in the chat you are reading should just appear.
-    // twoPane 時對話一直開著，view 會是 "list" 也照樣要更新。
+    // 要自己抓歷史的三個條件：手上根本沒有這一間（loadedAt === 0，推進來的事件
+    // 只接得動泡泡接不動整頁）；這個 daemon 不寫 events（舊版，或 events.json
+    // 讀不出來 —— 缺口沒人補，只能照 lastTime 追）；或 daemon 換了一輪
+    // （bootChanged —— 重啟前的事件再也拿不到）。推播流著、檔案也讀得出來的
+    // 時候不用看 —— 缺口各自有人補。
     // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
     if (sock.connected && (root.view === "chat" || root.twoPane) && root.activeChat) {
       var fresh = root.chatById(root.activeChat.mid)
       var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
-      // 會寫 events 的 daemon：一則新訊息就只是接一顆泡泡，不再重抓整頁歷史。
-      // loadedAt 是 0 代表手上根本還沒有這一份（重開面板時 socket 常常還沒接上），
-      // 事件補不了一份不存在的歷史。
-      if (evs.live && root.loadedAt > 0 && !evs.reload) root.applyEvents(evs.list)
-      else if (moved || evs.reload) {
+      if ((moved && (root.loadedAt === 0 || !root.eventsLive)) || bootChanged) {
         root.historyReloadAfterGeneration = Math.max(root.historyReloadAfterGeneration,
                                                      root.historyGen + 1)
         root.historyReloadChat = String(root.activeChat.mid || "")
@@ -2301,6 +2414,11 @@ Panel {
       // 停在「同步中…」，下次開面板也還是按不動。
       if (!connected) { root.dropInFlight(); return }
       root.reconciliationEpoch++
+      // Events that accrued while disconnected live in events.json — the
+      // ring read must settle before pushes resume or the gap in between is
+      // skipped as already-seen. Queue them until the read lands.
+      root.eventsSyncing = true
+      eventsView.reload()
       if (Object.keys(root.previewRetryQueue).length > 0)
         previewRetryTimer.restart()
       if ((root.draftStoreLoaded || root.draftStoreUnavailable)
@@ -2570,6 +2688,12 @@ Panel {
   function onReply(line) {
     var res
     try { res = JSON.parse(String(line || "")) } catch (e) { return }
+    // Unsolicited push: a live event carries no request id, so it would die
+    // at the pending lookup below.
+    if (res && typeof res === "object" && res.event) {
+      root.onPushedEvent(res)
+      return
+    }
     var entry = root.pending[res.id]
     // pending 就是「還在等的那幾筆」。不在裡面＝這一筆已經被取消（斷線、換帳號
     // 都會清），回來的東西不屬於現在這個 session。id 只增不重用，所以認不得的 id

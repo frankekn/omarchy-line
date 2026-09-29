@@ -124,7 +124,9 @@ Deno.test("daemon boots to idle against an empty state dir and stops clean", asy
   });
   assertEquals(state.chats, []);
   assertEquals(state.chatsRevision, 0);
-  assertEquals(state.events, []);
+  // The event ring has its own file: state.json stays small enough for the
+  // panel to re-parse on every heartbeat.
+  assertEquals(state.events, undefined);
 
   await Deno.remove(stateHome, { recursive: true }).catch(() => {});
 });

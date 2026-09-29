@@ -20,6 +20,7 @@ const STATE_DIR = `${
   Deno.env.get("XDG_STATE_HOME") ?? `${HOME}/.local/state`
 }/enil`;
 const STATE_PATH = `${STATE_DIR}/state.json`;
+const EVENTS_PATH = `${STATE_DIR}/events.json`;
 const SOCK_PATH = `${STATE_DIR}/sock`;
 const MEDIA_DIR = `${STATE_DIR}/media`;
 const IMAGE_DIR = `${MEDIA_DIR}/public-images`;
@@ -217,6 +218,7 @@ export {
   CHAT_LIMIT,
   DECRYPT_WIDTH,
   DEVICE,
+  EVENTS_PATH,
   HEARTBEAT_MS,
   HIDDEN_PATH,
   IMAGE_DIR,

@@ -64,6 +64,12 @@ export interface PanelServerOptions {
   allowStaleCommand?: (cmd: string) => boolean;
   backgroundSignal?: () => AbortSignal;
   onClosed?: () => void;
+  /**
+   * Hands the caller a `send(line)` that writes one complete unsolicited
+   * line through the same serialized write lane as replies, so a push can
+   * never interleave mid-reply. Sends after close are dropped.
+   */
+  attachPusher?: (send: (line: string) => void) => void;
   sessionIndependentCommands?: ReadonlySet<string>;
   messageCommands?: ReadonlySet<string>;
   mustAdmitRequest?: (req: JsonReply) => boolean;
@@ -188,6 +194,24 @@ export async function servePanelConnection(
     closeReported = true;
     options.onClosed?.();
   }
+
+  // Unsolicited pushes (live events) ride the same `writing` chain as
+  // replies: the chain is what guarantees a line lands whole. A failed push
+  // takes the connection down exactly like a failed reply -- a torn JSON
+  // line is unrecoverable either way.
+  options.attachPusher?.((line: string) => {
+    if (closed || connection.signal.aborted) return;
+    writing = writing.then(async () => {
+      if (!closed && !connection.signal.aborted) {
+        await writeAll(conn, REPLY_ENCODER.encode(line + "\n"));
+      }
+    }).catch(() => {
+      connection.abort();
+      closed = true;
+      reportClosed();
+      void reader.cancel().catch(() => {});
+    });
+  });
 
   function trackBackground(job: Promise<void>, cmd: string): Promise<void> {
     background.add(job);

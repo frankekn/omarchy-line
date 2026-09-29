@@ -33,7 +33,7 @@ interface PluginEvent {
   reactions?: unknown[];
 }
 let scheduled = 0;
-function scheduleStateWrite(): void { scheduled++; }
+function scheduleEventsWrite(): void { scheduled++; }
 export function writesAsked(): number { return scheduled; }
 export { pushEvent, events, EVENTS_MAX };
 `;

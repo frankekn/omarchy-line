@@ -20,6 +20,7 @@ import { createChatSummaryStore } from "../chatsummary.ts";
 import { CHAT_LIMIT } from "./env.ts";
 import {
   BOOT_ID,
+  EVENTS_PATH,
   HIDDEN_PATH,
   STATE_PATH,
   stateWriteBytes,
@@ -43,8 +44,20 @@ const EVENTS_MAX = 200;
 let events: PluginEvent[] = [];
 /** Strictly increasing within one process; `bootId` is what survives a restart. */
 let eventSeq = 0;
+/**
+ * Optional live delivery: socket.ts wires its panel broadcast here so an
+ * open panel hears the event in under a millisecond instead of waiting for
+ * the events.json flush, the inotify hop and a half-megabyte re-parse. The
+ * file ring stays the catch-up layer for panels that were closed; pushed
+ * seqs simply advance its watermark, so the two paths never double-apply.
+ */
+let eventSink: ((e: PluginEvent) => void) | null = null;
 
-/** Appends one event, drops what falls off the ring, and asks for a write. */
+function setEventSink(sink: typeof eventSink): void {
+  eventSink = sink;
+}
+
+/** Appends one event, drops what falls off the ring, and publishes it. */
 function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   const full: PluginEvent = { seq: ++eventSeq, at: Date.now(), ...e };
   // A history event carries a whole page; only the newest one per chat has
@@ -59,10 +72,59 @@ function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   // Slice rather than shift-in-a-loop: the array is replaced wholesale on
   // every write anyway, and this keeps the trim O(1) in statements.
   if (events.length > EVENTS_MAX) events = events.slice(-EVENTS_MAX);
-  scheduleStateWrite();
+  scheduleEventsWrite();
+  // Live delivery is best-effort: a stalled or disconnected panel is caught
+  // by the file ring + seq gap detection, so a broadcast failure must never
+  // reach the op pipeline.
+  try {
+    eventSink?.(full);
+  } catch {
+    // ignored -- the ring is the durable copy
+  }
   return full;
 }
 // enil:eventring-end
+
+/**
+ * The ring's own file. Kept apart from state.json because every entry can
+ * carry a whole PluginMessage -- 200 of them dwarf the rest of the state --
+ * and the panel re-parses whatever file changed. Splitting it means the hot
+ * event stream never forces a re-parse of the chat list and friends.
+ *
+ * Same 250ms coalescing as state.json: an album burst is still one write.
+ */
+let eventsWriting: Promise<void> = Promise.resolve();
+let lastEventsWriteAt = 0;
+let eventsWriteTimer: ReturnType<typeof setTimeout> | null = null;
+
+function writeEventsFile(): void {
+  if (stateWritesBlocked) return;
+  lastEventsWriteAt = Date.now();
+  const epoch = stateEpoch;
+  const snapshot = JSON.stringify(
+    { bootId: BOOT_ID, events, updatedAt: Date.now() },
+  );
+  eventsWriting = eventsWriting.then(async () => {
+    // A queued write must not resurrect a ring clearEvents already emptied.
+    if (epoch !== stateEpoch || epoch < stateInvalidationTarget) return;
+    const tmp = `${EVENTS_PATH}.tmp`;
+    await Deno.writeTextFile(tmp, snapshot);
+    await Deno.rename(tmp, EVENTS_PATH);
+  }).catch((e) => console.error("[state] events write failed:", e));
+}
+
+function scheduleEventsWrite(now: number = Date.now()): void {
+  if (eventsWriteTimer !== null) return; // one is already owed
+  const due = lastEventsWriteAt + STATE_WRITE_MIN_MS;
+  if (now >= due) {
+    writeEventsFile();
+    return;
+  }
+  eventsWriteTimer = setTimeout(() => {
+    eventsWriteTimer = null;
+    writeEventsFile();
+  }, due - now);
+}
 
 // The block between the enil:wanted markers is sliced out verbatim by
 // daemon/notify_test.ts, so it keeps its own counter and reaches for nothing
@@ -240,7 +302,6 @@ function writeState(): Promise<void> {
     chats: chats.map((chat) => ({ ...chat })),
     chatsRevision,
     ...(chatListHealth ? { chatList: chatListHealth } : {}),
-    events: [...events],
     ...(link ? { link } : {}),
     ...(refreshHealthValue() ? { refresh: refreshHealthValue() } : {}),
     ...(wanted ? { wanted } : {}),
@@ -459,6 +520,7 @@ export function setChatListHealth(
 /** Logout empties the ring; eventSeq deliberately keeps counting. */
 export function clearEvents(): void {
   events = [];
+  scheduleEventsWrite();
 }
 
 /** A hand-off into a retired session must not survive logout. */
@@ -493,6 +555,7 @@ export {
   releaseStateWrites,
   saveHidden,
   scheduleStateWrite,
+  setEventSink,
   setHidden,
   setLogin,
   setWanted,

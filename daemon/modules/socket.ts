@@ -35,6 +35,7 @@ import {
   unsentOf,
 } from "./text.ts";
 import {
+  BOOT_ID,
   claimClipboardStageBinding,
   CLIPBOARD_STAGE_TTL_MS,
   clipboardStage,
@@ -71,6 +72,7 @@ import {
   me,
   pushEvent,
   saveHidden,
+  setEventSink,
   setHidden,
   writeState,
 } from "./state.ts";
@@ -877,52 +879,74 @@ function refusalText(e: unknown): string {
 }
 // enil:refusaltext-end
 
+/**
+ * Live event fan-out: every open panel connection registers a sender here.
+ * pushEvent publishes through it (see setEventSink below) so a watching
+ * panel sees the event in under a millisecond; the events.json ring it
+ * stops watching stays authoritative for catch-up while it was away.
+ */
+const panelPushers = new Set<(line: string) => void>();
+
+setEventSink((ev) => {
+  const line = JSON.stringify({ event: ev, boot: BOOT_ID });
+  for (const send of panelPushers) send(line);
+});
+
 async function servePanel(
   conn: Deno.Conn,
   onClosed: () => void = () => {},
 ): Promise<void> {
-  await servePanelConnection(conn, {
-    handle,
-    lane: panelMediaLane,
-    backgroundCommands: PANEL_BACKGROUND_COMMANDS,
-    backgroundPriority: (cmd) => cmd === "image",
-    messageCommands: PANEL_MESSAGE_COMMANDS,
-    mustAdmitRequest(req) {
-      const cmd = String(req.cmd ?? "");
-      return PANEL_MUTATION_COMMANDS.has(cmd) ||
-        (cmd === "history" && req.markRead === true);
-    },
-    sessionIndependentCommands: PANEL_SESSION_INDEPENDENT_COMMANDS,
-    backgroundSignal: panelMediaRetirementSignal,
-    onClosed,
-    encodeError: ENCODE_ERROR,
-    refusalText,
-    captureValidity() {
-      const acceptedClient = client;
-      const acceptedGeneration = sessionGeneration;
-      return () =>
-        acceptedClient === client && acceptedGeneration === sessionGeneration;
-    },
-    staleRequestError: "尚未登入",
-    allowStaleCommand(cmd) {
-      return cmd === "logout" && client === null;
-    },
-    reportFailure(cmd, error, background) {
-      console.error(
-        `[cmd] ${cmd}${background ? " background" : ""} failed: ${
-          errorLine(error)
-        }`,
-      );
-    },
-    reportEncodingFailure(cmd, error) {
-      console.error(
-        `[cmd] ${cmd} reply unserializable: ${(error as Error).name}`,
-      );
-    },
-    recordTiming(key, elapsedMs) {
-      timings.record(key, elapsedMs);
-    },
-  });
+  let pusher: ((line: string) => void) | undefined;
+  try {
+    await servePanelConnection(conn, {
+      handle,
+      lane: panelMediaLane,
+      backgroundCommands: PANEL_BACKGROUND_COMMANDS,
+      backgroundPriority: (cmd) => cmd === "image",
+      messageCommands: PANEL_MESSAGE_COMMANDS,
+      mustAdmitRequest(req) {
+        const cmd = String(req.cmd ?? "");
+        return PANEL_MUTATION_COMMANDS.has(cmd) ||
+          (cmd === "history" && req.markRead === true);
+      },
+      sessionIndependentCommands: PANEL_SESSION_INDEPENDENT_COMMANDS,
+      backgroundSignal: panelMediaRetirementSignal,
+      attachPusher(send) {
+        pusher = send;
+        panelPushers.add(send);
+      },
+      onClosed,
+      encodeError: ENCODE_ERROR,
+      refusalText,
+      captureValidity() {
+        const acceptedClient = client;
+        const acceptedGeneration = sessionGeneration;
+        return () =>
+          acceptedClient === client && acceptedGeneration === sessionGeneration;
+      },
+      staleRequestError: "尚未登入",
+      allowStaleCommand(cmd) {
+        return cmd === "logout" && client === null;
+      },
+      reportFailure(cmd, error, background) {
+        console.error(
+          `[cmd] ${cmd}${background ? " background" : ""} failed: ${
+            errorLine(error)
+          }`,
+        );
+      },
+      reportEncodingFailure(cmd, error) {
+        console.error(
+          `[cmd] ${cmd} reply unserializable: ${(error as Error).name}`,
+        );
+      },
+      recordTiming(key, elapsedMs) {
+        timings.record(key, elapsedMs);
+      },
+    });
+  } finally {
+    if (pusher !== undefined) panelPushers.delete(pusher);
+  }
 }
 
 export { handle, serve };

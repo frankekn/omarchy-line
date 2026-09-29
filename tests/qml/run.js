@@ -195,6 +195,10 @@ const B = {
   // came back -- the ListView never has to exist.
   eventsSince: body("  function eventsSince(events, bootId, seenBootId, seenSeq) {"),
   applyEvents: body("  function applyEvents(list) {"),
+  onPushedEvent: body("  function onPushedEvent(res) {"),
+  consumeEventsFile: body("  function consumeEventsFile(evState) {"),
+  parseEventsText: body("  function parseEventsText(content) {"),
+  finishEventsSync: body("  function finishEventsSync() {"),
   withFields: body("  function withFields(m, patch) {"),
   rememberFailedMessage: body("  function rememberFailedMessage(chat, message) {"),
   mergeFailedMessages: body("  function mergeFailedMessages(chat, list) {"),
@@ -464,6 +468,7 @@ function makeEnv(opts) {
     // reactionTypes and readerCount are bindings, mirrored here the same way
     // focusLanding/mentionCapable are (and pinned against the source below).
     lastBootId: "", lastSeq: 0, replyTarget: null,
+    eventsSyncing: false, queuedPushes: [], eventsLive: false, eventsConsumed: false,
     // U51. `opened` is the Panel base class's own property; the hand-off reads
     // it because the daemon opens the panel over IPC and the state write often
     // lands first.
@@ -583,6 +588,10 @@ function makeEnv(opts) {
     },
     eventsSince(e, b, sb, sq) { return api.eventsSince(e, b, sb, sq); },
     applyEvents(l) { api.applyEvents(l); },
+    onPushedEvent(r) { api.onPushedEvent(r); },
+    consumeEventsFile(s) { api.consumeEventsFile(s); },
+    parseEventsText(c) { api.parseEventsText(c); },
+    finishEventsSync() { api.finishEventsSync(); },
     withFields(m, patch) { return api.withFields(m, patch); },
     rememberFailedMessage(chat, message) { api.rememberFailedMessage(chat, message); },
     mergeFailedMessages(chat, list) { return api.mergeFailedMessages(chat, list); },
@@ -931,6 +940,10 @@ function makeEnv(opts) {
   const fApplyUnsend = mk("applyUnsend", ["list", "id"]);
   const fApplyEdit = mk("applyEdit", ["list", "m"]);
   const fApplyHistory = mk("applyHistory", ["list", "fresh"]);
+  const fOnPushedEvent = mk("onPushedEvent", ["res"]);
+  const fConsumeEventsFile = mk("consumeEventsFile", ["evState"]);
+  const fParseEventsText = mk("parseEventsText", ["content"]);
+  const fFinishEventsSync = mk("finishEventsSync", []);
   const fReadText = mk("readText", ["m"]);
   const fReactionEmoji = mk("reactionEmoji", ["type"]);
   const fMyReaction = mk("myReaction", ["m"]);
@@ -1112,6 +1125,10 @@ function makeEnv(opts) {
     applyUnsend: (l, id) => q((...a) => fApplyUnsend(...a, l, id)),
     applyEdit: (l, m) => q((...a) => fApplyEdit(...a, l, m)),
     applyHistory: (l, fresh) => q((...a) => fApplyHistory(...a, l, fresh)),
+    onPushedEvent: (r) => q((...a) => fOnPushedEvent(...a, r)),
+    consumeEventsFile: (s) => q((...a) => fConsumeEventsFile(...a, s)),
+    parseEventsText: (c) => q((...a) => fParseEventsText(...a, c)),
+    finishEventsSync: () => q(fFinishEventsSync),
     readText: (m) => q((...a) => fReadText(...a, m)),
     reactionEmoji: (t) => q((...a) => fReactionEmoji(...a, t)),
     myReaction: (m) => q((...a) => fMyReaction(...a, m)),
@@ -4565,13 +4582,15 @@ const evState = extra => JSON.stringify(Object.assign({
   updatedAt: NOW48, bootId: "boot-1", me: { mid: "ME" }, login: { status: "ok" },
   chats: [{ mid: "C1", name: "chat", unread: 0, lastTime: 500 }], events: [],
 }, extra));
+// 舊語義：同一份內容同時走 state.json 的狀態解析和 events.json 的事件管線。
+const feedEvents = (e, str) => { e.parseState(str); e.parseEventsText(str); };
 
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.lastBootId = "boot-1";
 e.root.lastSeq = 1;
 e.root.loadHistory("C1");
 let historyBeforeGap = e.sent.at(-1);
-e.parseState(evState({
+feedEvents(e, evState({
   events: [EV(3, "message", "C1", { message: MSG("gap-3", "THEM", "missed") })],
 }));
 ok(e.sent.filter(r => r.cmd === "history" && r.count !== 1).length === 1
@@ -4590,7 +4609,7 @@ e.root.lastBootId = "boot-1";
 e.root.lastSeq = 1;
 e.root.loadHistory("C1");
 historyBeforeGap = e.sent.at(-1);
-e.parseState(evState({
+feedEvents(e, evState({
   events: [EV(3, "message", "C1", { message: MSG("gap-fail", "THEM", "missed") })],
 }));
 e.onReply(JSON.stringify({ id: historyBeforeGap.id, ok: false, error: "network" }));
@@ -4603,18 +4622,18 @@ e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
 e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
 const ring1 = [EV(1, "message", "C1", { message: MSG("m1", "THEM", "a") })];
-e.parseState(evState({ events: ring1 }));
+feedEvents(e, evState({ events: ring1 }));
 ok(e.root.messages.length === 1 && e.root.lastSeq === 1 && e.root.lastBootId === "boot-1",
    "the first state read only adopts the watermark -- whatever the ring holds is "
    + "already in the history the panel fetched when it opened the chat");
 const ring2 = ring1.concat([EV(2, "message", "C1", { message: MSG("m2", "THEM", "b") })]);
-e.parseState(evState({ events: ring2 }));
+feedEvents(e, evState({ events: ring2 }));
 ok(e.historyCalls.length === 0,
    "a new message costs no history call at all -- that was the whole point");
 ok(e.root.messages.map(m => m.id).join() === "m1,m2", "it is simply appended");
 ok(e.root.lastSeq === 2, "and the watermark follows");
 // Same file, read again: FileView reloads on every write, heartbeat included.
-e.parseState(evState({ events: ring2 }));
+feedEvents(e, evState({ events: ring2 }));
 ok(e.root.messages.length === 2, "the same event is not applied twice");
 // Marking read used to be a free ride on the refetch (history carries markRead).
 // With no refetch it has to be asked for, or the chat you are reading keeps its
@@ -4626,14 +4645,14 @@ ok(e.sent.filter(r => r.cmd === "history" && r.count !== 1).length === 0,
    "which is one message wide, not a page -- the page is what U49 exists to avoid, "
    + "and the page size is a setting now, so no literal here would stay true");
 // A burst (an album, a long line LINE split up) is still one receipt.
-e.parseState(evState({ events: ring2.concat([
+feedEvents(e, evState({ events: ring2.concat([
   EV(3, "message", "C1", { message: MSG("m3", "THEM", "c") }),
   EV(4, "message", "C1", { message: MSG("m4", "THEM", "d") })]) }));
 ok(e.sent.filter(r => r.cmd === "history" && r.markRead === true).length === 2,
    "a burst of events is one receipt, not one per message: "
    + e.sent.filter(r => r.cmd === "history" && r.markRead === true).length);
 // Our own echo is not something to mark read.
-e.parseState(evState({ events: ring2.concat([
+feedEvents(e, evState({ events: ring2.concat([
   EV(3, "message", "C1", { message: MSG("m3", "THEM", "c") }),
   EV(4, "message", "C1", { message: MSG("m4", "THEM", "d") }),
   EV(5, "message", "C1", { message: MSG("m5", "ME", "e") })]) }));
@@ -4669,20 +4688,20 @@ ok(e.root.notice === "boom", "a command the user did press still says so");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
 e.parseState(evState({}));
-e.parseState(evState({ events: [EV(1, "message", "C2", { message: MSG("x1", "THEM", "b") })] }));
+feedEvents(e, evState({ events: [EV(1, "message", "C2", { message: MSG("x1", "THEM", "b") })] }));
 ok(e.root.messages.length === 1 && e.root.lastSeq === 1,
    "an event for another chat touches nothing here -- that chat's preview comes from `chats`");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
 e.parseState(evState({}));
-e.parseState(evState({ bootId: "boot-2",
+feedEvents(e, evState({ bootId: "boot-2",
   events: [EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })] }));
 ok(e.historyCalls.join() === "C1",
    "a restart refetches instead: the events from before it are unrecoverable");
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
 e.root.lastBootId = "boot-1";
-e.parseState(evState({ events: [EV(7, "message", "C1", { message: MSG("m2", "THEM", "b") })] }));
+feedEvents(e, evState({ events: [EV(7, "message", "C1", { message: MSG("m2", "THEM", "b") })] }));
 ok(e.root.lastSeq === 7 && e.root.messages.length === 0,
    "with the socket down nothing is applied, but the watermark still moves -- otherwise "
    + "reopening replays the whole ring in one frame");
@@ -4700,7 +4719,7 @@ e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.loadedAt = 0;
 e.root.lastBootId = "boot-1";
 e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
-e.parseState(evState({ events: [EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })] }));
+feedEvents(e, evState({ events: [EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })] }));
 ok(e.historyCalls.join() === "C1",
    "and so does a panel that has no history yet at all (loadedAt === 0)");
 
@@ -5071,10 +5090,10 @@ ok(e.root.replyTarget.id === "m2", "and so is 回覆");
 group("(t11) the declarative half: quote strip, reaction bar, 已讀 line");
 const listBlock49 = src.slice(src.indexOf("        ListView {\n          id: msgList"),
                               src.indexOf("          id: attachButton"));
-ok(/root\.applyEvents\(evs\.list\)/.test(B.parseState)
-   && /root\.eventsSince\(/.test(B.parseState),
-   "parseState is where the ring is consumed, on the same reload the file already triggers");
-ok(/evs\.live && root\.loadedAt > 0 && !evs\.reload/.test(B.parseState),
+ok(/root\.applyEvents\(evs\.list\)/.test(B.consumeEventsFile)
+   && /root\.eventsSince\(/.test(B.consumeEventsFile),
+   "consumeEventsFile is where the ring is consumed, on the events.json read");
+ok(/evs\.live && root\.loadedAt > 0 && !evs\.reload/.test(B.consumeEventsFile),
    "with the three conditions that decide between an append and a refetch in one place");
 ok(/id: quoteBlock/.test(msgRows) && /root\.quoteText\(msgDelegate\.modelData\.replyTo\)/.test(msgRows),
    "a bubble with replyTo draws the quote above its body");
@@ -5330,7 +5349,7 @@ ok(/root\.takeWanted\(\)/.test(B.parseState) && /root\.takeWanted\(\)/.test(B.on
    + "opening, and the socket coming up -- whichever is last is the one that lands it");
 ok(/if \(!root\.takeWanted\(\) && root\.twoPane && root\.activeChat\) \{/.test(src),
    "and a hand-off that landed cancels the refetch of the chat it just left");
-ok(B.parseState.indexOf("root.wantedBootId") > B.parseState.indexOf("root.applyEvents"),
+ok(B.parseState.indexOf("root.wantedBootId") > B.parseState.indexOf("root.loadedAt === 0"),
    "and last of all, so openChat has the final word on which chat is on screen");
 
 // ------------------------------------------------------------ (u6) stickers

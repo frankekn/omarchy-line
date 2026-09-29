@@ -125,12 +125,14 @@ Deno.test("queued snapshots from an ended session are skipped", async () => {
   const first = JSON.parse(m.writes[0]);
   const last = JSON.parse(m.writes[1]);
   assertEquals(first.login.status, "ok");
-  assertEquals(first.events, []);
+  // Events live in events.json now -- the ring's own file keeps half a
+  // megabyte of message payloads out of every state write.
+  assertEquals(first.events, undefined);
   assertEquals(first.timings, undefined);
   assertEquals(first.stateBytes, undefined);
   assertEquals(last.login.status, "idle");
   assertEquals(last.chats, []);
-  assertEquals(last.events, [{ seq: 1 }]);
+  assertEquals(last.events, undefined);
   assertEquals(last.updatedAt, 500);
   assertEquals(last.timings["state.write"].last, m.timingSamples[0]);
   assertEquals(m.timingSamples.length, 2);
