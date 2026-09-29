@@ -4,8 +4,11 @@ Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息�
 
 這個 repo 有兩半：
 
-- **外掛**（`Panel.qml`、`LinePanel.qml`、`LineWindow.qml`、`manifest.json`）—— omarchy bar 的
-  QML widget，不碰 LINE，只讀一個本機 JSON 檔和連一個本機 unix socket。
+- **外掛**（`Panel.qml`、`LinePanel.qml`、`LineWindow.qml`、`manifest.json`，加上
+  `EventLog.js`／`PanelKit.js`／`DraftStore.js` 三個 `.pragma library`）—— omarchy
+  bar 的 QML widget，不碰 LINE，只讀一個本機 JSON 檔和連一個本機 unix socket。
+  事件/訊息合併邏輯在 `EventLog.js`，純 UI 輔助函式在 `PanelKit.js`，草稿存取在
+  `DraftStore.js`；`Panel.qml` 本身只剩狀態機、socket/FileView 接線和畫面。
 - **daemon**（`daemon/daemon.ts`）—— 真正登入 LINE 的那一半。LINE 的 refresh token
   每次登入都會換，所以同時只能有一個 process 拿著它。
 
@@ -20,22 +23,24 @@ daemon 沒在跑的時候，面板顯示 `DAEMON OFFLINE`（判準是 `state.jso
 外掛：
 
 ```bash
-omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable
+omarchy plugin add https://github.com/frankekn/omarchy-line-app.git --enable
 ```
 
 裝好之後 repo 就在 `~/.config/omarchy/plugins/io.github.frankekn.line/`，daemon 在
 它底下的 `daemon/`。
 
-**接著一定要補這一行。** LINE 協定那半在 `daemon/vendor/linejs`（git submodule，
-公開 fork `frankekn/linejs` 的 `omarchy-vendor` 分支），而 `omarchy plugin add`
-只是一次普通的 `git clone`，不帶 submodule：
+**接著一定要補這一行。** LINE 協定那半是本 repo 自己的 linejs fork，放在
+`daemon/vendor/linejs`（git submodule，理由見[這個 repo 的改動](#這個-repo-的改動)），
+而 `omarchy plugin add` 只是一次普通的 `git clone`，不帶 submodule：
 
 ```bash
+git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs
 git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init
 ```
 
+第一行會把已安裝 submodule 的 remote 同步到 repo 指定的私有來源；第二行才抓取固定版本。
 沒補的話 daemon 一起手就是 `Module not found ".../vendor/linejs/..."`。
-`omarchy plugin update` 同樣只 fast-forward 主 repo，所以每次更新後都要再跑一次。
+`omarchy plugin update` 同樣只 fast-forward 主 repo，所以每次更新後都要再跑這兩行。
 
 貼圖、貼圖選擇器與 FLEX 圖片（含燈箱）由 daemon 下載到
 `$XDG_STATE_HOME/enil/media/public-images`（預設 `~/.local/state/enil/media/public-images`），
@@ -49,13 +54,16 @@ daemon 需要 [Deno](https://deno.com) 2（`sudo pacman -S deno`）。相依套�
 
 | 套件 | 用途 |
 |---|---|
-| `daemon/vendor/linejs`（submodule） | LINE 協定、登入、E2EE —— `frankekn/linejs` 的 `omarchy-vendor` 分支 |
+| `daemon/vendor/linejs`（submodule） | LINE 協定、登入、E2EE —— 本 repo 的 linejs fork |
 | `jsr:@std/streams` | socket 的逐行讀取 |
 | `npm:qrcode` | 把登入 QR 寫成 PNG |
-| `npm:thrift`、`npm:crypto-js`、`npm:tweetnacl` 等 | linejs 的相依，版本照它的 `deno.json` |
+| `npm:thrift`、`npm:crypto-js`、`npm:tweetnacl` 等 | fork 自己的相依，版本照抄它的 `deno.json` |
 
-`nodeModulesDir` 是 `"none"`：npm 那幾個直接從 deno 的全域快取解，外掛資料夾裡不會多出 `daemon/node_modules/`。
-整包 client（含 thrift、crypto-js 那些 CommonJS）在 `"none"` 底下 import 得起來。
+fork 的 bare import 是拿**進入點**的設定檔來解的，所以那串相依要寫在
+`daemon/deno.json` 裡，不是 fork 裡那份。`nodeModulesDir` 是 `"none"`：npm 那幾個直接
+從 deno 的全域快取解，外掛資料夾裡不會多出 `daemon/node_modules/`。fork 自己的設定寫
+`"auto"`，但那是給它的 workspace 用的，我們這邊不需要 —— 整包 client（含 thrift、
+crypto-js 那些 CommonJS）在 `"none"` 底下 import 得起來。
 
 先在前景跑一次確認能動：
 
@@ -73,6 +81,22 @@ systemctl --user enable --now enil
 ```
 
 unit 的 `WorkingDirectory` 指到**安裝目錄**底下的 `daemon/`，所以
+
+`ExecStart` 跑的是 `enil-run.sh`：它先看同目錄有沒有 `deno task build`
+產生的 `enil` 執行檔，而且 `enil.rev` 裡的 commit 要跟現在的 checkout 一致、
+`daemon.ts` 不能比 binary 新，才用編譯好的那隻；否則一律退回
+`deno run -A daemon.ts`。所以 `omarchy plugin update` 之後絕對不會吃到舊
+binary —— 它只是退回解譯模式，等你下次 build 再快起來。
+
+編譯是**選配**（機器上還是要有 Deno 才能 build）：
+
+```bash
+cd ~/.config/omarchy/plugins/io.github.frankekn.line/daemon
+deno task build    # 產生 ./enil（約 114MB）+ ./enil.rev
+```
+
+好處是重啟快 ~20ms、跑起來後不依賴 Deno runtime；不 build 也完全能用，行為
+一模一樣。
 `omarchy plugin update` 會一起更新外掛和 daemon，不必再複製一次。日誌：
 
 ```bash
@@ -89,12 +113,11 @@ journalctl --user -u enil -f
    Omarchy 不會預裝。順便（可裝可不裝）：`ffmpegthumbnailer` 或 `ffmpeg` 讓送出的
    影片有預覽圖，`wl-clipboard` 讓剪貼簿裡的圖片可以直接送。兩者都是沒裝就少那個
    功能，不會擋住任何東西。
-4. `omarchy plugin add https://github.com/frankekn/omarchy-line.git --enable`。
-5. `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init`
-   —— LINE 協定庫是 `daemon/vendor/linejs` 這個 submodule（公開 fork
-   `frankekn/linejs` 的 `omarchy-vendor` 分支），`omarchy plugin add` 不會
-   自動抓 submodule。做完 `daemon/vendor/linejs/packages/` 底下要有檔案。
-   `omarchy plugin update` 後同樣要再跑一次。
+4. `omarchy plugin add https://github.com/frankekn/omarchy-line-app.git --enable`。
+5. `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule sync -- daemon/vendor/linejs`，接著執行
+   `git -C ~/.config/omarchy/plugins/io.github.frankekn.line submodule update --init`
+   —— 這步要連得上 GitHub。做完 `daemon/vendor/linejs/packages/` 底下要有檔案，
+   空的就是沒抓到，別往下走。
 6. `omarchy plugin validate ~/.config/omarchy/plugins/io.github.frankekn.line` exit 0。
 7. 第一次 `deno run -A daemon.ts` 需要連得上網 —— 相依套件是那時候才從 JSR／npm 抓的。
 8. 前景跑起來後確認 `~/.local/state/enil/` 出現了，`state.json` 的 `updatedAt` 在動。
@@ -171,8 +194,10 @@ journalctl --user -u enil | grep '\[push\]'
 全量輪永遠是校正者。這條路可以用環境變數 `ENIL_INCREMENTAL=0` 整條關掉（預設開啟），
 關掉之後每一輪都走原本的完整重抓。
 
-push 活著的時候不需要等這些：新訊息、已讀、表情和收回都會在一秒內進到 state.json 的
-`events`（見「契約」），面板直接接上去畫，不必重抓歷史。斷線期間發生的事只會留在 LINE
+push 活著的時候不需要等這些：新訊息、已讀、表情和收回都會在一秒內進到事件環，
+面板開著時 daemon 從已連線的 socket 直接推過來（見「契約」的推播幀），連檔案
+寫入節流都不用等；socket 斷線時照舊靠 FileView 讀 `events.json` 補上。斷線
+期間發生的事只會留在 LINE
 那邊，重連之後靠重抓聊天列表和歷史補回來 —— `events` 只有最近 200 筆，而且 daemon
 一重啟就從頭算（`bootId` 會換），所以它是「快」的那條路，不是唯一的那條路。
 
@@ -200,9 +225,10 @@ QR（QR 需要有人拿手機在旁邊，自動產生只會留下沒人掃的憑
 - **群組裡打 `@` 會跳出成員選單**：邊打邊篩、↑↓ 選、Enter／Tab 或滑鼠點下去插入
   `@顯示名稱`，Esc 收掉。送出時會帶上 LINE 的 mention metadata，被 @ 的人手機上是
   真的通知。收到的訊息裡被 @ 到的名字（含 `@All`）用強調色標出來。1:1 沒有這個選單。
-- **新訊息會自己出現**（一秒內）：daemon 把新訊息、已讀、表情、收回寫進 `state.json`
-  的 `events`，面板只吃比自己 watermark 新的那幾筆，不再為了一則訊息重抓整頁歷史。
-  daemon 重啟過、或事件多到把環狀緩衝繞過去了，面板才會重抓一次補齊。
+- **新訊息會自己出現**（面板開著時是即時）：連著 socket 的面板直接收 daemon
+  推來的事件幀；離線追上靠讀 `events.json`，只吃比自己 watermark 新的那幾筆，
+  不再為了一則訊息重抓整頁歷史。daemon 重啟過、或事件多到把環狀緩衝繞過去了，
+  面板才會重抓一次補齊。
 - **自己傳的訊息底下會顯示已讀**：1:1 是「已讀」，群組是「已讀 3」，人都讀完了才變成
   「已讀」。什麼都還不知道的時候那一行不存在 —— 不會把「不知道」畫成「沒人讀」。
 - **回覆某一則**：右鍵選單的「回覆」，輸入框上面會出現一條引言（✕ 或 Esc 收掉，
@@ -399,8 +425,8 @@ VIDEO，其餘 `file`。所以手機那種 `.jpg` 其實是 mp4 的檔案照樣�
   失敗絕不會讓送出失敗。
 
 長度是加在訊息 contentMetadata 的 `DURATION`（毫秒）：那份 metadata 是
-`uploadMediaByE2EE` 自己組的，所以走 `durationMs` 參數交給 linejs——
-daemon 量到長度就一起交下去、量不到就整個不帶。走 E2EE 的時候 obs 只
+`uploadMediaByE2EE` 自己組的，所以 fork 給它多開了一個 `durationMs` 參數（pin
+`fc0651d`），daemon 量到長度就一起交下去、量不到就整個不帶。走 E2EE 的時候 obs 只
 看得到加密後的 blob，容器裡的長度它自己讀不出來（一般的 `uploadObjTalk` 是自己讀的），
 所以非得由呼叫端給不可。
 
@@ -546,7 +572,8 @@ bar 面板，所以什麼都不做。
 | 路徑 | 用途 |
 |---|---|
 | `state.json` | 登入狀態、聊天室清單、未讀數（原子寫入，外掛用 `FileView` 監看） |
-| `sock` | unix socket，一行一個 JSON 請求／回應 |
+| `events.json` | 即時事件環（原子寫入，外掛用 `FileView` 監看），見下 |
+| `sock` | unix socket，一行一個 JSON 請求／回應；連線中的面板也從這裡收推播幀 |
 | `storage.json` | LINE 憑證與 E2EE 金鑰（`chmod 600`，daemon 專用） |
 | `media/` | 下載過的圖片／影片縮圖快取（14 天或 500 MB 到就掃掉舊的） |
 | `media/avatars/` | 大頭貼快取（**不看時間**，只有 20 MB 上限，滿了先掃最舊的） |
@@ -591,10 +618,6 @@ bar 面板，所以什麼都不做。
     "p50": 251190, "p95": 258871, "max": 260112,
     "chats": 122                       // 這份檔案序列化時的 chats 列數
   },
-  "events": [                          // 最近 200 筆即時事件，seq 由小到大
-    { "seq": 1, "at": 1735000000000, "kind": "message", "chat": "u…",
-      "message": { /* 跟 history 回傳的同一個形狀 */ } }
-  ],
   "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態
   "refresh": { "at": 1735000000000, "failures": 0,   // 選用，聊天室清單的新鮮度
                "reason": "network" },                //   reason 只在 failures > 0 才有
@@ -665,20 +688,35 @@ IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間
 - 登出會把整個欄位拿掉：指向一間已經開不起來的聊天室，只會讓面板跳到空的對話。
 - 欄位不會自己消失，所以面板不能只看「有沒有」，要看 `seq`。
 
-### `events`：即時事件
+### `events.json`：即時事件
 
-`events` 是一個環狀緩衝，**只留最近 200 筆**。面板記住自己處理到哪個 `seq`，之後只吃
-比它大的，就不用為了一則新訊息重抓整頁歷史。
+`events.json` 是一個環狀緩衝，**只留最近 200 筆**，跟 `state.json` 分檔寫入 —
+— 事件爆量的時候重寫的是這份小檔，`state.json` 不必跟著長大或一直被重讀。
+面板記住自己處理到哪個 `seq`，之後只吃比它大的，就不用為了一則新訊息重抓
+整頁歷史。
+
+```jsonc
+{
+  "updatedAt": 1735000000000,
+  "bootId": "…",                       // 跟 state.json 的同一個，重啟就換
+  "events": [                          // seq 由小到大
+    { "seq": 1, "at": 1735000000000, "kind": "message", "chat": "u…",
+      "message": { /* 跟 history 回傳的同一個形狀 */ } }
+  ]
+}
+```
 
 - `seq` 在**同一個 daemon 行程裡**嚴格遞增，不重複也不回頭。重啟會從 1 重來 ——
   所以 `bootId` 換了就代表「這是新的一輪」，面板要把 watermark 歸零。
 - `at` 是毫秒時間戳，`chat` 是聊天室 mid（每一種 `kind` 都有，面板可以先照它篩掉
   不是現在這間的事件，不必看 payload）。
 - 事件寫檔會**合併**：最密 250 毫秒一次（每秒 ≤ 4 次），一次進來一整串（相簿、
-  被拆開的長句）不會讓面板重讀 20 次 state.json。心跳和聊天列表的寫入共用同一個
-  節流器，不會互相打架。
+  被拆開的長句）不會讓面板重讀 20 次 events.json。
 - 登出會把 `events` 清空（`seq` 不歸零 —— 同一個 `bootId` 裡倒退的 seq 是面板唯一
   沒辦法解釋的情況）。
+- 檔案只是**補齊**用的慢路：面板連著 socket 的時候，每筆事件先以 `{"event":…,"boot":…}`
+  推播幀直接送達（見下），檔案隨後才落；斷線期間漏掉的，重連後靠讀檔
+  補齊。
 
 | `kind` | 欄位 | 什麼時候發 |
 |---|---|---|
@@ -686,6 +724,8 @@ IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間
 | `read` | `by`（讀的人 mid）、`upTo`（他讀到的最新訊息 id） | 對方已讀，或自己在別的裝置上讀了 |
 | `reaction` | `messageId`、`reactions`（**整串新的**，不是差異） | 有人加、換或收回表情 |
 | `unsend` | `messageId` | 有人收回訊息（自己或對方） |
+| `edit` | `message`（編輯後的完整訊息） | 訊息被編輯 |
+| `history` | `messages`（重新驗證過的整頁） | 本地庫先回了舊頁、對帳後補上新頁。一筆就是一頁的量，所以同一間聊天室在環裡只留最新一筆，舊的直接丟掉 |
 
 `reaction` 給的是整串而不是差異，因為 LINE 的 op 一次只講一個人的新選擇；daemon 自己
 留一份「這則訊息誰選了什麼」，從歷史載入時的 `raw.reactions` 起算，再照 op 移動。
@@ -715,6 +755,22 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `login` | —— | 無 |
 | `logout` | —— | 無 |
 | `sync` | —— | `{ chats, link, at }` |
+
+面板連著 socket 的時候，daemon 會主動寫兩種**推播幀** —— 沒有 `id`、不對應任何
+請求，跟回覆共用同一條序列化寫入通道，所以一行永遠完整：
+
+- `{"event": <event>, "boot": "<bootId>"}` —— 事件環裡的一筆新事件（`history`
+  事件也在裡面）。client 拿 `seq` 對自己的 watermark 去重；`boot` 跟已知的
+  `bootId` 不同代表 daemon 重啟過，歸零後從 `events.json` 重新補齊。
+- `{"chat": <row>, "chatsRevision": N, "boot": "<bootId>"}` —— 單一聊天室列
+  欄位變動（新訊息的預覽、收回、頭像補上）時整列推過來。`chatsRevision` 是它的
+  水位線 —— 同一欄位的檔案寫入如果帶著更舊的 revision 抵達，直接丟掉，不能
+  蓋回已推播的新值。整列重建（refresh 輪、登出）不推，照舊由 `state.json` 收口。
+  這種幀不進事件環、不帶 `seq`。
+
+不認得推播幀的舊 client 只讀 `id` 對應的回覆，多出的行被忽略，行為不變。推播寫
+不出去或對端讀太慢時 daemon 直接關掉這條連線，面板重連後靠 `events.json` 和
+`state.json` 補齊。
 
 未登入時除了 `login`、`logout`、`hide`、`unhide`、`discardClipboardImage` 以外都回
 `{ok:false, error:"尚未登入"}`；認不得的 cmd 回 `unknown cmd: <cmd>`。
@@ -953,7 +1009,8 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 ## 這個 repo 的改動
 
-原始外掛作者 Unayung（MIT）；本 repo 為獨立 fork，已與上游分離。
+原始外掛作者 Unayung（MIT）；本 repo 為私有 fork，已與上游分離。逐版的完整清單在
+[CHANGELOG.md](CHANGELOG.md)。
 
 daemon 原本是另一個私有 repo，現在收進來（改寫成單檔 Deno），並加了：
 
@@ -978,10 +1035,10 @@ daemon 原本是另一個私有 repo，現在收進來（改寫成單檔 Deno）
 
 ### linejs 用自己的 fork
 
-daemon 不吃 `jsr:@evex/linejs`，吃 `daemon/vendor/linejs` submodule ——
-釘在公開 fork `frankekn/linejs` 的 `omarchy-vendor` 分支（只含
-`packages/linejs` 與 `packages/types`；OA client 與其他內部工具不隨
-plugin 出貨）。這幾個修的都是**上游有、我們天天踩**的協定層 bug：
+daemon 不吃 `jsr:@evex/linejs`，吃 `daemon/vendor/linejs` 這個 submodule。
+來源是私有的 `frankekn/omarchy-linejs` mirror，實際版本由 submodule pin 固定；
+安裝與更新時需要有該私有 repo 的讀取權限。理由是這幾個修的都是**上游有、我們天天踩**的 bug，而且都在協定層，
+在 daemon 這邊繞不過去：
 
 | commit | 修了什麼 |
 |---|---|
@@ -990,6 +1047,39 @@ plugin 出貨）。這幾個修的都是**上游有、我們天天踩**的協定
 | `0febc75` | 群組換人就換一把 shared key，訊息信封上的 `groupKeyId` 指的是加密當下那一代；舊碼一律去要「最新那把」，於是整段歷史都解不開（AES-GCM tag 對不起來）。改成照 `keyId` 要，快取也照代數分開 |
 | `52c2f36` | 上面那條的邊界：非數字的 key id 被 `Number()` 變成 `NaN`，快取永遠 miss，還把 `groupKeyId: NaN` 送上線 |
 | `e9079ab` | 把上游 v3.3.3 合進來：我們的五個修正都已被上游接受（PR #231–#235），另外拿到上游自己修的登入 keychain 依 id 選 key（issue #229）與連線 timeout |
+| `0e38be5` | 上面 `15c4142` 那個 catch handler 自己也可能丟：使用者掛的 `log` listener 一丟例外，unhandled rejection 就回來了。改成先 `resolve()`，log 包在 try/catch 裡（上游 PR #232 審查提出，先進 fork） |
+| `e72bd12` | obs 用一般 HTTP 錯誤碼回答死掉的物件，三條下載路徑卻照樣讀 body，於是過期檔案的錯誤長成「HMAC verification failed」。改成先看 `response.ok`，非 2xx 丟 `ObsError` —— daemon 的「檔案已過期或已被刪除」就是接這個 |
+| `f785547` | 把上游 v3.4.1 合進來：F9 的三個修正（listen 迴圈不再讓整隻 daemon 死掉、E2EE 重試檢查不再對沒有 code 的錯誤丟 TypeError、`react` 送真的 reqSeq）已被上游接受（PR #239），維護者順手加了四樣我們沒有的：pusher 起不來時把兩條 stream 用原始錯誤收掉、listen 迴圈裡每一則事件各自 try/catch、`getReqseq` 序列化（同時的第一次反應不會全拿 0）、`islisten` 在 `finally` 清掉 |
+| `a041d4a` | `uploadMediaByE2EE` 多一個 `durationMs` 參數：那條路 obs 只看得到加密後的 blob，讀不出容器裡的長度（一般的 `uploadObjTalk` 會自己讀、還會送 obs 的 `duration`），所以值得由呼叫端給，加進它自己組的 contentMetadata 當 `DURATION` —— 沒有這個，E2EE 影片在對方那邊一律是 0:00。只認 video，聲音的鍵沒在 thrift 型別裡確認過；非正數或非有限的值直接丟掉 |
+| `fc0651d` | 把上游 v3.4.2 合進來：`durationMs` 已被上游接受（PR #240），維護者把檢查改成先四捨五入成整數毫秒再驗 `Number.isSafeInteger`，所以極大或帶小數的值不會再被靜靜丟掉。順帶拿到上游這版自己修的東西 |
+| `b32a9bb` | `uploadMediaByE2EE` 接受額外的 `contentMetadata`，並與它自己管理的 OBS 欄位合併。面板的穩定請求識別因此能隨圖片、影片與檔案送出，再由歷史精確確認斷線前的傳送結果 |
+| `01efb30` | caller metadata 不能覆寫受管理的影片長度，也不能注入 `DOWNLOAD_URL`／`PREVIEW_URL` 讓接收端繞過 E2EE object；穩定請求識別等其他 metadata 仍會保留 |
+| `af30075` | 媒體下載接上呼叫端的 `AbortSignal`：面板斷線或登出時，daemon 取消中的圖片／縮圖／原檔下載可以真的中止，而不是把頻寬和佇列名額耗在沒人等的回應上（`bcc9ff3` 是合併兩條修復線的 merge pin） |
+
+另外 `7df1464` 不修 bug：把 fork 根目錄的 `README.md` 從 symlink
+改成真檔案，`omarchy plugin validate` 才會過（見[開發](#開發)）。
+
+補丁自帶的測試跟著 fork 走：`base/` 底下 `request`、`push`、`e2ee`、`obs` 這四個
+資料夾裡的 `*.test.ts` 共 14 個，在 fork 那邊 `deno test -A` 跑（目前全套
+352 個測試）。本 repo 的 `deno task test` 把 `vendor/` 排除掉，只跑自己的測試。
+
+要跟上游同步的時候：
+
+```bash
+git submodule sync -- daemon/vendor/linejs
+git submodule update --init daemon/vendor/linejs
+cd daemon/vendor/linejs
+git remote add upstream https://github.com/evex-dev/linejs.git   # 只需一次
+git fetch upstream
+git rebase upstream/main main         # 私有 mirror 的維護分支
+deno test -A                          # 先在 fork 裡確認補丁還成立
+git push --force-with-lease origin main
+cd ../../..
+git add daemon/vendor/linejs          # 主 repo 的 pin 要跟著動，這步漏了等於沒升級
+cd daemon && deno task check && deno task test
+```
+
+哪天這些都進了上游，就把 submodule 拿掉、import map 換回 `jsr:@evex/linejs`。
 
 ## 已知限制
 
@@ -1012,9 +1102,10 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
 (cd daemon && deno task check)
 ```
 
-`omarchy plugin validate` 拒絕外掛資料夾裡的**任何** symlink（只跳過 `.git`）——
-`nodeModulesDir` 設 `"none"` 就是為了讓它照樣 exit 0（設 `"auto"` 會在
-`daemon/node_modules/` 生出六百多條 symlink）。要改這個之前先想一下這一行。
+`omarchy plugin validate` 拒絕外掛資料夾裡的**任何** symlink（只跳過 `.git`）。有兩個
+決定就是為了讓它在 submodule 補完之後照樣 exit 0：`nodeModulesDir` 設 `"none"`（設
+`"auto"` 會在 `daemon/node_modules/` 生出六百多條），以及 fork 的根 `README.md` 是真檔案
+而不是指向 `packages/linejs/README.md` 的 symlink。要改這兩個之前先想一下這一行。
 
 三個都要 exit 0，但**證明不了畫面長得對**。行為則由 repo 內建的測試證明——不需要
 daemon、socket 或 state 目錄，`node tests/qml/run.js` 直接從 `Panel.qml` 切出函式本體
@@ -1028,11 +1119,11 @@ node tests/qml/run.js
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 cd daemon && deno task fmt && deno task check && deno task no-any && deno task lint && deno task test
-cd cli && deno task fmt && deno task check && deno task no-any && deno task lint && deno task test
 ```
 
-`omarchy plugin validate` 和 `qmllint` 需要本機的 omarchy shell QML
-modules，所以不進 CI。實機驗證：
+這些檢查全部在本機跑。submodule 位於另一個私有 repo，不把跨 repo 憑證交給
+GitHub Actions；`omarchy plugin validate` 和 `qmllint` 也需要本機的 omarchy shell
+QML modules。實機驗證：
 
 ```bash
 omarchy restart shell                 # 改 QML 之後

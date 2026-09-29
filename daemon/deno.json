@@ -27,6 +27,9 @@
       "node-types"
     ]
   },
+  "exclude": [
+    "vendor"
+  ],
   "lint": {
     "rules": {
       "include": [
@@ -45,10 +48,8 @@
     "fmt": "deno fmt --check",
     "lint": "deno lint",
     "test": "deno test -A",
+    "build": "deno compile -A --output enil daemon.ts && git rev-parse HEAD > enil.rev",
     "bench:startup": "deno run -A bench/startup_bench.ts",
     "bench:thrift": "deno run -A bench/thrift_decode_bench.ts"
-  },
-  "exclude": [
-    "vendor"
-  ]
+  }
 }
