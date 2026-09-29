@@ -297,7 +297,7 @@ class ContractTest(unittest.TestCase):
     def test_history_bounds_match_the_daemon_and_the_panel(self):
         stub = read_text(STUB)
         daemon = read_text(os.path.join(HERE, "modules", "socket.ts"))
-        panel = read_text(os.path.join(HERE, os.pardir, "Panel.qml"))
+        panel = read_text(os.path.join(HERE, os.pardir, "PanelKit.js"))
         for name in ("HISTORY_COUNT", "HISTORY_COUNT_MAX"):
             self.assertEqual(
                 re.search(r"^%s = (\d+)$" % name, stub, re.M).group(1),
