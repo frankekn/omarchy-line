@@ -219,11 +219,17 @@ export function createMessageStore(rootDir: string): MessageStore {
     const lines = f.pending;
     f.pending = [];
     const dirEnd = f.path.lastIndexOf("/");
-    await Deno.mkdir(f.path.slice(0, dirEnd), { recursive: true }).catch(
-      () => {},
-    );
-    await Deno.writeTextFile(f.path, lines.join(""), { append: true })
-      .catch(() => {});
+    await Deno.mkdir(f.path.slice(0, dirEnd), {
+      recursive: true,
+      // Same stance as storage.json beside it: the 0700 state dir already
+      // blocks traversal, but the files themselves shouldn't be world-readable
+      // if that boundary is ever loosened.
+      mode: 0o700,
+    }).catch(() => {});
+    await Deno.writeTextFile(f.path, lines.join(""), {
+      append: true,
+      mode: 0o600,
+    }).catch(() => {});
   }
 
   function enqueue(f: ChatFile, line: Json): void {
