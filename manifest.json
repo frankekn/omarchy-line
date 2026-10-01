@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.frankekn.line",
   "name": "LINE",
-  "version": "2.14.0",
+  "version": "2.15.0",
   "author": "Frank Yang",
   "license": "MIT",
   "description": "Unread LINE messages in the bar, read from a local daemon's state file.",
