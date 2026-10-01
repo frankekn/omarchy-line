@@ -27,7 +27,7 @@ jobs:
         # runner script probes for it by name, so extend PATH for the call.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtqml-workerscript
+          sudo apt-get install -y -qq qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
           PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
       - name: stub tests
         working-directory: daemon
