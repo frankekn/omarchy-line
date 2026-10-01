@@ -18,6 +18,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socketserver
 import struct
 import sys
@@ -1744,14 +1745,20 @@ def parse_args(argv):
     if "--fixture" in argv:
         i = argv.index("--fixture")
         if i + 1 >= len(argv) or argv[i + 1] not in FIXTURES:
-            sys.exit("usage: stub.py [--logged-out] [--fixture %s]"
+            sys.exit("usage: stub.py [--logged-out] [--real] [--fixture %s]"
                      % "|".join(FIXTURES))
         fixture = argv[i + 1]
-    return fixture, "--logged-out" in argv
+    return fixture, "--logged-out" in argv, "--real" in argv
 
 
 def main():
-    fixture, logged_out = parse_args(sys.argv[1:])
+    fixture, logged_out, real = parse_args(sys.argv[1:])
+    if not real and "XDG_STATE_HOME" not in os.environ:
+        sys.exit(
+            "stub.py: refusing to take over the live state dir %s — set "
+            "XDG_STATE_HOME to an isolated dir, or pass --real to serve the "
+            "real panel deliberately" % STATE_DIR)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     os.makedirs(STATE_DIR, exist_ok=True)
     seed(fixture, logged_out)
     recover_clipboard_stages()
