@@ -512,6 +512,18 @@ function makeEnv(opts) {
     },
   };
   const root = {
+    // Panel.qml reads the socket through sockLoader.item now: the loader
+    // recreates the socket on every retry, so the file only ever touches
+    // sockConnected / sockSend. Both delegate to the one sock stub, and
+    // `e.sock.connected = X` in a test keeps meaning the same thing.
+    get sockConnected() {
+      return sock.connected;
+    },
+    sockSend(req) {
+      if (!sock.connected) return false;
+      sock.write(JSON.stringify(req) + "\n");
+      return true;
+    },
     nextId: 1,
     pending: {},
     messages: [],
@@ -3980,9 +3992,27 @@ const linkBlock = src.slice(
   src.indexOf("        // 字級調整"),
 );
 ok(
-  linkBlock.includes("onClicked: root.syncNow()") &&
+  linkBlock.includes("onClicked: root.sockConnected ? root.syncNow() : root.kickDaemon(true)") &&
     linkBlock.includes("cursorShape: Qt.PointingHandCursor"),
-  "the 連線中斷 line is clickable and looks it",
+  "the 連線中斷 line is clickable and looks it -- sync when connected, start the daemon when not",
+);
+// Socket.connected is a target state, not an auto-retry: after ECONNREFUSED the
+// socket stays dead until the bound value makes a false→true round trip. The
+// retry timer pulses sockHoldoff for that, and while the panel is open it also
+// kicks the daemon (restart covers both "not running" and the orphaned-sock
+// case), so clicking the bar icon against a dead daemon actually recovers.
+ok(
+  /active: root\.opened && !root\.sockHoldoff/.test(src) && /readonly property bool sockConnected/.test(src),
+  "the socket can retry — the Loader wraps it and sockHoldoff forces a fresh connect",
+);
+ok(
+  /id: sockRetryTimer/.test(src) && /running: root\.opened && !root\.sockConnected/.test(src),
+  "a retry timer re-attempts the socket while the panel is open and disconnected",
+);
+ok(
+  /execDetached\(\["systemctl", "--user", "restart", "enil"\]\)/.test(src) &&
+    /function kickDaemon\(force\)/.test(src),
+  "a dead daemon is restarted from inside the panel",
 );
 // U74: the height/topMargin bindings live on the wrapping Item, never on the
 // Text. QQuickText re-runs layout (recomputing implicitHeight) the moment a
@@ -4856,7 +4886,7 @@ ok(
 // The wiring itself is a Socket handler, not a function, so it is asserted
 // against source: whatever else that branch grows, it must go through here.
 const sockBlock = src.slice(
-  src.indexOf("    id: sock"),
+  src.indexOf("    id: socketComponent"),
   src.indexOf("  function dropInFlight()"),
 );
 ok(
@@ -7607,9 +7637,15 @@ ok(
   "the hero still names the offline state",
 );
 ok(
-  /detail: root\.online \? "" : tr\("daemon\.notRunningHint"\)/
-    .test(listPaneBlock),
-  "and says what to type to get it back -- 「離線」 alone leaves the reader stuck",
+  /tr\("daemon\.notRunningHint"\)/.test(listPaneBlock) &&
+    /tr\("daemon\.starting"\)/.test(listPaneBlock),
+  "and says how to get it back -- the hint points at the start button, plus a starting state after the kick",
+);
+ok(
+  /trailingControl: Component/.test(listPaneBlock) &&
+    /tr\("daemon\.startBtn"\)/.test(listPaneBlock) &&
+    /visible: !root\.sockConnected/.test(listPaneBlock),
+  "and the offline hero carries an actual clickable start button",
 );
 const toolsRowBlock = listPaneBlock.slice(
   listPaneBlock.indexOf("        Row {\n          id: scaleRow"),
@@ -10734,6 +10770,11 @@ group("public images use daemon paths and recover after disconnect");
     previewRefreshNeeded: false,
     pending: {},
     activeChat: null,
+    // the live file reads the socket via root.sockConnected; this standalone
+    // root delegates to the sock stub passed alongside.
+    get sockConnected() {
+      return sock.connected;
+    },
     ambiguousSendsByChat: {},
     myMid: "ME",
     notice: "keep this notice",
@@ -15088,9 +15129,9 @@ ok(
   "a preview refused before socket write still schedules reconnect recovery",
 );
 ok(
-  B.fetchPreview.indexOf("!sock.connected") >
+  B.fetchPreview.indexOf("!root.sockConnected") >
       B.fetchPreview.indexOf("String(m.chat") &&
-    B.fetchPreview.indexOf("!sock.connected") <
+    B.fetchPreview.indexOf("!root.sockConnected") <
       B.fetchPreview.indexOf("var busy"),
   "a dropped socket defers thumbnails instead of replacing the banner with the offline notice",
 );
@@ -15845,6 +15886,7 @@ ok(
 const queuedPreviewRequests = [];
 const queuedPreviewRoot = {
   activeChat: { mid: "C1" },
+  sockConnected: true,
   previewRequests: {},
   previewRetryQueue: { m1: { invalidate: true } },
   previewRefreshNeeded: false,
@@ -15868,6 +15910,7 @@ ok(
 );
 const refusedPreviewRoot = {
   activeChat: { mid: "C1" },
+  sockConnected: true,
   previewRequests: {},
   previewRetryQueue: { m1: { invalidate: true } },
   previewRefreshNeeded: false,

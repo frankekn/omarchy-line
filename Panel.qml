@@ -52,7 +52,7 @@ Panel {
     var key = String(url || "")
     var queuedRetry = root.imageRetryQueue[key]
     var replace = invalidate === true || (queuedRetry && queuedRetry.invalidate === true)
-    if (!/^https:\/\//i.test(url) || !sock.connected || root.imagePaths[url] || root.imageRequests[url]) return
+    if (!/^https:\/\//i.test(url) || !root.sockConnected || root.imagePaths[url] || root.imageRequests[url]) return
     root.imageRequests[url] = true
     if (!root.request("image", { url: url, invalidate: replace }, url)) {
       delete root.imageRequests[url]
@@ -136,10 +136,12 @@ Panel {
       root.forgetImage(cachedImage.remoteSource)
       root.fetchImage(cachedImage.remoteSource, true)
     }
+    // socket 物件是會被重造的（sockLoader），訊號掛在 root 的衍生值上，
+    // 不掛在那顆命比 binding 還短的物件上。
     Connections {
-      target: sock
-      function onConnectionStateChanged() {
-        if (sock.connected) root.fetchImage(cachedImage.remoteSource)
+      target: root
+      function onSockConnectedChanged() {
+        if (root.sockConnected) root.fetchImage(cachedImage.remoteSource)
       }
     }
   }
@@ -527,7 +529,7 @@ Panel {
   FileView {
     id: eventsView
     path: root.stateDir + "/events.json"
-    watchChanges: !sock.connected
+    watchChanges: !root.sockConnected
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.parseEventsText(text())
@@ -613,7 +615,7 @@ Panel {
     // A new message in the chat you are reading should just appear.
     // twoPane 時對話一直開著，view 會是 "list" 也照樣要更新。
     // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
-    if (sock.connected && (root.view === "chat" || root.twoPane) && root.activeChat) {
+    if (root.sockConnected && (root.view === "chat" || root.twoPane) && root.activeChat) {
       var fresh = root.chatById(root.activeChat.mid)
       var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
       // 會寫 events 的 daemon：一則新訊息就只是接一顆泡泡，不再重抓整頁歷史。
@@ -783,7 +785,7 @@ Panel {
       root.restoreAmbiguousSends(nowMid)
       // The socket can appear before daemon resume finishes. Retry recovery
       // on the first ready state instead of spending the only attempt early.
-      if (sock.connected) root.reconcileAfterConnect()
+      if (root.sockConnected) root.reconcileAfterConnect()
     } else if (sessionEnded && !retryableSessionError) {
       root.sessionMid = ""
       root.resumeAttemptBootId = ""
@@ -813,7 +815,7 @@ Panel {
     // （bootChanged —— 重啟前的事件再也拿不到）。推播流著、檔案也讀得出來的
     // 時候不用看 —— 缺口各自有人補。
     // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
-    if (sock.connected && (root.view === "chat" || root.twoPane) && root.activeChat) {
+    if (root.sockConnected && (root.view === "chat" || root.twoPane) && root.activeChat) {
       var fresh = root.chatById(root.activeChat.mid)
       var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
       if ((moved && (root.loadedAt === 0 || !root.eventsLive)) || bootChanged) {
@@ -942,7 +944,7 @@ Panel {
     interval: 250
     repeat: false
     onTriggered: {
-      if (!sock.connected) {
+      if (!root.sockConnected) {
         root.previewRefreshNeeded = true
         return
       }
@@ -968,7 +970,7 @@ Panel {
     interval: 250
     repeat: false
     onTriggered: {
-      if (!sock.connected) return
+      if (!root.sockConnected) return
       var queued = root.imageRetryQueue
       root.imageRetryQueue = ({})
       for (var url in queued)
@@ -1656,7 +1658,7 @@ Panel {
           }
         }
         root.setMessages(root.withDay(root.preserveAmbiguousBubbles(mid, root.messages)), false)
-        if (sock.connected && !root.loading) root.loadHistory(mid)
+        if (root.sockConnected && !root.loading) root.loadHistory(mid)
       }
     }
   }
@@ -2429,43 +2431,93 @@ Panel {
   property int nextId: 1
   property var pending: ({})
 
-  Socket {
-    id: sock
-    path: root.stateDir + "/sock"
-    // Only hold the connection while the panel is open.
-    connected: root.opened
-    parser: SplitParser {
-      splitMarker: "\n"
-      onRead: function(line) { root.onReply(line) }
-    }
-    onConnectionStateChanged: {
-      // 斷線時在飛的那次同步永遠不會回來了；不跟著清掉，那顆按鈕就會一直
-      // 停在「同步中…」，下次開面板也還是按不動。
-      // 斷線後補齊靠 events.json：ring 讀完之前推播要先排隊，不然中間那段的
-      // seq 會被當成已吃過而丟掉。
-      if (!connected) {
-        root.dropInFlight()
-        return
+  // Quickshell 的 Socket 連線失敗後就閂死：connected 寫 false→true 不會再發
+  // connectToServer，path 重寫也一樣 —— 想重連只能重造物件。Loader 的
+  // active 一關一開，就得到一顆全新的、建立當下就開始連的 Socket；
+  // sockHoldoff 就是那次「關一下」的扳機。
+  property bool sockHoldoff: false
+  property double lastDaemonKickMs: 0
+
+  // 手上那顆 socket 是 sockLoader.item，沒連上時是 null —— 全檔統一
+  // 走 sockConnected / sockSend 這兩個口，別直接摸 item。
+  readonly property bool sockConnected: sockLoader.item !== null && sockLoader.item.connected
+
+  function sockSend(req) {
+    var s = sockLoader.item
+    if (s === null || !s.connected) return false
+    s.write(JSON.stringify(req) + "\n")
+    return true
+  }
+
+  Loader {
+    id: sockLoader
+    // 面板關著就沒有 socket 存在，跟舊的 connected: opened 同一條生命線。
+    active: root.opened && !root.sockHoldoff
+    sourceComponent: socketComponent
+  }
+
+  Component {
+    id: socketComponent
+    Socket {
+      path: root.stateDir + "/sock"
+      // 出廠就連：沒在連的 socket 物件本來就不該存在。
+      connected: true
+      parser: SplitParser {
+        splitMarker: "\n"
+        onRead: function(line) { root.onReply(line) }
       }
-      root.reconciliationEpoch++
-      // Events that accrued while disconnected live in events.json — the
-      // ring read must settle before pushes resume or the gap in between is
-      // skipped as already-seen. Queue them until the read lands.
-      root.eventsSyncing = true
-      eventsView.reload()
-      if (Object.keys(root.previewRetryQueue).length > 0)
-        previewRetryTimer.restart()
-      if ((root.draftStoreLoaded || root.draftStoreUnavailable)
-          && root.deferredDraftRequests.length > 0)
-        root.flushDeferredDraftActions()
-      // 通知點進來的那一筆常常是卡在這裡：面板開了、state 也讀了，就差這條線。
-      if (root.takeWanted()) return
-      if (root.reconcileAfterConnect()) return
-      // 面板重開時這條線常常還沒接上，onOpenedChanged 只好把 loadedAt 歸零
-      // 等心跳（最久 30 秒）補抓 —— 既然接上了就別讓人乾等那一輪。
-      // 重抓不標已讀：沒人點開聊天室，只是這條線接上了。
-      if (root.loggedIn && root.twoPane && root.activeChat && root.loadedAt === 0)
-        root.loadHistory(root.activeChat.mid, false)
+      onConnectionStateChanged: {
+        // 斷線時在飛的那次同步永遠不會回來了；不跟著清掉，那顆按鈕就會一直
+        // 停在「同步中…」，下次開面板也還是按不動。
+        // 斷線後補齊靠 events.json：ring 讀完之前推播要先排隊，不然中間那段的
+        // seq 會被當成已吃過而丟掉。
+        if (!connected) {
+          root.dropInFlight()
+          return
+        }
+        root.reconciliationEpoch++
+        // 接上了就把「沒在跑／啟動中」這種連線相關的橫幅收掉 —— 它們是
+        // 踢 daemon 那條路留下的，線活了就不再是事實。
+        if (root.notice === root.tr("daemon.notRunning")
+            || root.notice === root.tr("daemon.starting")) root.notice = ""
+        // Events that accrued while disconnected live in events.json — the
+        // ring read must settle before pushes resume or the gap in between is
+        // skipped as already-seen. Queue them until the read lands.
+        root.eventsSyncing = true
+        eventsView.reload()
+        if (Object.keys(root.previewRetryQueue).length > 0)
+          previewRetryTimer.restart()
+        if ((root.draftStoreLoaded || root.draftStoreUnavailable)
+            && root.deferredDraftRequests.length > 0)
+          root.flushDeferredDraftActions()
+        // 通知點進來的那一筆常常是卡在這裡：面板開了、state 也讀了，就差這條線。
+        if (root.takeWanted()) return
+        if (root.reconcileAfterConnect()) return
+        // 面板重開時這條線常常還沒接上，onOpenedChanged 只好把 loadedAt 歸零
+        // 等心跳（最久 30 秒）補抓 —— 既然接上了就別讓人乾等那一輪。
+        // 重抓不標已讀：沒人點開聊天室，只是這條線接上了。
+        if (root.loggedIn && root.twoPane && root.activeChat && root.loadedAt === 0)
+          root.loadHistory(root.activeChat.mid, false)
+      }
+      // 物件被拆掉＝這條線死了：在飛的請求跟著清，跟斷線同一套收尾 ——
+      // onConnectionStateChanged 在物件已死的路上不一定會送到，這裡接住。
+      Component.onDestruction: root.dropInFlight()
+    }
+  }
+
+  // daemon 不在時 socket 是拒連不是忙，物件也不會自己重連 —— 面板開著
+  // 就每 1.5 秒換一顆新 socket 去試（第一拍本身就是給正常連線的寬限），
+  // 同時照冷卻把 daemon 拉起來 —— 點 bar 圖示的那一刻，死掉、或 sock 檔
+  // 被刪成孤兒的 daemon，都由這條路救回來。
+  Timer {
+    id: sockRetryTimer
+    interval: 1500
+    repeat: true
+    running: root.opened && !root.sockConnected
+    onTriggered: {
+      root.kickDaemon(false)
+      root.sockHoldoff = true
+      Qt.callLater(function() { root.sockHoldoff = false })
     }
   }
 
@@ -2595,9 +2647,9 @@ Panel {
   }
 
   // 回傳有沒有真的送出去。要「送成功才記」的呼叫端看這個回傳值，別自己再判一次
-  // sock.connected —— 同一個條件寫在兩個地方，遲早會不一致，這次的 bug 就是這樣來的。
+  // root.sockConnected —— 同一個條件寫在兩個地方，遲早會不一致，這次的 bug 就是這樣來的。
   function request(cmd, extra, msgId) {
-    if (!sock.connected) { root.notice = tr("daemon.notRunning"); return false }
+    if (!root.sockConnected) { root.notice = tr("daemon.notRunning"); return false }
     var spendsDraft = root.isSendCmd(cmd) || !!(extra && extra._spendsDraft)
     // A pre-load draft has no stable version yet. Sending it with version 0
     // lets an early acknowledgement miss the staged revision and resurrect it
@@ -2714,8 +2766,7 @@ Panel {
               // 為了一個 cmd 在 request 裡多開一條路。
               gen: root.historyGen }
     root.pending = p
-    sock.write(JSON.stringify(req) + "\n")
-    return true
+    return root.sockSend(req)
   }
 
   function onReply(line) {
@@ -3086,11 +3137,23 @@ Panel {
     }
   }
 
+  // daemon 沒在跑還救得回來：restart 對死掉的 unit 等於 start，對活著但
+  // sock 檔變孤兒的（stub 沒設 XDG_STATE_HOME 那種事故）反而才是唯一解。
+  // 面板自己救自己，不用人下 systemctl —— 自動路徑 45 秒冷卻擋
+  // crash-loop 連踢，手按那條 3 秒防連點。
+  function kickDaemon(force) {
+    var now = Date.now()
+    if (now - root.lastDaemonKickMs < (force ? 3000 : 45000)) return
+    root.lastDaemonKickMs = now
+    root.notice = tr("daemon.starting")
+    Quickshell.execDetached(["systemctl", "--user", "restart", "enil"])
+  }
+
   // 自動的那兩層都要等：watchdog 一分鐘才看一次 push 有沒有斷，保底輪詢是五分鐘。
   // 這顆是人按的 —— 睡醒、網路抖一下、或只是不確定手上這份是不是最新的 ——
   // 按下去 daemon 就重建 push 連線並立刻重抓，幾秒內給答案。
   function syncNow() {
-    if (!sock.connected) { root.notice = tr("daemon.notRunning"); return }
+    if (!root.sockConnected) { root.notice = tr("daemon.notRunning"); return }
     // 已經在同步了：再送一次只是多抓一輪，daemon 那邊也會併成同一次。
     if (root.syncing) return
     root.syncing = true
@@ -3405,7 +3468,7 @@ Panel {
     // unchanged. The entry keeps the invalidate marker so a delegate
     // replay without an argument cannot let the daemon reuse a corrupt
     // cache file either.
-    if (!sock.connected) {
+    if (!root.sockConnected) {
       var offlineQueue = Object.assign({}, root.previewRetryQueue)
       offlineQueue[String(m.id || "")] = {
         invalidate: mustInvalidate,
@@ -3903,7 +3966,7 @@ Panel {
     // 送不出去就把旗子收回來。request() 回 false 代表這一趟沒有登記 pending，
     // 沒有任何回覆會來把「載入中…」熄掉；留著它 loadOlder 第一行就永遠擋住自己，
     // 這間聊天室要離開再進來才翻得動。看的是 request() 的回傳值，不是自己再問
-    // 一次 sock.connected —— 同一個條件抄成兩份，遲早有一份會漏。
+    // 一次 root.sockConnected —— 同一個條件抄成兩份，遲早有一份會漏。
     if (!request("history", { chat: mid, count: root.historyPage,
                               markRead: markRead !== false }))
       root.loading = false
@@ -4016,7 +4079,7 @@ Panel {
   // socket 還沒接上就先不跳：openChat 會去抓歷史，而沒接上的 request 只會留下
   // 一句假的「daemon 沒在跑」。接上的那一刻 onConnectionStateChanged 會再叫一次。
   function takeWanted() {
-    if (!root.opened || !sock.connected || root.pendingWanted.length === 0) return false
+    if (!root.opened || !root.sockConnected || root.pendingWanted.length === 0) return false
     var chat = root.chatById(root.pendingWanted)
     root.pendingWanted = ""
     if (!chat) return false
@@ -4117,7 +4180,7 @@ Panel {
         // daemon 每 30 秒的心跳一寫 state，parseState 就會補抓。
         // 重抓不帶 markRead：只是打開面板、沒點開聊天室，不能把留著的對話
         // 標成已讀 —— 未讀分隔線照畫，標已讀留給 openChat 那一趟。
-        if (sock.connected) root.loadHistory(root.activeChat.mid, false)
+        if (root.sockConnected) root.loadHistory(root.activeChat.mid, false)
         else root.loadedAt = 0
       }
     }
@@ -5077,7 +5140,55 @@ Panel {
                : tr("summary.quiet", root.chats.length))
           // 連線時 meta 已經寫著幾個聊天、幾則未讀，這裡再寫一次只是重複，留空。
           // 離線時 meta 只說得出「離線」，把人救回來的那句指令沒有別的地方可以放。
-          detail: root.online ? "" : tr("daemon.notRunningHint")
+          // 剛踢過 daemon 的二十秒裡換成「啟動中」——restart 回來之前 hint 還是事實，
+          // 但人已經按過了，再叫他按一次只是讓人懷疑沒點到。
+          detail: root.online ? ""
+            : (root.nowMs - root.lastDaemonKickMs < 20000 ? tr("daemon.starting")
+                                                          : tr("daemon.notRunningHint"))
+          // daemon 沒接上時給一顆真能按的 —— detail 膠囊是 PanelHero 自己的字，
+          // 按不下去，能按的東西只能走 trailingControl 這個槽。
+          // 看 root.sockConnected 不看 online：心跳有 30 秒 lag，線接上了這顆就該收。
+          trailingControl: Component {
+            Text {
+              id: startDaemonBtn
+              visible: !root.sockConnected
+              text: root.tr("daemon.startBtn")
+              color: (startDaemonHover.containsMouse || startDaemonBtn.activeFocus)
+                     ? Color.accent : root.dim
+              font.family: root.fontFamily
+              font.pixelSize: root.fontBody
+              font.bold: true
+              activeFocusOnTab: true
+
+              Accessible.role: Accessible.Button
+              Accessible.name: root.tr("acc.daemonStart")
+              Accessible.onPressAction: root.kickDaemon(true)
+              Keys.onReturnPressed: root.kickDaemon(true)
+              Keys.onEnterPressed: root.kickDaemon(true)
+              Keys.onSpacePressed: root.kickDaemon(true)
+              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+
+              Rectangle {
+                z: -1
+                anchors.fill: parent
+                anchors.margins: -Style.space(3)
+                visible: startDaemonBtn.activeFocus
+                radius: Style.cornerRadius
+                border.width: 1
+                border.color: Color.accent
+                color: "transparent"
+              }
+
+              MouseArea {
+                id: startDaemonHover
+                anchors.fill: parent
+                anchors.margins: -Style.space(4)
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.kickDaemon(true)
+              }
+            }
+          }
           foreground: root.foreground
           fontFamily: root.fontFamily
           iconComponent: Component {
@@ -5123,15 +5234,16 @@ Panel {
             font.pixelSize: root.fontBody
             elide: Text.ElideRight
 
-            // 顯示錯誤時點一下就是重試，顯示斷線時點一下就是立刻重連 ——
-            // 兩件事都是同一個動作，所以不用分。
+            // 顯示錯誤時點一下就是重試，顯示斷線時點一下就是立刻重連；
+            // daemon 整個不在時這一下就是把它拉起來的動作 —— 走 syncNow
+            // 只會把「daemon 沒在跑」再印一次。
             // 不要往外長：這一行是滿版寬度，撐出去會蓋到下面搜尋框的上緣。
             MouseArea {
               id: linkHover
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.syncNow()
+              onClicked: root.sockConnected ? root.syncNow() : root.kickDaemon(true)
             }
           }
         }

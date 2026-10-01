@@ -31,8 +31,11 @@ var STRINGS = {
   "login.starting.detail": { zh: "daemon 正在啟動…", en: "daemon is starting…" },
   "daemon.offline":        { zh: "DAEMON 離線", en: "DAEMON OFFLINE" },
   "daemon.notRunning":     { zh: "daemon 沒在跑", en: "daemon is not running" },
-  "daemon.notRunningHint": { zh: "daemon 沒在跑：systemctl --user start enil",
-                             en: "daemon is not running: systemctl --user start enil" },
+  "daemon.notRunningHint": { zh: "daemon 沒在跑——點「啟動 daemon」帶起來",
+                             en: "daemon is not running — “start daemon” brings it up" },
+  "daemon.starting":       { zh: "正在啟動 daemon…", en: "starting daemon…" },
+  "daemon.startBtn":       { zh: "啟動 daemon", en: "start daemon" },
+  "acc.daemonStart":       { zh: "啟動 LINE daemon", en: "start the LINE daemon" },
 
   // 清單摘要 / 搜尋
   "summary.unread":     { zh: "%1 個聊天共 %2 則未讀", en: "%1 chats, %2 unread" },
