@@ -1,5 +1,7 @@
 # LINE for Omarchy
 
+[![ci](https://github.com/frankekn/omarchy-line/actions/workflows/ci.yml/badge.svg)](https://github.com/frankekn/omarchy-line/actions/workflows/ci.yml)
+
 [English](README.md)
 
 Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息、傳檔案。

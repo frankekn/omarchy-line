@@ -1,5 +1,7 @@
 # LINE for Omarchy
 
+[![ci](https://github.com/frankekn/omarchy-line/actions/workflows/ci.yml/badge.svg)](https://github.com/frankekn/omarchy-line/actions/workflows/ci.yml)
+
 [繁體中文](README.zh-TW.md)
 
 Unread LINE count in the bar. Click it to search chats, read messages, reply,
