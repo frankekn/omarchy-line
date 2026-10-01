@@ -1758,7 +1758,16 @@ def main():
             "stub.py: refusing to take over the live state dir %s — set "
             "XDG_STATE_HOME to an isolated dir, or pass --real to serve the "
             "real panel deliberately" % STATE_DIR)
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    # SIGTERM needs the socket file gone and nothing else: exit through
+    # os._exit so the finally below never gets to wait on serve_forever
+    # (its shutdown() has to catch the poll loop, which can outlast a
+    # test harness's patience on a loaded machine).
+    def _die(*_):
+        if os.path.exists(SOCK_PATH):
+            os.remove(SOCK_PATH)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, _die)
     os.makedirs(STATE_DIR, exist_ok=True)
     seed(fixture, logged_out)
     recover_clipboard_stages()
