@@ -2708,9 +2708,10 @@ Panel {
     }
     var reservedId = extra && Number(extra._requestId || 0)
     var id = reservedId > 0 ? reservedId : root.nextId++
-    // older 和 markRead 在線上都是 history，差別只在回來要怎麼處理：older 前置一頁、
-    // markRead 什麼都不做（它是為了讓 daemon 送出已讀，那一頁本來就不要）。
-    var req = { id: id, cmd: (cmd === "older" || cmd === "markRead") ? "history" : cmd }
+    // older 在線上是 history，差別只在回來要怎麼處理：older 前置一頁。markRead 以前
+    // 也借 history 的殼（count 1 + markRead），daemon 為了那一頁還得多讀一次已讀位置、
+    // 再背景重驗一次歷史 —— 那一頁本來就不要。現在它是自己的指令，只送 sendChatChecked。
+    var req = { id: id, cmd: cmd === "older" ? "history" : cmd }
     for (var k in extra) if (String(k).charAt(0) !== "_") req[k] = extra[k]
     var requestId = ""
     var requestBubble = null
@@ -3821,14 +3822,23 @@ Panel {
     if (!root.activeChat || evs.length === 0) return
     var mid = String(root.activeChat.mid || "")
     var next = root.messages
-    var incoming = false
+    // 這批裡最新的一則對方訊息：id 給 markRead 當 upTo，時間用來比誰比較新。
+    // 照 seq 走通常就是照時間走，但補進來的舊訊息不能把 upTo 往回拉。
+    var incoming = ""
+    var incomingTime = -Infinity
     for (var i = 0; i < evs.length; i++) {
       var ev = evs[i]
       if (!ev || String(ev.chat || "") !== mid) continue
       if (ev.kind === "message") {
         var was = next
+        var em = ev.message || {}
         next = root.mergeMessage(next, ev.message)
-        if (next !== was && String((ev.message || {}).from || "") !== root.myMid) incoming = true
+        var emTime = Number(em.time || 0)
+        if (next !== was && String(em.from || "") !== root.myMid && em.id !== undefined
+            && String(em.id).length > 0 && emTime >= incomingTime) {
+          incoming = String(em.id)
+          incomingTime = emTime
+        }
       } else if (ev.kind === "read") next = root.applyRead(next, ev.upTo, ev.by)
       else if (ev.kind === "reaction") next = root.applyReaction(next, ev.messageId, ev.reactions)
       else if (ev.kind === "unsend") next = root.applyUnsend(next, ev.messageId)
@@ -3842,9 +3852,12 @@ Panel {
     root.reconcileAmbiguous(mid, root.messages)
     // 標已讀本來是搭「重抓整頁」順便做的（history 的 markRead）。整頁不抓了，這件事
     // 就得自己做一次 —— 少了它，人正在讀的聊天室會一直掛著未讀數，對方也永遠等不到
-    // 已讀。count 給 1：要的只是 daemon 那一句 sendChatChecked，不是那一頁訊息。
+    // 已讀。用專門的 markRead 指令：要的只是 daemon 那一句 sendChatChecked，不是一頁訊息。
+    // upTo 是這批裡最新那則對方訊息的 id —— daemon 拿它比自己記的已讀位置，已經標到
+    // 那裡的（重複的請求、自己已讀的回音）就不再打 LINE。不拿 messages 的最後一則：
+    // 那裡可能是還沒有真 id 的樂觀泡泡。
     // 一批事件只送一次，相簿一次進來十則不必標十次。
-    if (incoming) root.request("markRead", { chat: mid, count: 1, markRead: true })
+    if (incoming) root.request("markRead", { chat: mid, upTo: incoming })
   }
 
   // 改過的那一則要換成新物件：純 JS 物件就地改內容不會發變更訊號（QML 比的是參考，
@@ -3996,7 +4009,7 @@ Panel {
 
   // atBottom 不在這裡設：這支只是把請求送出去，回來要停在哪由 setMessages
   // 在真的換清單的那一刻決定，中間使用者還捲得動。
-  // markRead 沒帶就照舊標已讀：openChat 開聊天室是「人在看」，標是合理語意。
+  // markRead 沒帶就照舊准標已讀：openChat 開聊天室是「人在看」，標是合理語意。
   // twoPane 重開面板（onOpenedChanged）與 socket 重連（onConnectionStateChanged）
   // 的重抓帶 false —— 右欄留著的對話只是跟著面板被打開，使用者沒點開它，
   // 不能因為重抓就被標成已讀。
@@ -4016,8 +4029,15 @@ Panel {
     // 沒有任何回覆會來把「載入中…」熄掉；留著它 loadOlder 第一行就永遠擋住自己，
     // 這間聊天室要離開再進來才翻得動。看的是 request() 的回傳值，不是自己再問
     // 一次 root.sockConnected —— 同一個條件抄成兩份，遲早有一份會漏。
+    // markRead 是「准不准標」，不是「一定要標」：准了也要這間真的還有未讀才帶。
+    // 看的是 chatById 那一列即時的 unread —— activeChat 是開的那一刻的快照，
+    // 重抓、同步、重連時早就過期了。沒有未讀還帶 markRead，daemon 就得多打一趟
+    // LINE、再排一次整份重抓，換來的是一個本來就是 0 的數字。清單裡找不到這一列
+    // （state 還沒讀到、剛從通知跳進來）就照呼叫端的意思送，由 daemon 那邊判斷。
+    var live = root.chatById(mid)
+    var wantRead = markRead !== false && (!live || Number(live.unread || 0) > 0)
     if (!request("history", { chat: mid, count: root.historyPage,
-                              markRead: markRead !== false }))
+                              markRead: wantRead }))
       root.loading = false
   }
 

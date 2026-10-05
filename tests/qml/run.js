@@ -8260,17 +8260,21 @@ ok(e.root.messages.length === 2, "the same event is not applied twice");
 // Marking read used to be a free ride on the refetch (history carries markRead).
 // With no refetch it has to be asked for, or the chat you are reading keeps its
 // badge and the other person never gets a 已讀.
-let marks = e.sent.filter((r) =>
-  r.cmd === "history" && r.markRead === true && r.count === 1
+let marks = e.sent.filter((r) => r.cmd === "markRead");
+ok(
+  marks.length === 1 && marks[0].chat === "C1" && marks[0].upTo === "m2",
+  "and one read receipt goes out for it, up to the message that arrived: " +
+    JSON.stringify(marks),
 );
 ok(
-  marks.length === 1 && marks[0].chat === "C1",
-  "and one read receipt goes out for it: " + JSON.stringify(marks),
+  marks.length === 1 && marks[0].count === undefined &&
+    marks[0].markRead === undefined,
+  "it is its own markRead command, not a one-message history page riding a " +
+    "markRead flag -- that page cost the daemon a read-range fetch and a revalidate",
 );
 ok(
-  e.sent.filter((r) => r.cmd === "history" && r.count !== 1).length === 0,
-  "which is one message wide, not a page -- the page is what U49 exists to avoid, " +
-    "and the page size is a setting now, so no literal here would stay true",
+  e.sent.filter((r) => r.cmd === "history").length === 0,
+  "and no history frame of any size goes out with it",
 );
 // A burst (an album, a long line LINE split up) is still one receipt.
 feedEvents(e, evState({
@@ -8279,10 +8283,15 @@ feedEvents(e, evState({
     EV(4, "message", "C1", { message: MSG("m4", "THEM", "d") }),
   ]),
 }));
+marks = e.sent.filter((r) => r.cmd === "markRead");
 ok(
-  e.sent.filter((r) => r.cmd === "history" && r.markRead === true).length === 2,
-  "a burst of events is one receipt, not one per message: " +
-    e.sent.filter((r) => r.cmd === "history" && r.markRead === true).length,
+  marks.length === 2,
+  "a burst of events is one receipt, not one per message: " + marks.length,
+);
+ok(
+  marks.length === 2 && marks[1].upTo === "m4",
+  "and that receipt names the newest message of the burst: " +
+    JSON.stringify(marks[1]),
 );
 // Our own echo is not something to mark read.
 feedEvents(e, evState({
@@ -8293,7 +8302,7 @@ feedEvents(e, evState({
   ]),
 }));
 ok(
-  e.sent.filter((r) => r.cmd === "history" && r.markRead === true).length === 2,
+  e.sent.filter((r) => r.cmd === "markRead").length === 2,
   "and our own message coming back from LINE is not a receipt at all",
 );
 ok(
@@ -8305,8 +8314,13 @@ ok(
 // while you read, and not the success quietly wiping the error you are reading.
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.notice = "只能收回自己傳的訊息";
-e.request("markRead", { chat: "C1", count: 1, markRead: true });
+e.request("markRead", { chat: "C1", upTo: "m8" });
 let receipt = e.sent.pop();
+ok(
+  receipt.cmd === "markRead" && receipt.chat === "C1" && receipt.upTo === "m8",
+  "a receipt goes out on the wire as markRead, not mapped onto history: " +
+    JSON.stringify(receipt),
+);
 e.onReply(
   JSON.stringify({ id: receipt.id, ok: false, error: "沒有這個聊天室的游標" }),
 );
@@ -8317,13 +8331,12 @@ ok(
 );
 ok(
   e.root.loading === false && e.root.loadingOlder === false,
-  "and touches none of the spinners either -- on the wire it is a `history` frame, " +
-    "but nothing is waiting for that page",
+  "and touches none of the spinners either -- nothing is waiting on a receipt",
 );
-e.request("markRead", { chat: "C1", count: 1, markRead: true });
+e.request("markRead", { chat: "C1", upTo: "m8" });
 receipt = e.sent.pop();
 e.onReply(
-  JSON.stringify({ id: receipt.id, ok: true, data: [MSG("m9", "THEM", "z")] }),
+  JSON.stringify({ id: receipt.id, ok: true, data: { marked: true } }),
 );
 ok(
   e.root.notice === "只能收回自己傳的訊息",
@@ -8331,8 +8344,7 @@ ok(
 );
 ok(
   e.root.messages.length === 0,
-  "nor does the page it brings back land in the conversation: what was wanted was " +
-    "the daemon's sendChatChecked, not those messages",
+  "nor does its reply touch the conversation",
 );
 // The ordinary failure banner is untouched by all of that.
 e = makeEnv({ activeChat: { mid: "C1" } });
@@ -8422,6 +8434,7 @@ const recoveryReadPolicies = [
 ];
 for (const policy of recoveryReadPolicies) {
   e = makeEnv({ activeChat: { mid: "C1" }, twoPane: policy.twoPane, view: policy.view });
+  e.root.chats = [{ mid: "C1", unread: 1, lastTime: 500 }];
   e.root.historyReloadChat = "C1";
   e.root.historyReloadAfterGeneration = 1;
   e.root.reconciliationEpoch++;
@@ -8436,6 +8449,7 @@ for (const policy of recoveryReadPolicies) {
 for (const policy of recoveryReadPolicies) {
   for (const cause of ["boot-change", "event-gap"]) {
     e = makeEnv({ activeChat: { mid: "C1" }, twoPane: policy.twoPane, view: policy.view });
+    e.root.chats = [{ mid: "C1", unread: 1, lastTime: 500 }];
     e.root.lastBootId = "boot-1";
     e.root.lastSeq = 1;
     e.root.eventsConsumed = true;
@@ -8455,6 +8469,94 @@ for (const policy of recoveryReadPolicies) {
     );
   }
 }
+// Permission to mark is not a reason to: with nothing unread on the live row,
+// even a path that may mark read sends a plain page, so the daemon does not go
+// to LINE (and queue a full list refetch) for a count that is already 0.
+for (const policy of recoveryReadPolicies) {
+  e = makeEnv({ activeChat: { mid: "C1" }, twoPane: policy.twoPane, view: policy.view });
+  e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
+  e.root.historyReloadChat = "C1";
+  e.root.historyReloadAfterGeneration = 1;
+  e.root.reconciliationEpoch++;
+  e.reconcileAfterConnect();
+  const quietPage = e.sent.filter((r) => r.cmd === "history").at(-1);
+  ok(
+    !!quietPage && quietPage.markRead === false,
+    "reconnect with nothing unread asks for no receipt in an " + policy.label +
+      ": " + JSON.stringify(quietPage),
+  );
+}
+
+group("(t2b) opening a chat marks it read only when something is unread");
+e = makeEnv({ view: "list", activeChat: null });
+e.root.chats = [{ mid: "C0", unread: 0, lastTime: 500 }];
+e.openChat({ mid: "C0", unread: 0 });
+let openPage = e.sent.filter((f) => f.cmd === "history").at(-1);
+ok(
+  !!openPage && openPage.markRead === false,
+  "opening a chat with unread 0 sends no markRead: " + JSON.stringify(openPage),
+);
+ok(
+  e.sent.filter((f) => f.cmd === "markRead").length === 0,
+  "and no standalone receipt either",
+);
+e = makeEnv({ view: "list", activeChat: null });
+e.root.chats = [{ mid: "C3", unread: 3, lastTime: 500 }];
+e.openChat({ mid: "C3", unread: 3 });
+openPage = e.sent.filter((f) => f.cmd === "history").at(-1);
+ok(
+  !!openPage && openPage.markRead === true,
+  "opening a chat with unread > 0 still marks it read: " + JSON.stringify(openPage),
+);
+// The decision reads the live row, not the snapshot activeChat took at open.
+e = makeEnv({ activeChat: { mid: "C3", unread: 3 } });
+e.root.chats = [{ mid: "C3", unread: 0, lastTime: 500 }];
+e.root.loadHistory("C3");
+openPage = e.sent.filter((f) => f.cmd === "history").at(-1);
+ok(
+  !!openPage && openPage.markRead === false,
+  "a later refetch (sync) reads unread from the live row, not the stale open " +
+    "snapshot: " + JSON.stringify(openPage),
+);
+e = makeEnv({ activeChat: { mid: "C3", unread: 0 } });
+e.root.chats = [{ mid: "C3", unread: 2, lastTime: 900 }];
+e.root.loadHistory("C3", true);
+ok(
+  e.sent.filter((f) => f.cmd === "history").at(-1).markRead === true,
+  "and the other way: new unread on the live row is marked even though the open " +
+    "snapshot said 0",
+);
+e = makeEnv({ activeChat: { mid: "C3" } });
+e.root.chats = [{ mid: "C3", unread: 2, lastTime: 900 }];
+e.root.loadHistory("C3", false);
+ok(
+  e.sent.filter((f) => f.cmd === "history").at(-1).markRead === false,
+  "an explicit false still never marks, unread or not",
+);
+e = makeEnv({ activeChat: { mid: "C8" } });
+e.root.chats = [];
+e.root.loadHistory("C8");
+ok(
+  e.sent.filter((f) => f.cmd === "history").at(-1).markRead === true,
+  "a chat not in the list yet (state not read, notification jump) keeps the " +
+    "caller's intent -- unknown is not the same as nothing unread",
+);
+
+group("(t2c) a receipt names the newest incoming message, never an older backfill");
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.messages = e.withDay([MSG("m1", "THEM", "a", { time: NOW48 - 5000 })]);
+e.applyEvents([
+  EV(1, "message", "C1", { message: MSG("m5", "THEM", "new", { time: NOW48 }) }),
+  EV(2, "message", "C1", { message: MSG("m0", "THEM", "old", { time: NOW48 - 9000 }) }),
+  EV(3, "message", "C1", { message: MSG("m6", "ME", "mine", { time: NOW48 + 10 }) }),
+]);
+marks = e.sent.filter((r) => r.cmd === "markRead");
+ok(
+  marks.length === 1 && marks[0].upTo === "m5",
+  "one receipt, up to the newest message from the other side: " +
+    JSON.stringify(marks),
+);
+
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
 e.root.lastBootId = "boot-1";
@@ -9086,8 +9188,9 @@ ok(e.root.messages[1].text === "b-edited" && e.root.messages[1].edited === true,
    "the edit replaced it in place afterwards");
 ok(e.root.messages[0].readBy === undefined,
    "and the read that arrived before the unsend is wiped by it, not left dangling");
-ok(e.sent.filter(r => r.markRead === true).length === 1,
-   "one receipt for the batch, whatever else was in it");
+ok(e.sent.filter(r => r.cmd === "markRead").length === 1
+     && e.sent.filter(r => r.cmd === "markRead")[0].upTo === "m2",
+   "one receipt for the batch, whatever else was in it, up to the new message");
 ok(e.root.messages.every(m => typeof m.day === "string"),
    "every appended message carries the section key, or its date separator goes missing");
 e = makeEnv({ activeChat: { mid: "C1" } });
