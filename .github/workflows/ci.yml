@@ -6,7 +6,7 @@ on:
 
 jobs:
   checks:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: x64-ci
     container: ubuntu:24.04
     steps:
       - name: Install check dependencies
