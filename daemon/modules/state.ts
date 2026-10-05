@@ -17,6 +17,7 @@
  */
 import { RefreshHealthState } from "../refreshcontrol.ts";
 import { createChatSummaryStore } from "../chatsummary.ts";
+import { writeAtomic } from "../atomicfile.ts";
 import { CHAT_LIMIT } from "./env.ts";
 import {
   BOOT_ID,
@@ -108,9 +109,7 @@ function writeEventsFile(): void {
   eventsWriting = eventsWriting.then(async () => {
     // A queued write must not resurrect a ring clearEvents already emptied.
     if (epoch !== stateEpoch || epoch < stateInvalidationTarget) return;
-    const tmp = `${EVENTS_PATH}.tmp`;
-    await Deno.writeTextFile(tmp, snapshot);
-    await Deno.rename(tmp, EVENTS_PATH);
+    await writeAtomic(EVENTS_PATH, snapshot);
   }).catch((e) => console.error("[state] events write failed:", e));
 }
 

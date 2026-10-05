@@ -11,6 +11,7 @@
  * notify.ts read avatarNow/avatarTokens from here; avatars.ts never reaches
  * back up.
  */
+import { writeAtomic } from "../atomicfile.ts";
 import { capMap, limiter, midKind, sweepMedia } from "./caches.ts";
 import { AVATAR_DIR, AVATAR_INDEX_PATH } from "./env.ts";
 import {
@@ -353,7 +354,9 @@ async function downloadAvatar(
       // a chunked response and is only ever a claim about what follows.
       const bytes = await readCapped(res, AVATAR_MAX_FILE_BYTES);
       if (!bytes) continue;
-      await Deno.writeFile(path, bytes);
+      // Atomic: the panel's Image may load this path the moment it exists,
+      // and a half-written picture would sit in its cache as a broken one.
+      await writeAtomic(path, bytes);
       if (c.shape && avatarShape.get(kind) !== c.shape) {
         avatarShape.set(kind, c.shape);
         avatarIndexDirty = true;
@@ -385,20 +388,7 @@ async function saveAvatarIndex(): Promise<void> {
     pics: Object.fromEntries(avatarIndex),
   });
   try {
-    const tmp = `${AVATAR_INDEX_PATH}.${Deno.pid}.tmp`;
-    const handle = await Deno.open(tmp, {
-      write: true,
-      create: true,
-      truncate: true,
-      mode: 0o600,
-    });
-    try {
-      await handle.write(new TextEncoder().encode(blob));
-      await handle.sync(); // same rule as state.json: bytes, then the name
-    } finally {
-      handle.close();
-    }
-    await Deno.rename(tmp, AVATAR_INDEX_PATH);
+    await writeAtomic(AVATAR_INDEX_PATH, blob);
   } catch (e) {
     // Losing the index costs one round of refetching, never a message. The
     // text goes through errorLine like every other log: a Deno write error

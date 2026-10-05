@@ -278,6 +278,9 @@ Deno.test("a gate of one is a queue, and the work still runs in order", async ()
 // downloadAvatar reaches for the two constants, the remembered-shape map and
 // the index flag; everything else it uses is in the avatar block with it.
 const FETCH_PRELUDE = `
+import { writeAtomic } from ${
+  JSON.stringify(new URL("./atomicfile.ts", import.meta.url).href)
+};
 const AVATAR_DIR = "/nonexistent/enil-avatars";
 const AVATAR_TIMEOUT_MS = 5_000;
 const AVATAR_MAX_FILE_BYTES = 4_096;
