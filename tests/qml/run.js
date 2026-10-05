@@ -8413,27 +8413,29 @@ ok(
   "the new boot's seq 1 from the ring and seq 2 from the push both land: " +
     e.root.messages.map((m) => m.id).join(),
 );
-// The reconnect catch-up follows the reopen rule for read receipts: in a
-// two-column placement the right pane's chat only came back with the panel, so
-// refetching it must not mark it read. A single-pane chat view is being read.
-for (const twoPane of [true, false]) {
-  e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: twoPane ? "list" : "chat" });
+// A retained two-pane chat does not become read just because the panel reopens.
+// An explicitly opened chat still sends receipts when missed messages recover.
+const recoveryReadPolicies = [
+  { twoPane: true, view: "list", markRead: false, label: "retained two-pane chat" },
+  { twoPane: true, view: "chat", markRead: true, label: "opened two-pane chat" },
+  { twoPane: false, view: "chat", markRead: true, label: "opened single-pane chat" },
+];
+for (const policy of recoveryReadPolicies) {
+  e = makeEnv({ activeChat: { mid: "C1" }, twoPane: policy.twoPane, view: policy.view });
   e.root.historyReloadChat = "C1";
   e.root.historyReloadAfterGeneration = 1;
   e.root.reconciliationEpoch++;
   e.reconcileAfterConnect();
   const reconcilePage = e.sent.filter((r) => r.cmd === "history").at(-1);
   ok(
-    !!reconcilePage && reconcilePage.markRead === !twoPane,
-    (twoPane
-      ? "two-column reconnect refetch does not mark the right pane read"
-      : "single-pane reconnect refetch still marks the open chat read") +
+    !!reconcilePage && reconcilePage.markRead === policy.markRead,
+    "reconnect preserves the read policy for an " + policy.label +
       ": " + JSON.stringify(reconcilePage),
   );
 }
-for (const twoPane of [true, false]) {
+for (const policy of recoveryReadPolicies) {
   for (const cause of ["boot-change", "event-gap"]) {
-    e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: twoPane ? "list" : "chat" });
+    e = makeEnv({ activeChat: { mid: "C1" }, twoPane: policy.twoPane, view: policy.view });
     e.root.lastBootId = "boot-1";
     e.root.lastSeq = 1;
     e.root.eventsConsumed = true;
@@ -8447,9 +8449,9 @@ for (const twoPane of [true, false]) {
     }
     const history = e.sent.filter((r) => r.cmd === "history").at(-1);
     ok(
-      !!history && history.markRead === !twoPane,
-      cause + " recovery preserves the " + (twoPane ? "two-pane" : "single-pane") +
-        " read policy: " + JSON.stringify(history),
+      !!history && history.markRead === policy.markRead,
+      cause + " recovery preserves the read policy for an " + policy.label +
+        ": " + JSON.stringify(history),
     );
   }
 }

@@ -634,7 +634,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (!root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid, !root.twoPane)
+          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
         }
       }
     }
@@ -838,7 +838,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (root.sockConnected && !root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid, !root.twoPane)
+          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
         }
       }
     }
@@ -2215,9 +2215,9 @@ Panel {
     if (root.loading) return true
     if (root.reconciliationAttemptedEpoch === root.reconciliationEpoch) return true
     root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-    // 跟重開面板那一趟同一條規矩：twoPane 右欄留著的對話只是跟著面板被打開、
-    // 線剛好接上，使用者沒點開它，補抓不能順便標已讀。單欄停在聊天室裡就是人在看。
-    root.loadHistory(root.activeChat.mid, !root.twoPane)
+    // twoPane 右欄跟著面板重開、view 還在 list 時不能順便標已讀；
+    // 使用者已點開對話、view 是 chat 時，斷線補抓也要送已讀。
+    root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
     return true
   }
 
