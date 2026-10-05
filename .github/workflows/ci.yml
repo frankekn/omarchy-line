@@ -6,32 +6,42 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
+    container: ubuntu:24.04
     steps:
+      - name: Install check dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl git unzip python3 util-linux qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
+          useradd --create-home ci
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: denoland/setup-deno@v2
       - name: daemon checks
         working-directory: daemon
+        # Permission-failure tests need a normal user; container root ignores chmod.
         run: |
-          deno task check
-          deno task no-any
-          deno task lint
-          deno task fmt
-          deno task test
+          runuser -u ci -- sh -c '
+            set -e
+            deno task check
+            deno task no-any
+            deno task lint
+            deno task fmt
+            deno task test
+          '
       - name: qml harness
         run: node tests/qml/run.js
       - name: qml key tests
         # qmltestrunner ships in /usr/lib/qt6/bin, which is not on PATH; the
         # runner script probes for it by name, so extend PATH for the call.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
-          PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
+        run: PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
       - name: stub tests
         working-directory: daemon
-        run: python3 stub_test.py
+        run: runuser -u ci -- python3 stub_test.py
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
