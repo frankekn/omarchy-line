@@ -20,10 +20,10 @@ interface StatePersistModule {
   setNow(value: number): void;
 }
 
-async function mod(): Promise<StatePersistModule> {
+async function mod(path?: string): Promise<StatePersistModule> {
   const prelude = `
 type Json = Record<string, unknown>;
-const STATE_PATH = "/state.json";
+const STATE_PATH = ${JSON.stringify(path ?? "/state.json")};
 const BOOT_ID = "boot";
 let me: Json = { mid: "old" };
 let login: Json = { status: "ok" };
@@ -78,12 +78,12 @@ let first = true;
 export const writes: string[] = [];
 export let renames = 0;
 export let removes = 0;
-const Deno = {
+const fakeDeno = {
   open(_path: string, _opts?: unknown) {
     return Promise.resolve({
       write(bytes: Uint8Array) {
         writes.push(new TextDecoder().decode(bytes));
-        return Promise.resolve();
+        return Promise.resolve(bytes.byteLength);
       },
       sync() {
         return Promise.resolve();
@@ -100,6 +100,7 @@ const Deno = {
   },
   remove() { removes++; return Promise.resolve(); },
 };
+const Deno = ${path ? "globalThis.Deno" : "fakeDeno"};
 export function release() { unblock(); }
 export function addEvent(seq: number, kind?: string) { events.push({ seq, kind }); }
 export function renameChat(name: string) { chats = [{ mid: "old-chat", name }]; }
@@ -117,6 +118,47 @@ export {
 };
 `;
   return await loadBlock<StatePersistModule>("statepersist", prelude);
+}
+
+for (const failure of ["none", "error", "zero"] as const) {
+  Deno.test(`state short writes with ${failure} publish only complete snapshots`, async () => {
+    const dir = await Deno.makeTempDir({ prefix: "enil-state-short-write-" });
+    const path = `${dir}/state.json`;
+    const write = Deno.FsFile.prototype.write;
+    try {
+      const m = await mod(path);
+      await m.writeState();
+      const before = await Deno.readTextFile(path);
+      m.renameChat("測試🔑");
+      let calls = 0;
+      Deno.FsFile.prototype.write = function (bytes: Uint8Array) {
+        if (calls++ > 0 && failure !== "none") {
+          return failure === "zero"
+            ? Promise.resolve(0)
+            : Promise.reject(new Error("disk full"));
+        }
+        return write.call(this, bytes.subarray(0, 3));
+      };
+      await m.writeState();
+      Deno.FsFile.prototype.write = write;
+      const saved = await Deno.readTextFile(path);
+      if (failure === "none") {
+        assertEquals(JSON.parse(saved).chats[0].name, "測試🔑");
+        assertEquals(m.sizeSamples.length, 2);
+      } else {
+        assertEquals(saved, before);
+        assertEquals(m.sizeSamples.length, 1);
+        await m.writeState();
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(path)).chats[0].name,
+          "測試🔑",
+        );
+      }
+    } finally {
+      Deno.FsFile.prototype.write = write;
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
 }
 
 Deno.test("queued snapshots from an ended session are skipped", async () => {

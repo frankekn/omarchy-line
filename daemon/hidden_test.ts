@@ -80,6 +80,43 @@ Deno.test("what was hidden is still hidden after a restart", async () => {
   });
 });
 
+for (const failure of ["none", "error", "zero"] as const) {
+  Deno.test(`hidden preferences survive short writes with ${failure}`, async () => {
+    await inTempDir(async (path) => {
+      const m = await mod();
+      m.setHidden("old", true);
+      await m.saveHidden(path);
+      const before = await Deno.readTextFile(path);
+      m.setHidden("新🔑", true);
+      const write = Deno.FsFile.prototype.write;
+      let calls = 0;
+      Deno.FsFile.prototype.write = function (bytes: Uint8Array) {
+        if (calls++ > 0 && failure !== "none") {
+          return failure === "zero"
+            ? Promise.resolve(0)
+            : Promise.reject(new Error("disk full"));
+        }
+        return write.call(this, bytes.subarray(0, 3));
+      };
+      try {
+        await m.saveHidden(path);
+      } finally {
+        Deno.FsFile.prototype.write = write;
+      }
+      const saved = await Deno.readTextFile(path);
+      if (failure === "none") {
+        assertEquals(JSON.parse(saved), { mids: ["old", "新🔑"] });
+      } else {
+        assertEquals(saved, before);
+        await m.saveHidden(path);
+        assertEquals(JSON.parse(await Deno.readTextFile(path)), {
+          mids: ["old", "新🔑"],
+        });
+      }
+    });
+  });
+}
+
 Deno.test("unhiding takes the mid out of the file, not just the set", async () => {
   await inTempDir(async (path) => {
     const m = await mod();
