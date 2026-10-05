@@ -634,7 +634,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (!root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid)
+          root.loadHistory(root.activeChat.mid, !root.twoPane)
         }
       }
     }
@@ -838,7 +838,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (root.sockConnected && !root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid)
+          root.loadHistory(root.activeChat.mid, !root.twoPane)
         }
       }
     }

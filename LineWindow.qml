@@ -52,8 +52,16 @@ FloatingWindow {
   }
 
   // 隱藏時 width/height 還是會被 implicitWidth 的重算碰到，那不是使用者調的。
-  onWidthChanged: if (visible) sizeSettleTimer.restart()
-  onHeightChanged: if (visible) sizeSettleTimer.restart()
+  onWidthChanged: {
+    if (!visible) return
+    floatCheckTimer.stop()
+    sizeSettleTimer.restart()
+  }
+  onHeightChanged: {
+    if (!visible) return
+    floatCheckTimer.stop()
+    sizeSettleTimer.restart()
+  }
 
   // 拉邊框和 Hyprland 重排在這裡長得一模一樣：都只是 width/height 變了，
   // 合成器不會說是誰動的。平鋪的視窗大小是版面決定的（開一個視窗、換一個

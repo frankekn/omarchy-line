@@ -4369,10 +4369,33 @@ ok(
     " hide does not bounce back",
 );
 ok(
-  /onWidthChanged: if \(visible\) sizeSettleTimer\.restart\(\)/.test(winSrc) &&
-    /onHeightChanged: if \(visible\) sizeSettleTimer\.restart\(\)/.test(winSrc),
-  "size is only tracked while the window is actually on screen",
+  /onWidthChanged:/.test(winSrc) && /onHeightChanged:/.test(winSrc),
+  "both dimension changes track the window size",
 );
+for (const dimension of ["Width", "Height"]) {
+  const marker = "  on" + dimension + "Changed:";
+  const start = winSrc.indexOf(marker);
+  const rest = winSrc.slice(start + marker.length);
+  const handler = rest.trimStart().startsWith("{")
+    ? rest.slice(rest.indexOf("{") + 1, rest.indexOf("\n  }"))
+    : rest.slice(0, rest.indexOf("\n"));
+  const changed = new Function("visible", "floatCheckTimer", "sizeSettleTimer", handler);
+  let checkAt = 300;
+  let settleAt = null;
+  let now = 100;
+  const floatCheck = { stop() { checkAt = null; } };
+  const settleTimer = { restart() { settleAt = now + 800; } };
+  changed(true, floatCheck, settleTimer);
+  now = 300;
+  ok(
+    checkAt === null && settleAt === 900,
+    dimension + " resizing resumes: the old float check cannot save at 300ms " +
+      "and the next settle waits until 900ms",
+  );
+  settleAt = null;
+  changed(false, floatCheck, settleTimer);
+  ok(settleAt === null, dimension + " changes while hidden do not start a size save");
+}
 ok(
   /interval: 800/.test(winSrc) && /id: sizeSettleTimer/.test(winSrc),
   "and only after it settles for 800ms, so dragging a border is not a save loop",
@@ -8117,6 +8140,28 @@ for (const twoPane of [true, false]) {
       : "single-pane reconnect refetch still marks the open chat read") +
       ": " + JSON.stringify(reconcilePage),
   );
+}
+for (const twoPane of [true, false]) {
+  for (const cause of ["boot-change", "event-gap"]) {
+    e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: twoPane ? "list" : "chat" });
+    e.root.lastBootId = "boot-1";
+    e.root.lastSeq = 1;
+    e.root.eventsConsumed = true;
+    e.root.eventsLive = true;
+    if (cause === "boot-change") {
+      e.parseState(evState({ bootId: "boot-2", events: undefined }));
+    } else {
+      e.parseEventsText(evState({
+        events: [EV(3, "message", "C1", { message: MSG("gap3", "THEM", "missed") })],
+      }));
+    }
+    const history = e.sent.filter((r) => r.cmd === "history").at(-1);
+    ok(
+      !!history && history.markRead === !twoPane,
+      cause + " recovery preserves the " + (twoPane ? "two-pane" : "single-pane") +
+        " read policy: " + JSON.stringify(history),
+    );
+  }
 }
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
