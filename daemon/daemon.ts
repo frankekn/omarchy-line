@@ -57,6 +57,9 @@ async function main() {
   // it as transient so a panel holding unresolved sends does not mistake a
   // daemon restart for an explicit logout.
   setLoginState({ status: "starting", attempt: "resume" });
+  // The state dir holds the session token: create it private rather than
+  // leaving it 0755 until the chmod below catches up.
+  await Deno.mkdir(STATE_DIR, { recursive: true, mode: 0o700 });
   await Deno.mkdir(AVATAR_DIR, { recursive: true }); // and MEDIA_DIR with it
   // Before anything else touches the state dir: a second daemon must not
   // resume the stored session, rewrite state.json or take over the socket.
