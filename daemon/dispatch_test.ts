@@ -1652,6 +1652,32 @@ Deno.test("a push that cannot be written closes the connection", async () => {
   await serving;
 });
 
+Deno.test("a push to a peer that stopped reading times out and closes", async () => {
+  let push: ((line: string) => void) | undefined;
+  let closedReported = false;
+  const config = {
+    ...options(() => Promise.resolve({ ok: true })),
+    writeTimeoutMs: 20,
+    attachPusher(send: (line: string) => void) {
+      push = send;
+    },
+    onClosed() {
+      closedReported = true;
+    },
+  };
+  // A write that never completes: the socket buffer of a peer that is
+  // connected but no longer reading.
+  const conn = controlledConnection([], undefined, new Promise<void>(() => {}));
+  const serving = servePanelConnection(conn, config).catch(() => {});
+  push?.('{"event":{"seq":1,"kind":"message","chat":"c1"},"boot":"b1"}');
+  await waitFor(
+    () => closedReported && conn.isClosed(),
+    "a stalled push held the connection open",
+  );
+  conn.finish();
+  await serving;
+});
+
 Deno.test("chat row pushes ride the same sink the events do", async () => {
   // The single-row call sites are the wiring; a source pin is the only honest
   // check here, the same way the logout ordering above is pinned.

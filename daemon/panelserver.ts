@@ -198,12 +198,14 @@ export async function servePanelConnection(
   // Unsolicited pushes (live events) ride the same `writing` chain as
   // replies: the chain is what guarantees a line lands whole. A failed push
   // takes the connection down exactly like a failed reply -- a torn JSON
-  // line is unrecoverable either way.
+  // line is unrecoverable either way. They go through writeReply for its
+  // timeout: a peer that stops reading would otherwise park the chain on one
+  // push forever, with every later push and reply queued behind it.
   options.attachPusher?.((line: string) => {
     if (closed || connection.signal.aborted) return;
     writing = writing.then(async () => {
       if (!closed && !connection.signal.aborted) {
-        await writeAll(conn, REPLY_ENCODER.encode(line + "\n"));
+        await writeReply(REPLY_ENCODER.encode(line + "\n"));
       }
     }).catch(() => {
       connection.abort();
