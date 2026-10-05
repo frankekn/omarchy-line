@@ -17,14 +17,14 @@ const PANEL = path.join(REPO, "Panel.qml");
 const src = fs.readFileSync(PANEL, "utf8");
 // EventLog.js is a real .pragma library the panel imports; the harness loads the
 // real file so the sliced delegates exercise the same code that ships.
+// Every top-level function is exported, the way the .pragma library exposes
+// them to Panel.qml -- a helper the panel starts calling needs no edit here.
+const eventLogSrc = fs.readFileSync(path.join(REPO, "EventLog.js"), "utf8");
 const EventLog = new Function(
-  fs.readFileSync(path.join(REPO, "EventLog.js"), "utf8")
-    .replace(/^\.pragma library\s*/, "") +
-    "; return { eventsSince, withFields, mergeMessage, applyEdit, applyHistory," +
-    " applyRead, applyReaction, applyUnsend, readText, reactionEmoji, myReaction," +
-    " isSystemEvent, systemEventText, canActOn, oneLine, quoteText," +
-    " withDay, dayStart, dayLabel, firstUnreadIndex, mergeFailedMessages," +
-    " recordFailure, showAvatarAt };",
+  eventLogSrc.replace(/^\.pragma library\s*/, "") +
+    "; return { " +
+    [...eventLogSrc.matchAll(/^function (\w+)\(/gm)].map((m) => m[1]).join(", ") +
+    " };",
 )();
 // Strings.js is the same file the panel imports; zh is the historical wire
 // language, so binding tr/trErr to "zh" keeps every old assertion verbatim-true.
@@ -251,6 +251,7 @@ const B = {
   // properties, so it is driven under `with (msgList)` -- the way QML resolves
   // them -- rather than by rewriting the sliced source.
   onContentYChanged: nested("          onContentYChanged: {", "          }"),
+  onModelChanged: nested("          onModelChanged: {", "          }"),
   // U42: the message body is markup now, so the escaping, the link wrapping and
   // the two ways out of a bubble (xdg-open, wl-copy) are all root-level.
   bodyText: body("  function bodyText(m) {"),
@@ -1761,6 +1762,10 @@ function makeEnv(opts) {
     ...ARGS,
     "with (msgList) {" + B.onContentYChanged + "}",
   );
+  const fModelChanged = new Function(
+    ...ARGS,
+    "with (msgList) {" + B.onModelChanged + "}",
+  );
   const api = {
     root,
     sock,
@@ -2031,6 +2036,7 @@ function makeEnv(opts) {
     },
     submitDisplayed: () => q(fSubmit),
     contentYChanged: () => q(fContentY),
+    modelChanged: () => q(fModelChanged),
     open: () => q(fOpened, true),
     close: () => q(fOpened, false),
   };
@@ -12848,6 +12854,129 @@ e.onReply(
 ok(
   e.root.noMoreOlder === false && e.root.messages.length === 2,
   "a page that brought something new leaves paging switched on",
+);
+
+group("(y6b) opening a chat moves the list once, and never pages back on its own");
+// Stands in for the ListView the way Qt 6.11 was measured to behave: a model
+// reset zeroes contentY before modelChanged, and positionViewAtEnd() right
+// after a reset passes through positions near the top (74px was logged)
+// before it lands on the end.
+function swapView(e) {
+  let shown = e.root.messages;
+  let y = 0;
+  const v = { swaps: 0 };
+  Object.defineProperty(e.msgList, "contentY", {
+    configurable: true,
+    get: () => y,
+    set: (n) => {
+      if (n === y) return;
+      y = n;
+      e.contentYChanged();
+    },
+  });
+  Object.defineProperty(e.msgList, "count", { get: () => shown.length });
+  e.msgList.positionViewAtEnd = () => {
+    e.msgList.contentY = 74;
+    e.msgList.contentY = e.msgList.originY + e.msgList.contentHeight - e.msgList.height;
+  };
+  e.msgList.toBottom = () => e.msgList.positionViewAtEnd();
+  Object.defineProperty(e.root, "messages", {
+    configurable: true,
+    get: () => shown,
+    set: (list) => {
+      shown = list;
+      v.swaps++;
+      e.msgList.contentY = 0;
+      e.modelChanged();
+    },
+  });
+  e.msgList.originY = 0;
+  e.msgList.contentHeight = 2000;
+  e.msgList.height = 400;
+  return v;
+}
+const pagedRows = (withPath) =>
+  ["p1", "p2", "p3"].map((id) =>
+    Object.assign(
+      { id, chat: "C1", from: "THEM", time: NOW48, contentType: "IMAGE",
+        hasMedia: true, mediaState: "ok" },
+      withPath ? { mediaPath: "/cache/" + id + "-preview" } : {},
+    ));
+const lastHistory = (e) => e.sent.filter((f) => f.cmd === "history" && f.before === undefined).pop();
+
+e = makeEnv({ view: "list", activeChat: null });
+e.root.chats = [{ mid: "C1", unread: 0 }];
+e.root.historyCache = { C1: { at: 1, messages: e.withDay(pagedRows(true)) } };
+let view6b = swapView(e);
+e.openChat({ mid: "C1", unread: 0 });
+ok(
+  e.sent.filter(olderFrame).length === 0,
+  "pasting the cached copy pages nothing back: " +
+    e.sent.filter(olderFrame).length + " older frames",
+);
+e.root.loadedAt = 0;
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: pagedRows(false) }));
+ok(
+  view6b.swaps === 1,
+  "a history page with the rows already shown leaves the list alone: " +
+    view6b.swaps + " swaps",
+);
+ok(
+  e.root.messages.every((m) => m.mediaPath === "/cache/" + m.id + "-preview"),
+  "and the thumbnails already on screen keep their paths: " +
+    JSON.stringify(e.root.messages.map((m) => m.mediaPath || null)),
+);
+ok(
+  e.root.loading === false && e.root.loadedAt > 0 &&
+    e.root.historyCache.C1.at > 1,
+  "while the reply is still booked: spinner off, loadedAt and the cache refreshed",
+);
+
+e.root.loadHistory("C1");
+const swapsBeforeGrown = view6b.swaps;
+const grown = pagedRows(false).concat([
+  { id: "p4", chat: "C1", from: "THEM", time: NOW48, text: "new" },
+]);
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: grown }));
+ok(
+  view6b.swaps - swapsBeforeGrown === 1 &&
+    e.root.messages.map((m) => m.id).join() === "p1,p2,p3,p4",
+  "a page that differs replaces the list exactly once: " +
+    (view6b.swaps - swapsBeforeGrown) + " swaps, " +
+    e.root.messages.map((m) => m.id).join(),
+);
+ok(
+  e.root.messages.slice(0, 3).every((m) => m.mediaPath === "/cache/" + m.id + "-preview"),
+  "and still carries the shown thumbnails over to the rows it keeps",
+);
+const expired = pagedRows(false).concat([grown[3]]);
+expired[0] = Object.assign({}, expired[0], { mediaState: "expired" });
+e.root.loadHistory("C1");
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: expired }));
+ok(
+  e.root.messages[0].mediaPath === undefined,
+  "a row that can no longer be opened does not inherit the old thumbnail",
+);
+
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.messages = e.withDay(pagedRows(true));
+view6b = swapView(e);
+e.msgList.contentY = 1600;
+const swapsBefore = view6b.swaps;
+e.setMessages(e.withDay(pagedRows(true).concat([{ id: "p9", time: NOW48 }])));
+ok(
+  view6b.swaps === swapsBefore + 1 && e.sent.filter(olderFrame).length === 0,
+  "a swap while nothing is loading does not read its own repositioning as a " +
+    "scroll to the top: " + e.sent.filter(olderFrame).length + " older frames",
+);
+ok(
+  e.root.keepContentY === -1,
+  "and the swap still lets go of the guard once the view is placed",
+);
+e.msgList.contentY = 100;
+ok(
+  e.sent.filter(olderFrame).length === 1,
+  "so the reader scrolling up afterwards still pages back",
 );
 
 group("(y7) reopening or refetching a chat arms the paging again");
