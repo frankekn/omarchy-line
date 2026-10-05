@@ -245,6 +245,7 @@ const B = {
     "  function anchoredContentY(afterY, originY, keep, contentHeight, height) {",
   ),
   loadHistory: body("  function loadHistory(mid, markRead) {"),
+  armOnlineDeadline: body("  function armOnlineDeadline() {"),
   // The prefetch trigger itself, sliced against its own closing brace like
   // submit(). contentY/originY/contentHeight/height are the ListView's own
   // properties, so it is driven under `with (msgList)` -- the way QML resolves
@@ -8556,6 +8557,65 @@ ok(
   "one receipt, up to the newest message from the other side: " +
     JSON.stringify(marks),
 );
+
+group("(t2d) a closed panel does no idle work");
+ok(
+  /id: eventsView\n\s*path: root\.stateDir \+ "\/events\.json"\n\s*watchChanges: root\.opened && !root\.sockConnected$/m
+    .test(src),
+  "events.json is watched only while the panel is open and the socket is down",
+);
+ok(
+  /id: clockTimer\n\s*interval: 30000\n\s*running: root\.opened$/m.test(src),
+  "the 30s clock that re-renders every row's age runs only while open",
+);
+ok(
+  /^  onStateChanged: root\.armOnlineDeadline\(\)$/m.test(src),
+  "every state.json rewrite re-aims the offline deadline",
+);
+e = makeEnv({ twoPane: false, activeChat: null, view: "list" });
+e.root.nowMs = 1;
+e.open();
+ok(
+  e.root.nowMs > 1,
+  "opening the panel refreshes the stopped clock before anything renders: " +
+    e.root.nowMs,
+);
+{
+  // The bar icon is visible while closed and goes offline off nowMs; with the
+  // clock stopped, only this one-shot deadline can move nowMs past updatedAt.
+  const timer = {
+    interval: 0,
+    restarts: 0,
+    stops: 0,
+    restart() { this.restarts++; },
+    stop() { this.stops++; },
+  };
+  const arm = new Function("root", "onlineDeadline", "Date", B.armOnlineDeadline);
+  const FakeDate = { now: () => 1000000 };
+  arm({ state: { updatedAt: 1000000 } }, timer, FakeDate);
+  ok(
+    timer.restarts === 1 && timer.interval === 181000,
+    "a fresh state arms the deadline at updatedAt + 180s (+1s past the edge): " +
+      timer.interval,
+  );
+  arm({ state: { updatedAt: 1000000 - 500000 } }, timer, FakeDate);
+  ok(
+    timer.restarts === 2 && timer.interval === 1000,
+    "an already-stale state fires almost at once, so the icon goes offline: " +
+      timer.interval,
+  );
+  arm({ state: null }, timer, FakeDate);
+  ok(
+    timer.stops === 1 && timer.restarts === 2,
+    "no state, no deadline -- online is already false without one",
+  );
+  // What the deadline does when it fires is just a clock tick.
+  ok(
+    /id: onlineDeadline\n\s*repeat: false\n\s*onTriggered: root\.nowMs = Date\.now\(\)$/m
+      .test(src),
+    "and when it fires it moves nowMs, which flips online for the bar icon",
+  );
+}
 
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });

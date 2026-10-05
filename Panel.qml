@@ -532,10 +532,17 @@ Panel {
   // only pay a giant JSON re-parse per message for data already applied.
   // Disconnected is exactly when the file matters: the ring is the catch-up
   // layer for what push could not deliver.
+  // 面板關著時也不監看：socket 跟著 opened 才存在，關著的期間讀進來的事件一則都
+  // 不會套用（consumeEventsFile 要 sockConnected 才動對話），唯一的效果是把
+  // watermark 往前推 —— 卻要每個螢幕各 parse 一次幾百 KB。重開時線一接上，
+  // onConnectionStateChanged 的 eventsView.reload() 會從舊的 watermark 補讀：
+  // 關著期間的事件 mergeMessage 照 id 去重，套在剛抓回來的歷史上不會多出東西；
+  // ring 轉過頭（中間有缺口）eventsSince 會回 reload，整頁重抓。bar 圖示的未讀數
+  // 和離線燈看的是 state.json，不靠這個檔。
   FileView {
     id: eventsView
     path: root.stateDir + "/events.json"
-    watchChanges: !root.sockConnected
+    watchChanges: root.opened && !root.sockConnected
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.parseEventsText(text())
@@ -4219,6 +4226,8 @@ Panel {
   onOpenedChanged: {
     if (!opened) backToList()
     else {
+      // 時鐘關著時是停的，先對一次，「幾分鐘前」才不會停在上次關起來的那一刻。
+      root.nowMs = Date.now()
       listFlick.contentY = 0
       searchField.text = ""
       if (root.activeChat && root.restoreDraft) root.restoreDraft(root.activeChat.mid)
@@ -4964,11 +4973,37 @@ Panel {
     }
   }
 
+  // 時鐘只在面板開著時走：nowMs 一變，清單每一列的「幾分鐘前」、日期分隔線都要重算，
+  // 關著的時候沒人看，每個螢幕各算一份更是白做。打開那一刻先對一次（onOpenedChanged），
+  // 不然第一眼看到的是關起來那時的時間。
   Timer {
+    id: clockTimer
     interval: 30000
-    running: true
+    running: root.opened
     repeat: true
     onTriggered: root.nowMs = Date.now()
+  }
+
+  // 但 bar 圖示關著也看得到，它的離線燈（online）是拿 nowMs 比 state.updatedAt。
+  // 時鐘停了 nowMs 就凍住，daemon 死掉之後 updatedAt 不再前進，差值永遠不會超過
+  // 180 秒，燈就一直亮著「在線」。所以另外排一個單發的鬧鐘：每次 state 換新就把它
+  // 對準「這一份過期」的那一刻；daemon 活著時每 30 秒的心跳都會把它往後推，永遠
+  // 響不到，死了才響一次，把 nowMs 對齊、online 翻成 false。比慢速輪詢省：活著的
+  // 時候 nowMs 一次都不動，清單也就一次都不用重算。
+  Timer {
+    id: onlineDeadline
+    repeat: false
+    onTriggered: root.nowMs = Date.now()
+  }
+
+  onStateChanged: root.armOnlineDeadline()
+
+  function armOnlineDeadline() {
+    if (!root.state) { onlineDeadline.stop(); return }
+    // 多等 1 秒：剛好在邊界上響的話 nowMs - updatedAt 還等於 180000 以內，翻不過去。
+    var left = Number(root.state.updatedAt || 0) + 180000 - Date.now() + 1000
+    onlineDeadline.interval = Math.max(1000, left)
+    onlineDeadline.restart()
   }
 
   // ------------------------------------------------------------ bar button
