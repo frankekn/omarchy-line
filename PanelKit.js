@@ -25,6 +25,14 @@ function clampScroll(value) {
   return Math.max(50, Math.min(300, n))
 }
 
+// 文字大小（%）。上限 160 跟 manifest 的 textScale max 同一個數；下限 50 是
+// 原本就有的那一道 —— 設定頁最低只給 80，但 shell.json 手改得到。
+function clampTextScale(value) {
+  var n = Math.round(Number(value))
+  if (!isFinite(n) || n <= 0) n = 100
+  return Math.max(50, Math.min(160, n))
+}
+
 // 上限 200 跟 daemon 那邊的夾值同一個數：面板送得出去、daemon 收得下，兩邊才不會
 // 一邊以為要了 500 則、另一邊默默只給 200。
 function clampHistory(value) {
@@ -144,7 +152,8 @@ function mediaLabel(m, tr) {
 // 抓不到縮圖的 IMAGE 排除掉 —— 燈箱開起來會是一片黑，比不能按還糟。
 // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
 // ←/→ 會走到一格空白，看起來就是燈箱壞了。
-function pictureList(messages) {
+// 沒有檔名的那幾格用 tr("image") 當標題 —— 燈箱標題直接畫這個字，不能寫死中文。
+function pictureList(messages, tr) {
   var out = []
   var list = Array.isArray(messages) ? messages : []
   for (var i = 0; i < list.length; i++) {
@@ -156,11 +165,11 @@ function pictureList(messages) {
     if (Array.isArray(flex) && flex.length > 0) {
       // FLEX 圖是公開 CDN 網址，Image 自己載得動，沒有原檔可以 download，所以 id 留空。
       for (var j = 0; j < flex.length; j++)
-        out.push({ id: "", source: String(flex[j]), name: "圖片" })
+        out.push({ id: "", source: String(flex[j]), name: tr("image") })
       continue
     }
     if (m.contentType === "IMAGE" && mediaUsable(m) && m.mediaPath)
-      out.push({ id: String(m.id), source: "file://" + m.mediaPath, name: String(m.fileName || "圖片") })
+      out.push({ id: String(m.id), source: "file://" + m.mediaPath, name: String(m.fileName || tr("image")) })
   }
   return out
 }
@@ -205,7 +214,7 @@ function lightboxCaption(lightbox, messages, tr) {
       label = mediaLabel(list[i], tr)
       break
     }
-  var n = pictureList(list).length
+  var n = pictureList(list, tr).length
   return n > 1 ? label + "   " + ((Number(lightbox.index) || 0) + 1) + " / " + n : label
 }
 

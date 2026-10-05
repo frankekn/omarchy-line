@@ -157,7 +157,13 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // 面板內文字大小（設定裡的 textScale，%）。bar 上的圖示仍跟隨 bar 自己的設定。
-  readonly property real fontScale: Math.max(0.5, Number(setting("textScale", 100)) / 100)
+  // 跟 windowWidth／scrollSpeed 一樣要自己夾：`omarchy bar set` 不驗 schema，
+  // 手改成 999 的話整個面板一行只剩一兩個字。
+  function clampTextScale(value) {
+    return PanelKit.clampTextScale(value)
+  }
+
+  readonly property real fontScale: clampTextScale(setting("textScale", 100)) / 100
   readonly property int fontBody: Math.round(Style.font.bodySmall * fontScale)
   readonly property int fontTitle: Math.round(Style.font.body * fontScale)
 
@@ -3579,7 +3585,7 @@ Panel {
   // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
   // ←/→ 會走到一格空白，看起來就是燈箱壞了。
   function pictureList(messages) {
-    return PanelKit.pictureList(messages)
+    return PanelKit.pictureList(messages, tr)
   }
 
   // 縮放固定在 [1,4]：小於 1 就沒有放大的意義，大於 4 縮圖會糊成馬賽克。
@@ -3873,10 +3879,11 @@ Panel {
   }
 
   // 回覆哪一則。存的是畫得出來的那三個欄位，跟 daemon 給的 replyTo 同一個形狀。
+  // 回自己的那句時 fromName 是直接畫在引言上的字，要照介面語言走，不能寫死「我」。
   function startReply(m) {
     if (!root.canActOn(m)) return
     root.replyTarget = { id: String(m.id),
-      fromName: String(m.from === root.myMid ? "我" : (m.fromName || "")),
+      fromName: String(m.from === root.myMid ? tr("me") : (m.fromName || "")),
       text: root.oneLine(root.bodyText(m)) }
   }
 

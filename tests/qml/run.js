@@ -39,6 +39,7 @@ const kitSrc = fs.readFileSync(path.join(REPO, "PanelKit.js"), "utf8");
 const PanelKit = new Function(
   kitSrc.replace(/^\.pragma library\s*/, "") +
     "; return { placementMode, clampWindowSize, clampScroll, clampHistory," +
+    " clampTextScale," +
     " placementLabel, nextStep, scrollLabel, historyLabel, wheelDistance," +
     " wheelTargetY, chatRows, rowSubtitle, mediaUsable, mediaLabel," +
     " pictureList, zoomAt, clampPan, isDrag, outsidePicture, lightboxCaption," +
@@ -59,7 +60,7 @@ const PanelKit = new Function(
 // in this harness (and the language-agnostic assertions below) exercise the zh
 // default: append Tzh whenever a caller leaves `tr` off.
 for (const [lib, names] of [
-  [PanelKit, ["placementLabel", "rowSubtitle", "mediaLabel", "lightboxCaption",
+  [PanelKit, ["placementLabel", "rowSubtitle", "mediaLabel", "pictureList", "lightboxCaption",
     "agoText", "bodyText", "bodyHtml", "mentionMatches", "partialListNoticeText",
     "linkNoticeText", "listNoticeText", "loginErrorDetail", "chatMenuItems",
     "stickerPackName", "stickerStatusText"]],
@@ -3612,6 +3613,29 @@ ok(
   e.pictureList(undefined).length === 0,
   "a missing message list is empty, not a crash",
 );
+{
+  const Ten = (k, ...a) => Strings.fmt(k, "en", ...a);
+  const unnamed = [
+    { id: "f", contentType: "FLEX", flexImages: ["https://c/1.png"] },
+    { id: "i", contentType: "IMAGE", hasMedia: true, mediaPath: "/p/x.jpg" },
+  ];
+  const en = PanelKit.pictureList(unnamed, Ten);
+  ok(
+    en.length === 2 && en.every((p) => p.name === "Image"),
+    "a picture with no file name is captioned in the UI language: " +
+      JSON.stringify(en.map((p) => p.name)),
+  );
+  ok(
+    PanelKit.pictureList(unnamed).every((p) => p.name === "圖片"),
+    "and zh still reads 圖片",
+  );
+  ok(
+    PanelKit.lightboxCaption({ id: "", name: en[0].name, index: 0 }, unnamed, Ten) ===
+      "Image   1 / 2",
+    "so the English lightbox caption carries no Chinese",
+  );
+  ok(!/"圖片"/.test(kitSrc), "PanelKit.js hardcodes no 圖片 of its own");
+}
 
 // ←/→ walk that list and stop at both ends rather than wrapping.
 e = makeEnv({ twoPane: true, activeChat: { mid: "C1" } });
@@ -8763,6 +8787,32 @@ ok(
     JSON.stringify(e.root.replyTarget.text),
 );
 ok(e.root.replyTarget.fromName === "Alice", "and who said it");
+// Replying to your own message: the name lands verbatim in the quote strip,
+// so it is the UI language's word for "me", never a hardcoded 我.
+{
+  const mine = MSG("m-own", "ME", "hello");
+  const replyRoot = (lang) => {
+    const r = {
+      myMid: "ME",
+      replyTarget: null,
+      canActOn: () => true,
+      oneLine: (t) => EventLog.oneLine(t),
+      bodyText: (m) => String(m.text || ""),
+    };
+    new Function("root", "tr", "m", B.startReply)(
+      r, (k, ...a) => Strings.fmt(k, lang, ...a), mine);
+    return r.replyTarget;
+  };
+  ok(
+    replyRoot("en").fromName === "me" && replyRoot("zh").fromName === "我",
+    "replying to yourself names you in the UI language: " +
+      JSON.stringify([replyRoot("en"), replyRoot("zh")]),
+  );
+  ok(
+    !/"我"/.test(B.startReply),
+    "and startReply carries no literal 我 of its own",
+  );
+}
 e.submit("好");
 let frame = e.sent.pop();
 ok(
@@ -11129,6 +11179,32 @@ ok(
 ok(
   e.clampScroll("150.4") === 150,
   "numeric strings are rounded, exactly like clampWindowSize",
+);
+// textScale goes through the same kind of clamp: the manifest caps it at 160,
+// and shell.json is just as hand-editable as for scrollSpeed.
+ok(
+  PanelKit.clampTextScale(80) === 80 && PanelKit.clampTextScale(160) === 160 &&
+    PanelKit.clampTextScale(999) === 160 && PanelKit.clampTextScale(10) === 50,
+  "textScale clamps to 50..160 -- the top matches manifest.json's max",
+);
+ok(
+  PanelKit.clampTextScale(undefined) === 100 &&
+    PanelKit.clampTextScale("nonsense") === 100 &&
+    PanelKit.clampTextScale(0) === 100 && PanelKit.clampTextScale("120.4") === 120,
+  "and garbage reads as 100 instead of a NaN font size",
+);
+{
+  const manifest = JSON.parse(fs.readFileSync(path.join(REPO, "manifest.json"), "utf8"));
+  const field = JSON.stringify(manifest).match(/"key":"textScale"[^}]*"max":(\d+)/);
+  ok(
+    !!field && PanelKit.clampTextScale(Number(field[1]) + 10) === Number(field[1]),
+    "the clamp's ceiling is the manifest's textScale max",
+  );
+}
+ok(
+  /readonly property real fontScale: clampTextScale\(setting\("textScale", 100\)\) \/ 100/
+    .test(src),
+  "fontScale is the setting run through that clamp, over 100",
 );
 ok(
   /readonly property int scrollPercent: clampScroll\(setting\("scrollSpeed", 100\)\)/
