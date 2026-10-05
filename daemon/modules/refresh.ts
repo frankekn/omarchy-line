@@ -27,6 +27,7 @@ import {
   noteRefreshOk,
   setChatListHealth,
   setChats,
+  stateWriteOwed,
   writeState,
 } from "./state.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
@@ -116,7 +117,10 @@ async function refreshChats(waitForCurrent = false): Promise<boolean> {
   }
 }
 
-/** One actual round: one getMessageBoxes, one state.json write. */
+/**
+ * One actual round: one getMessageBoxes, and one state.json write when the
+ * round changed something the panel shows.
+ */
 async function runRefresh(c: Client, generation: number): Promise<boolean> {
   if (!sessionIsCurrent(c, generation)) return false;
   const started = performance.now();
@@ -385,7 +389,14 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     setChatListHealth(nextListHealth);
     // Before the write, so the fresh `at` and the fresh chats land together.
     noteRefreshOk();
-    await writeState();
+    // Most full rounds answer exactly what the list already shows -- a read
+    // receipt or an own-device read forces one just to settle unread -- and
+    // rewriting ~64 KB with an fsync made every open panel re-parse the whole
+    // file for nothing. stateWriteOwed() says whether the file is behind on
+    // anything the panel displays; when it is not, the heartbeat carries the
+    // fresh `refresh.at` and timings within 30s, and `online` never noticed
+    // the difference.
+    if (stateWriteOwed()) await writeState();
     // Logout/new login can land while the atomic state write is pending. The
     // new session owns its retry timer; an old round must not clear it.
     if (!sessionIsCurrent(c, generation)) return false;

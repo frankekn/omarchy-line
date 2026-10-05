@@ -404,6 +404,9 @@ function writeState(): Promise<void> {
       }
       await Deno.rename(tmp, STATE_PATH); // atomic: the plugin watches this
       committed = true;
+      // Recorded at the commit, not the capture: a snapshot that an
+      // invalidation or a failed write kept off disk never reached the panel.
+      noteStatePublished(stateSnapshot.chatsRevision, stateSnapshot.refresh);
     } finally {
       if (committed) {
         timings.record("state.write", performance.now() - started);
@@ -416,6 +419,47 @@ function writeState(): Promise<void> {
   return writing;
 }
 // enil:statepersist-end
+
+// The block between the enil:statepublished markers is sliced out verbatim
+// by statepublished_test.ts on top of stub state.
+// enil:statepublished-begin
+/**
+ * What the last committed state.json carried of the things a full refresh
+ * round can change for the panel: the chat list (rows and list health both
+ * move chatsRevision) and the failure count of the `refresh` block. null
+ * until the first commit, so the first round always writes.
+ *
+ * `refresh.at` moves on every successful round and is deliberately not here:
+ * the panel only reads it while failures >= 2 (PanelKit.js linkNoticeText),
+ * and during a failing streak `at` stands still -- the success that ends the
+ * streak resets failures, which is a change this does see. Everything else
+ * writeState publishes either has its own write on its own edge (login, me,
+ * link, wanted, hidden) or is diagnostics (timings, stateBytes, updatedAt)
+ * that the 30s heartbeat keeps fresh well inside the panel's 180s online
+ * window.
+ */
+let publishedChatsRevision: number | null = null;
+let publishedRefreshFailures: number | null = null;
+
+function noteStatePublished(
+  revision: number,
+  refresh: { failures: number } | null | undefined,
+): void {
+  publishedChatsRevision = revision;
+  publishedRefreshFailures = refresh ? refresh.failures : null;
+}
+
+/**
+ * Whether state.json is behind on something the panel shows. Compared with
+ * what the file carries rather than with what one round saw, so a push that
+ * patched a row (and its revision) without a write of its own still gets
+ * flushed by the next round that has nothing new to add.
+ */
+function stateWriteOwed(): boolean {
+  return chatsRevision !== publishedChatsRevision ||
+    (refreshHealthValue()?.failures ?? null) !== publishedRefreshFailures;
+}
+// enil:statepublished-end
 
 function setLogin(status: string, extra: Json = {}) {
   login = { status, ...extra };
@@ -627,6 +671,7 @@ export {
   setHidden,
   setLogin,
   setWanted,
+  stateWriteOwed,
   writeState,
 };
 export type { DirtyMid };

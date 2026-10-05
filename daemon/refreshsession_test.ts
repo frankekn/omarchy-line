@@ -145,9 +145,17 @@ function clearRefreshRetry() {
   if (refreshRetryTimer !== null) clearTimeout(refreshRetryTimer);
   refreshRetryTimer = null;
 }
+// state.ts's stateWriteOwed() compares against the revision the last
+// committed write carried; this stand-in keeps the same ledger (the real one
+// is pinned by statepublished_test.ts), so the round's own decision to skip
+// is what runs here.
+let publishedRevision: number | null = null;
+function stateWriteOwed() { return chatsRevision !== publishedRevision; }
 async function writeState() {
   calls.writes++;
+  const revision = chatsRevision;
   if (holdWrite) await new Promise<void>((resolve) => releaseWrite = resolve);
+  publishedRevision = revision;
 }
 async function refreshChats() { calls.retries++; return replacementResult; }
 // Incremental-round state; the daemon declares these beside the summary
@@ -220,6 +228,9 @@ export function recallSummary(id: string) {
     chatSummaryStore.chatSummaryEpoch,
   );
 }
+// A row patch (push summary, unsend, avatar) moves the revision and leaves
+// the file to whoever writes next -- here, nothing else about the list moves.
+export function patchRowWithoutWrite() { chatsRevision++; }
 export function invalidateMetadata() { chatSummaryStore.chatMetadataEpoch++; }
 export function cacheSize() { return chatSummaryStore.summaryCache.size; }
 export function hasPushedCursor() { return cursors.has("box:pushed"); }
@@ -346,6 +357,42 @@ Deno.test("a current refresh publishes revision and incomplete-list health", asy
     chatsRevision: 1,
     chatListHealth: { complete: false, loaded: 0 },
   });
+});
+
+Deno.test("a full round that changes nothing does not rewrite state.json", async () => {
+  const m = await loadModule();
+  const first = m.start();
+  m.succeed();
+  assertEquals(await first, true);
+  assertEquals(m.calls.writes, 1);
+  // Same boxes, same list health: the file already says all of it. The
+  // round still counts as a success -- health and the dirty set settle.
+  const second = m.start();
+  m.succeed();
+  assertEquals(await second, true);
+  assertEquals(m.calls.writes, 1);
+  assertEquals(m.calls.oks, 2);
+  assertEquals(m.state().chatsRevision, 1);
+  assertEquals(m.forceFullValue(), false);
+});
+
+Deno.test("a full round still writes what the list changed", async () => {
+  const m = await loadModule();
+  const first = m.start();
+  m.succeed();
+  assertEquals(await first, true);
+  // The list health flips from complete to partial: a revision bump.
+  const second = m.start();
+  m.succeed(true);
+  assertEquals(await second, true);
+  assertEquals(m.calls.writes, 2);
+  // A row patch the file never received is flushed by the next round even
+  // though that round itself found nothing new.
+  m.patchRowWithoutWrite();
+  const third = m.start();
+  m.succeed(true);
+  assertEquals(await third, true);
+  assertEquals(m.calls.writes, 3);
 });
 
 Deno.test("an incomplete refresh retains cursors for omitted chats", async () => {

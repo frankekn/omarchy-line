@@ -128,6 +128,7 @@ Deno.test("every marker pair used by the suite is present and ordered", async ()
       "hidden",
       "histcount",
       "markread",
+      "statepublished",
       "pushsummary",
       "storageguard",
     ]

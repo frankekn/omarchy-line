@@ -42,6 +42,7 @@ function hiddenStamped<T extends { mid: string }>(rows: T[]): T[] {
   return rows.map((row) => hidden.has(row.mid) ? { ...row, hidden: true } : row);
 }
 function noteStateWritten() {}
+function noteStatePublished(_revision: number, _refresh: unknown) {}
 export const timingSamples: number[] = [];
 const timings = {
   snapshot: () => timingSamples.length
