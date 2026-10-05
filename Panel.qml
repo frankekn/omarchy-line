@@ -3075,10 +3075,13 @@ Panel {
       // 已經沒人在看這份了：只有在完全沒開聊天室時才把轉圈關掉，
       // 不然會把現在這間還在飛的那次 loadHistory 的轉圈提早關掉。
       if (stale) { if (!root.activeChat) root.loading = false; return }
-      var historyRows = Array.isArray(res.data) ? res.data : []
+      var historyRows = EventLog.keepPreviewPaths(root.messages,
+          Array.isArray(res.data) ? res.data : [])
       var retainedRows = root.mergeFailedMessages(askedFor, historyRows)
-      root.setMessages(root.withDay(
-          root.preserveAmbiguousBubbles(askedFor, retainedRows)), true)
+      var fetched = root.withDay(root.preserveAmbiguousBubbles(askedFor, retainedRows))
+      // 開聊天室時快取那份早就貼上去了，抓回來多半一模一樣。照樣整份換的話
+      // ListView 會再 reset 一次，重新排版那一格看得到畫面跳開又跳回來（量過）。
+      if (!EventLog.sameRows(root.messages, fetched)) root.setMessages(fetched, true)
       root.reconcileAmbiguous(askedFor, root.messages, Number(entry.gen || 0))
       var deferredReload = root.historyReloadChat === askedFor
           ? root.historyReloadAfterGeneration : 0
@@ -5761,21 +5764,22 @@ Panel {
           // 換完模型視窗停在哪，只有這裡說了算。掛在 onModelChanged 而不是
           // onCountChanged：重抓回來則數一樣時 countChanged 根本不發，只靠它
           // 會被丟回對話最上面。
+          // keepContentY 要撐到放好位置才放：reset 之後第一次 positionViewAtEnd
+          // 會先經過靠頂端的位置（量過 contentY 0、74）才落到底，旗子先放掉的話
+          // onContentYChanged 會當成人捲到頂，白抓一頁舊訊息。
           onModelChanged: {
             var keep = root.keepContentY
-            root.keepContentY = -1
             msgList.seenContentHeight = contentHeight
-            if (count === 0) { root.prependAnchorIndex = -1; return }
-            if (root.prependAnchorIndex >= 0) {
+            if (count === 0) root.prependAnchorIndex = -1
+            else if (root.prependAnchorIndex >= 0) {
               positionViewAtIndex(Math.min(root.prependAnchorIndex, count - 1), ListView.Beginning)
               root.prependAnchorIndex = -1
               // 錨點只放對「哪一則」，人離頂端多遠要自己補回去（理由見
               // anchoredContentY）。捲到頂才翻頁時 keep 是 0，這一行等於不存在。
               contentY = root.anchoredContentY(contentY, originY, keep, contentHeight, height)
-              return
-            }
-            if (root.atBottom) { msgList.toBottom(); return }
-            if (keep >= 0) contentY = originY + Math.max(0, Math.min(keep, contentHeight - height))
+            } else if (root.atBottom) msgList.toBottom()
+            else if (keep >= 0) contentY = originY + Math.max(0, Math.min(keep, contentHeight - height))
+            root.keepContentY = -1
           }
 
           // 縮圖、貼圖載完會把泡泡撐高。判斷用的是「變高之前」的高度：使用者捲動時

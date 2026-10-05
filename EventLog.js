@@ -310,6 +310,52 @@ function firstUnreadIndex(messages, unread, myMid) {
   return -1
 }
 
+// 縮圖路徑有兩個來源：daemon 已經快取過的那則隨列帶著 mediaPath；畫面上後來才
+// 抓到的放在面板的 previewPaths（id → 路徑），不寫回列裡 —— 寫回去等於每張縮圖
+// 都整份換一次模型，ListView 每換一次就先清空再放回位置，對話跟著上下跳。
+// 已經打不開的（過期、收回）一律沒有縮圖，那一則該改畫成附件那一行。
+function previewPathFor(m, paths) {
+  if (!m) return ""
+  if (m.mediaPath) return String(m.mediaPath)
+  if (!m.hasMedia || (m.mediaState !== undefined && m.mediaState !== "ok")) return ""
+  return paths && paths[String(m.id)] ? String(paths[String(m.id)]) : ""
+}
+
+function withPreviewPaths(rows, paths) {
+  return (Array.isArray(rows) ? rows : []).map(function(m) {
+    var path = previewPathFor(m, paths)
+    return !m || m.mediaPath || !path ? m : withFields(m, { mediaPath: path })
+  })
+}
+
+// 歷史頁不帶縮圖路徑：daemon 換頁時不抓媒體。畫面上同一則列裡已經有路徑就沿用，
+// 不然每次重抓，每張圖都先縮回一行「載入中…」。
+function keepPreviewPaths(shown, rows) {
+  var paths = {}
+  var list = Array.isArray(shown) ? shown : []
+  for (var i = 0; i < list.length; i++)
+    if (list[i] && list[i].mediaPath) paths[String(list[i].id)] = list[i].mediaPath
+  return withPreviewPaths(rows, paths)
+}
+
+// 兩份清單畫出來會不會一樣。整列比（鍵排序過的 JSON）而不是挑欄位：泡泡讀的欄位
+// 很多（表情、已讀、引言、大頭貼……），挑漏一個就會把真的改動當成沒變。
+function sameRows(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+  for (var i = 0; i < a.length; i++)
+    if (canonicalJson(a[i]) !== canonicalJson(b[i])) return false
+  return true
+}
+
+function canonicalJson(v) {
+  if (Array.isArray(v)) return "[" + v.map(canonicalJson).join(",") + "]"
+  if (v === null || typeof v !== "object") return v === undefined ? "null" : JSON.stringify(v)
+  var keys = Object.keys(v).filter(function(k) { return v[k] !== undefined }).sort()
+  return "{" + keys.map(function(k) {
+    return JSON.stringify(k) + ":" + canonicalJson(v[k])
+  }).join(",") + "}"
+}
+
 // 送失敗留下的泡泡要併回新抓的歷史裡 —— 不然重抓一次，畫面上那則「沒送出去」
 // 就消失了，但它根本還沒送出去。同 id 的去重在上游 remember 那邊做過了。
 function mergeFailedMessages(failed, list) {
