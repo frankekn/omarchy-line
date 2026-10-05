@@ -25,6 +25,14 @@ function clampScroll(value) {
   return Math.max(50, Math.min(300, n))
 }
 
+// 文字大小（%）。上限 160 跟 manifest 的 textScale max 同一個數；下限 50 是
+// 原本就有的那一道 —— 設定頁最低只給 80，但 shell.json 手改得到。
+function clampTextScale(value) {
+  var n = Math.round(Number(value))
+  if (!isFinite(n) || n <= 0) n = 100
+  return Math.max(50, Math.min(160, n))
+}
+
 // 上限 200 跟 daemon 那邊的夾值同一個數：面板送得出去、daemon 收得下，兩邊才不會
 // 一邊以為要了 500 則、另一邊默默只給 200。
 function clampHistory(value) {
@@ -144,7 +152,8 @@ function mediaLabel(m, tr) {
 // 抓不到縮圖的 IMAGE 排除掉 —— 燈箱開起來會是一片黑，比不能按還糟。
 // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
 // ←/→ 會走到一格空白，看起來就是燈箱壞了。
-function pictureList(messages) {
+// 沒有檔名的那幾格用 tr("image") 當標題 —— 燈箱標題直接畫這個字，不能寫死中文。
+function pictureList(messages, tr) {
   var out = []
   var list = Array.isArray(messages) ? messages : []
   for (var i = 0; i < list.length; i++) {
@@ -156,11 +165,11 @@ function pictureList(messages) {
     if (Array.isArray(flex) && flex.length > 0) {
       // FLEX 圖是公開 CDN 網址，Image 自己載得動，沒有原檔可以 download，所以 id 留空。
       for (var j = 0; j < flex.length; j++)
-        out.push({ id: "", source: String(flex[j]), name: "圖片" })
+        out.push({ id: "", source: String(flex[j]), name: tr("image") })
       continue
     }
     if (m.contentType === "IMAGE" && mediaUsable(m) && m.mediaPath)
-      out.push({ id: String(m.id), source: "file://" + m.mediaPath, name: String(m.fileName || "圖片") })
+      out.push({ id: String(m.id), source: fileUrl(m.mediaPath), name: String(m.fileName || tr("image")) })
   }
   return out
 }
@@ -205,7 +214,7 @@ function lightboxCaption(lightbox, messages, tr) {
       label = mediaLabel(list[i], tr)
       break
     }
-  var n = pictureList(list).length
+  var n = pictureList(list, tr).length
   return n > 1 ? label + "   " + ((Number(lightbox.index) || 0) + 1) + " / " + n : label
 }
 
@@ -829,4 +838,61 @@ function accountsWithAmbiguous(accounts, account, byChat, changedChats, removedB
   if (Object.keys(chats).length > 0) next[account] = chats
   else delete next[account]
   return next
+}
+
+// 本地檔案路徑轉成 Image 吃得下的網址。路徑原封不動接在 file:// 後面的話，$HOME 或
+// XDG_STATE_HOME 裡只要有 #、?、% 或空白，QUrl 就會把後半段當成 fragment／query
+// 或壞掉的跳脫序列，圖就這樣破了。逐段 encodeURIComponent，斜線留著當分隔。
+// 空路徑照舊回 "file://"：呼叫端原本就各自擋掉空值，這裡不替它們改判斷。
+function fileUrl(path) {
+  var p = String(path === undefined || path === null ? "" : path)
+  if (p.length === 0) return "file://"
+  var parts = p.split("/")
+  for (var i = 0; i < parts.length; i++) parts[i] = encodeURIComponent(parts[i])
+  return "file://" + parts.join("/")
+}
+
+// fileUrl 的反方向：交給 xdg-open 的是檔案系統路徑，不是網址，跳脫要解回來。
+// 不是 file:// 的（FLEX 圖的 https）原樣奉還；解不開的跳脫序列也原樣奉還，
+// 總比丟一個例外、讓按鍵整個沒反應好。
+function localPath(url) {
+  var s = String(url === undefined || url === null ? "" : url)
+  if (s.indexOf("file://") !== 0) return s
+  try {
+    return decodeURIComponent(s.slice(7))
+  } catch (e) {
+    return s.slice(7)
+  }
+}
+
+// shell.json 的寫入佇列。`omarchy bar set` 每次都是整份讀進來、改一格、整份寫回，
+// 兩條同時跑就會互相蓋掉；一個 Process 又在跑的時候再設 running = true 什麼都不會
+// 發生，第二下就這樣不見了。所以所有寫入排成一列、一次只送一條。
+// 同一個 key 只留一筆，後來的值就地取代前面那筆：反正只有最後一個值算數，
+// 位置不動是為了不讓別的 key 因此被往後擠。回傳新陣列（鐵則 11）。
+function queueSetting(queue, key, value) {
+  var list = Array.isArray(queue) ? queue : []
+  var out = []
+  var replaced = false
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].key === key) {
+      if (!replaced) out.push({ key: key, value: value })
+      replaced = true
+    } else {
+      out.push(list[i])
+    }
+  }
+  if (!replaced) out.push({ key: key, value: value })
+  return out
+}
+
+// 「這個 key 馬上就會是什麼值」：佇列裡等著的優先，其次是正在寫的那筆，
+// 都沒有才是設定檔現在的值。連按兩下 A+ 時熱重載還沒回來，只看現值的話
+// 兩下會算出同一個數字，等於只按了一下。
+function pendingSetting(queue, inFlight, key, current) {
+  var list = Array.isArray(queue) ? queue : []
+  for (var i = list.length - 1; i >= 0; i--)
+    if (list[i] && list[i].key === key) return list[i].value
+  if (inFlight && inFlight.key === key) return inFlight.value
+  return current
 }

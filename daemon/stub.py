@@ -1775,7 +1775,12 @@ def main():
     if os.path.exists(SOCK_PATH):
         os.remove(SOCK_PATH)
     server = Server(SOCK_PATH, Handler)
+    # Start the serve thread (and, through it, every handler thread) with
+    # SIGTERM blocked: a signal the kernel hands to a non-main thread only
+    # flags CPython, and _die then waits out the main loop's HEARTBEAT sleep.
+    signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGTERM})
     print("enil-stub[%s]: %s + %s" % (fixture, STATE_PATH, SOCK_PATH), flush=True)
 
     try:

@@ -2,37 +2,84 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request_target:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: x64-ci
+    container: ubuntu:24.04
     steps:
+      - name: Require a trusted CI source
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          CI_REPO: ${{ github.repository }}
+        run: |
+          if [ "$CI_EVENT_NAME" = push ] || [ "$CI_EVENT_NAME" = workflow_dispatch ] || { [ "$CI_EVENT_NAME" = pull_request_target ] && [ "$CI_HEAD_REPO" = "$CI_REPO" ]; }; then
+            exit 0
+          fi
+          echo "::error::AWS CI only accepts trusted repository branches. Fork pull requests require a trusted branch before checks can run."
+          exit 1
+      - name: Install check dependencies
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl git unzip python3 util-linux qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
+          useradd --create-home ci
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
           submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: denoland/setup-deno@v2
       - name: daemon checks
         working-directory: daemon
+        # Permission-failure tests need a normal user; container root ignores chmod.
         run: |
-          deno task check
-          deno task no-any
-          deno task lint
-          deno task fmt
-          deno task test
+          runuser -u ci -- sh -c '
+            set -e
+            deno task check
+            deno task no-any
+            deno task lint
+            deno task fmt
+            deno task test
+          '
       - name: qml harness
         run: node tests/qml/run.js
+      - name: review finalizer tests
+        run: node --test .github/scripts/needlefish-finalize.test.cjs
       - name: qml key tests
         # qmltestrunner ships in /usr/lib/qt6/bin, which is not on PATH; the
         # runner script probes for it by name, so extend PATH for the call.
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
-          PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
+        run: PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
       - name: stub tests
         working-directory: daemon
-        run: python3 stub_test.py
+        run: runuser -u ci -- python3 stub_test.py
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
         run: node -e 'const m = require("./manifest.json"); for (const k of ["id", "name", "version"]) if (!m[k]) throw new Error("manifest.json missing " + k)'
+      - name: Report PR CI result
+        if: always() && github.event_name == 'pull_request_target'
+        uses: actions/github-script@v8
+        env:
+          CI_RESULT: ${{ job.status }}
+        with:
+          script: |
+            const passed = process.env.CI_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              context: 'ci / checks',
+              state: passed ? 'success' : 'failure',
+              description: passed ? 'AWS CI passed' : 'AWS CI failed; see the run for details',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

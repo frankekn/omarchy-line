@@ -17,6 +17,7 @@ import {
   AVATAR_DIR,
   HEARTBEAT_MS,
   IMAGE_DIR,
+  LOCK_PATH,
   messageStore,
   POLL_MS,
   recoverClipboardStages,
@@ -45,6 +46,10 @@ import {
   watchdogTick,
 } from "./modules/watchdog.ts";
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
+import { claimInstance } from "./modules/instance.ts";
+
+/** Held for the life of the process: closing it would release the gate. */
+let instanceLock: Deno.FsFile | null = null;
 
 async function main() {
   installRejectionGuard();
@@ -52,7 +57,20 @@ async function main() {
   // it as transient so a panel holding unresolved sends does not mistake a
   // daemon restart for an explicit logout.
   setLoginState({ status: "starting", attempt: "resume" });
+  // The state dir holds the session token: create it private rather than
+  // leaving it 0755 until the chmod below catches up.
+  await Deno.mkdir(STATE_DIR, { recursive: true, mode: 0o700 });
   await Deno.mkdir(AVATAR_DIR, { recursive: true }); // and MEDIA_DIR with it
+  // Before anything else touches the state dir: a second daemon must not
+  // resume the stored session, rewrite state.json or take over the socket.
+  instanceLock = await claimInstance(LOCK_PATH);
+  if (!instanceLock) {
+    console.error(
+      `enil: another daemon already holds ${LOCK_PATH}; refusing to start ` +
+        `a second one on the same session`,
+    );
+    Deno.exit(1);
+  }
   await recoverClipboardStages().catch((error) =>
     console.error(`[clipboard] stage recovery failed: ${errorLine(error)}`)
   );
@@ -86,7 +104,11 @@ async function main() {
     try {
       sleepMonitor?.kill("SIGTERM");
     } catch { /* already gone */ }
-    Deno.removeSync(SOCK_PATH);
+    // A socket someone already removed must not throw here: that would skip
+    // the store flush below and die with an uncaught error instead.
+    try {
+      Deno.removeSync(SOCK_PATH);
+    } catch { /* already gone */ }
     // Store appends coalesce for 150ms; a signal inside that window would
     // drop records the daemon already confirmed it had seen. The timer caps
     // the wait so a stalled write cannot hold the process past it.

@@ -13,6 +13,9 @@ WorkingDirectory=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon
 # /usr/bin/deno otherwise -- plugin updates can never strand a stale binary.
 ExecStart=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/enil-run.sh
 Restart=on-failure
+# Everything the daemon writes under the state dir is the user's alone: the
+# session token, decrypted media, the event ring.
+UMask=0077
 RestartSec=5
 
 [Install]

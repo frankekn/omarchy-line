@@ -572,7 +572,7 @@ windowrule = float, class:^(org\.quickshell)$, title:^(LINE)$
 windowrule = size 1040 720, class:^(org\.quickshell)$, title:^(LINE)$
 ```
 
-視窗大小會自己記起來（停手 0.8 秒後寫回 `windowWidth` / `windowHeight`），
+視窗大小會自己記起來（浮動視窗停手 0.8 秒後寫回 `windowWidth` / `windowHeight`；平鋪時大小由版面決定，重排不會記），
 下次開一樣大。也可以直接指定：
 
 ```bash
@@ -594,6 +594,7 @@ bar 面板，所以什麼都不做。
 | `events.json` | 即時事件環（原子寫入，外掛用 `FileView` 監看），見下 |
 | `sock` | unix socket，一行一個 JSON 請求／回應；連線中的面板也從這裡收推播幀 |
 | `storage.json` | LINE 憑證與 E2EE 金鑰（`chmod 600`，daemon 專用） |
+| `lock` | 單一實例鎖：執行中的 daemon 對它持有 `flock`，第二個 daemon 會直接退出、不共用同一個 session（空檔，daemon 專用） |
 | `media/` | 下載過的圖片／影片縮圖快取（14 天或 500 MB 到就掃掉舊的） |
 | `media/avatars/` | 大頭貼快取（**不看時間**，只有 20 MB 上限，滿了先掃最舊的） |
 | `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |
@@ -1110,6 +1111,12 @@ cd daemon && deno task check && deno task test
 - AVI 讀不出長度：`RIFF` 的長度不在檔頭的固定位置，而 LINE 也不會自己算
 
 ## 開發
+
+CI 使用自架 AWS `x64-ci` pool，只測試 main 分支的 push 和本 repo 分支的 PR。
+PR workflow 透過 `pull_request_target` 使用 base 分支的定義，先檢查信任來源，才 checkout PR 的精確 head。
+Fork PR 會在 checkout 前明確失敗；維護者必須先審查變更並移到受信任分支，CI 才會跑測試。
+結果會以 `ci / checks` 發佈到 PR head；workflow 變更進 main 前，可手動測試受信任分支。
+所有外部貢獻者的 fork workflow 都需要在 GitHub 核准。
 
 改完一定要跑：
 

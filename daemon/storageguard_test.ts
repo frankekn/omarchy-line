@@ -1,6 +1,7 @@
 /**
- * sessionStorage: the session file is a JSON object FileStorage persists
- * with a plain writeFile, so a crash mid-write leaves half a document that
+ * sessionStorage: the session file is a JSON object linejs's FileStorage
+ * used to persist with a plain writeFile, so a crash mid-write could leave
+ * half a document (an upgrade can still inherit one) that
  * throws on every later get/set. The guard renames that corpse aside once:
  * resume can answer honestly, the next login can store again, and the old
  * bytes stay on disk in case they were still worth something.
@@ -10,13 +11,13 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { loadBlock } from "./slice_test.ts";
 
-// The block opens the file itself, so the stub FileStorage only has to
+// The block opens the file itself, so the stub SessionStore only has to
 // stand in for the constructor: create an empty store when the path is
 // absent, leave an existing file alone -- exactly what the real one does.
 function prelude(path: string): string {
   return `
 const STORAGE_PATH = ${JSON.stringify(path)};
-class FileStorage {
+class SessionStore {
   path: string;
   constructor(path: string) {
     this.path = path;
@@ -108,8 +109,8 @@ Deno.test("both login paths open the store through the guard", async () => {
     "startLogin, tryResume and logoutClaimed all open via sessionStorage()",
   );
   assertEquals(
-    source.match(/new FileStorage\(STORAGE_PATH\)/g)?.length,
+    source.match(/new SessionStore\(STORAGE_PATH\)/g)?.length,
     2,
-    "only the guard and the logoutClaimed fallback construct FileStorage",
+    "only the guard and the logoutClaimed fallback construct SessionStore",
   );
 });

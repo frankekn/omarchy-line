@@ -22,7 +22,7 @@ import {
 import { type Client, loginWithAuthToken, loginWithQR } from "@evex/linejs";
 import type { Json, TalkMsg } from "./types.ts";
 import QRCode from "qrcode";
-import { FileStorage } from "@evex/linejs/storage";
+import { SessionStore } from "../sessionstore.ts";
 import {
   blockStateWrites,
   bumpChatsRevision,
@@ -129,7 +129,7 @@ let resumeRetries = 0;
  * onLoggedIn(), so between "a login started" and "a login succeeded" it is
  * still null and every guard written against it waves the second caller
  * through. `login.status` is not enough either, because the first thing both
- * paths do is await -- tryResume() awaits three FileStorage reads before it
+ * paths do is await -- tryResume() awaits three session-store reads before it
  * ever reaches setLogin("starting"). That gap is small but real, and the
  * automatic resume retry made it matter: the daemon can now be retrying for
  * minutes while the user stares at 「連不上 LINE，稍後重試」 and clicks 再試一次
@@ -162,19 +162,20 @@ function endLogin(): void {
 // enil:logingate-end
 
 // The block between the enil:storageguard markers is sliced out verbatim by
-// storageguard_test.ts, with FileStorage and STORAGE_PATH stubbed.
+// storageguard_test.ts, with SessionStore and STORAGE_PATH stubbed.
 // enil:storageguard-begin
 /**
  * Opens the session store, quarantining a file that no longer parses.
- * FileStorage persists with a plain writeFile -- a crash mid-write leaves
- * half a JSON document, and every get/set afterwards throws on the parse,
- * wedging resume and the next login on a corpse nobody can read. Rename it
+ * SessionStore writes atomically, but a file left by an older daemon (or by
+ * linejs's FileStorage, which truncated in place) can still be half a JSON
+ * document, and every get/set afterwards throws on the parse, wedging
+ * resume and the next login on a corpse nobody can read. Rename it
  * aside once: the stored token is equally lost either way, this just keeps
  * the store usable. Any other read failure stays the caller's to report --
  * "cannot open" is not proof the file is corrupt, and tryResume already has
  * words for a store it cannot read.
  */
-async function sessionStorage(): Promise<FileStorage> {
+async function sessionStorage(): Promise<SessionStore> {
   try {
     JSON.parse(await Deno.readTextFile(STORAGE_PATH));
   } catch (e) {
@@ -186,7 +187,7 @@ async function sessionStorage(): Promise<FileStorage> {
       throw e;
     }
   }
-  return new FileStorage(STORAGE_PATH);
+  return new SessionStore(STORAGE_PATH);
 }
 // enil:storageguard-end
 
@@ -282,7 +283,9 @@ async function onLoggedIn(c: Client): Promise<void> {
     // nulls client, and a later login is a different object, so a listener from
     // an ended session is dead for good.
     if (client !== c) return;
-    await c.base.storage.set(".auth", token).catch(() => {});
+    await c.base.storage.set(".auth", token).catch((e) =>
+      console.error("[auth] could not persist rotated token:", errorLine(e))
+    );
   });
   // Nothing else surfaces the push layer: without this listener a LegyPusher
   // failure is invisible in the journal and unrecoverable, and the watchdog has
@@ -488,7 +491,8 @@ function scheduleResumeRetry(): void {
  */
 async function logout(): Promise<Json> {
   // A user logout supersedes an automatic resume, including the early window
-  // where it is still reading FileStorage and login.status remains unchanged.
+  // where it is still reading the session store and login.status remains
+  // unchanged.
   // Keep manual QR/PIN login non-cancellable because its UI has a distinct
   // in-progress contract.
   if (loginInFlight) {
@@ -600,14 +604,14 @@ async function logoutClaimed(
     }
   }
 
-  // The client's own storage instance, when we have it: FileStorage
+  // The client's own storage instance, when we have it: SessionStore
   // serialises writes per instance, so sharing it avoids racing a set() the
   // library still has in flight.
-  // Falling back to a bare FileStorage when the guard itself cannot open the
+  // Falling back to a bare SessionStore when the guard itself cannot open the
   // file keeps this path as quiet as it was: the per-key catch below already
   // answers "delete failed", and a logout is no place to surface one more.
   const storage = c?.base?.storage ??
-    await sessionStorage().catch(() => new FileStorage(STORAGE_PATH));
+    await sessionStorage().catch(() => new SessionStore(STORAGE_PATH));
   // e2ee*/qrCert are kept: they are inert without a token, and a re-login as
   // the same account reuses them instead of re-negotiating.
   if (revokeCredentials) {

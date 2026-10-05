@@ -22,6 +22,7 @@ const STATE_DIR = `${
 const STATE_PATH = `${STATE_DIR}/state.json`;
 const EVENTS_PATH = `${STATE_DIR}/events.json`;
 const SOCK_PATH = `${STATE_DIR}/sock`;
+const LOCK_PATH = `${STATE_DIR}/lock`;
 const MEDIA_DIR = `${STATE_DIR}/media`;
 const IMAGE_DIR = `${MEDIA_DIR}/public-images`;
 const imageCache = new ImageCache(IMAGE_DIR);
@@ -224,6 +225,7 @@ export {
   IMAGE_DIR,
   imageCache,
   INCREMENTAL_REFRESH,
+  LOCK_PATH,
   MEDIA_DIR,
   messageStore,
   panelMediaLane,

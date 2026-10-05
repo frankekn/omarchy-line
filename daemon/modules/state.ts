@@ -17,6 +17,7 @@
  */
 import { RefreshHealthState } from "../refreshcontrol.ts";
 import { createChatSummaryStore } from "../chatsummary.ts";
+import { writeAtomic } from "../atomicfile.ts";
 import { CHAT_LIMIT } from "./env.ts";
 import {
   BOOT_ID,
@@ -108,9 +109,7 @@ function writeEventsFile(): void {
   eventsWriting = eventsWriting.then(async () => {
     // A queued write must not resurrect a ring clearEvents already emptied.
     if (epoch !== stateEpoch || epoch < stateInvalidationTarget) return;
-    const tmp = `${EVENTS_PATH}.tmp`;
-    await Deno.writeTextFile(tmp, snapshot);
-    await Deno.rename(tmp, EVENTS_PATH);
+    await writeAtomic(EVENTS_PATH, snapshot);
   }).catch((e) => console.error("[state] events write failed:", e));
 }
 
@@ -236,7 +235,13 @@ function saveHidden(path: string = HIDDEN_PATH): Promise<void> {
       mode: 0o600,
     });
     try {
-      await handle.write(new TextEncoder().encode(blob));
+      const bytes = new TextEncoder().encode(blob);
+      let offset = 0;
+      while (offset < bytes.byteLength) {
+        const written = await handle.write(bytes.subarray(offset));
+        if (written <= 0) throw new Error("hidden file accepted no bytes");
+        offset += written;
+      }
       await handle.sync();
     } finally {
       handle.close();
@@ -366,10 +371,11 @@ function writeState(): Promise<void> {
       2,
     );
     const started = performance.now();
-    // Pid-suffixed tmp: two daemons (the single-instance gate tries to
-    // prevent it; a hand-run one does not always) must not rename a
-    // half-written file onto each other's state.
+    // Pid-suffixed tmp: belt and braces behind the single-instance gate
+    // (modules/instance.ts) -- two writers must never rename a half-written
+    // file onto each other's state.
     const tmp = `${STATE_PATH}.${Deno.pid}.tmp`;
+    const bytes = textEncoder.encode(snapshot);
     let committed = false;
     try {
       const handle = await Deno.open(tmp, {
@@ -379,7 +385,12 @@ function writeState(): Promise<void> {
         mode: 0o600,
       });
       try {
-        await handle.write(textEncoder.encode(snapshot));
+        let offset = 0;
+        while (offset < bytes.byteLength) {
+          const written = await handle.write(bytes.subarray(offset));
+          if (written <= 0) throw new Error("state file accepted no bytes");
+          offset += written;
+        }
         // Durable before the name exists. Rename is atomic for the watcher,
         // but without this a power loss can leave a fresh state.json whose
         // bytes never made it to the platter.
@@ -398,7 +409,7 @@ function writeState(): Promise<void> {
         timings.record("state.write", performance.now() - started);
         // Sampled where the text exists, committed writes only: the window
         // describes files that actually reached disk.
-        stateWriteBytes.record(textEncoder.encode(snapshot).length);
+        stateWriteBytes.record(bytes.byteLength);
       }
     }
   }).catch((e) => console.error("[state] write failed:", e));

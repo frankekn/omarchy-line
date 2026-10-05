@@ -241,6 +241,9 @@ export interface MessageStoreOptions {
   compactRatio?: number;
 }
 
+/** One plain path segment: no separator, no dot-dot, nothing empty. */
+const SEGMENT_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
 export function createMessageStore(
   rootDir: string,
   opts: MessageStoreOptions = {},
@@ -248,6 +251,16 @@ export function createMessageStore(
   const files = new Map<string, ChatFile>();
   const compactMinLines = opts.compactMinLines ?? COMPACT_MIN_LINES;
   const compactRatio = opts.compactRatio ?? COMPACT_RATIO;
+
+  /**
+   * Both ids become path segments: `${rootDir}/${myMid}/${chat}.jsonl`. A mid
+   * is [ucr] plus hex, but the chat id arrives from the socket as whatever the
+   * peer sent, and "../x" would read or append a .jsonl outside the store.
+   * Anything that is not one plain segment is treated as nothing stored.
+   */
+  function storable(myMid: string, chat: string): boolean {
+    return SEGMENT_RE.test(myMid) && SEGMENT_RE.test(chat);
+  }
 
   function fileFor(myMid: string, chat: string): ChatFile {
     const key = `${myMid}/${chat}`;
@@ -405,7 +418,7 @@ export function createMessageStore(
   }
 
   function appendLine(myMid: string, chat: string, line: Json): void {
-    if (!myMid || !chat) return;
+    if (!storable(myMid, chat)) return;
     const f = fileFor(myMid, chat);
     if (f.loaded) applyLine(f.recs, f.order, f.seen, line);
     enqueue(f, line);
@@ -428,13 +441,13 @@ export function createMessageStore(
       appendLine(myMid, chat, { chatMid: chat, id, _reactions: list });
     },
     async get(myMid, chat, id) {
-      if (!myMid || !id) return null;
+      if (!storable(myMid, chat) || !id) return null;
       const f = fileFor(myMid, chat);
       await openFile(f);
       return f.recs.get(id) ?? null;
     },
     async tail(myMid, chat, count) {
-      if (!myMid) return null;
+      if (!storable(myMid, chat)) return null;
       const f = fileFor(myMid, chat);
       await openFile(f);
       if (!f.order.length) return null;
@@ -442,7 +455,7 @@ export function createMessageStore(
       return ids.map((id) => f.recs.get(id)).filter((r): r is Json => !!r);
     },
     async pageBefore(myMid, chat, anchorId, count) {
-      if (!myMid) return null;
+      if (!storable(myMid, chat)) return null;
       const f = fileFor(myMid, chat);
       await openFile(f);
       const at = f.order.indexOf(anchorId);

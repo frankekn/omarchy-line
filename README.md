@@ -739,7 +739,9 @@ windowrule = size 1040 720, class:^(org\.quickshell)$, title:^(LINE)$
 ```
 
 The window remembers its size (written back to `windowWidth`/`windowHeight`
-0.8 s after you stop resizing) and reopens the same. Or set it directly:
+0.8 s after you stop resizing a floating window; a tiled window's size is the
+layout's, so retiles are not recorded) and reopens the same. Or set it
+directly:
 
 ```bash
 omarchy bar set io.github.frankekn.line windowWidth 1280
@@ -761,6 +763,7 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 | `events.json` | live event ring (atomic write, `FileView`-watched), see below |
 | `sock` | unix socket, one JSON request/reply per line; connected panels also receive push frames here |
 | `storage.json` | LINE credentials and E2EE keys (`chmod 600`, daemon-only) |
+| `lock` | single-instance gate: the running daemon holds an `flock` on it, and a second daemon exits instead of sharing the session (empty, daemon-only) |
 | `media/` | downloaded image/video thumbnail cache (swept at 14 days or 500 MB) |
 | `media/avatars/` | avatar cache (**age-insensitive**, 20 MB cap, sweeps oldest first) |
 | `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |
@@ -1380,6 +1383,15 @@ map back at `jsr:@evex/linejs`.
   the header, and LINE won't compute it either
 
 ## Development
+
+CI uses the self-hosted AWS `x64-ci` pool for main-branch pushes and PRs
+from branches in this repository. PR workflows run from the base branch via
+`pull_request_target`; the trust guard runs before checking out the exact PR
+head. Fork PRs fail before checkout; a maintainer
+must move the reviewed changes to a trusted branch before CI runs the tests.
+The result is published to the PR head as `ci / checks`. Manual runs can test
+a trusted branch before workflow changes reach main. All external contributors'
+fork workflows require approval in GitHub.
 
 After any change, run:
 

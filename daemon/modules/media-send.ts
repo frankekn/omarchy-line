@@ -295,6 +295,21 @@ function uploadExtras(
 }
 // enil:uploadargs-end
 
+// The block between the enil:regularfile markers is sliced out verbatim by
+// sendmedia_test.ts.
+// enil:regularfile-begin
+/**
+ * The size of the file at `path`, or null when it is not a regular file. A
+ * FIFO, a device or a directory reports a size of 0 or close to it, which
+ * passes every size cap, and readFile on a FIFO or /dev/zero never comes
+ * back. Follows symlinks, like the readFile after it.
+ */
+async function regularFileSize(path: string): Promise<number | null> {
+  const info = await Deno.stat(path);
+  return info.isFile ? info.size : null;
+}
+// enil:regularfile-end
+
 /**
  * The refusal for a chat that cannot be uploaded to, or null.
  *
@@ -342,7 +357,10 @@ async function sendFilePath(
     // before the bytes are in memory, which is the only reason it exists. Both
     // reads share this catch because a path that cannot be opened is the same
     // answer whichever of them hits it first.
-    const { size } = await Deno.stat(path);
+    const size = await regularFileSize(path);
+    if (size === null) {
+      return refusal(`不是一般檔案: ${path}`, "不是一般檔案");
+    }
     kind = mediaKindOf(name, await readHead(path, MEDIA_HEAD_BYTES));
     const tooBig = sizeRefusalText(kind, size);
     if (tooBig) return { ok: false, error: tooBig };

@@ -120,6 +120,7 @@ Deno.test("every marker pair used by the suite is present and ordered", async ()
       "refusaltext",
       "mediakind",
       "sendcap",
+      "regularfile",
       "videoduration",
       "videopreview",
       "uploadargs",

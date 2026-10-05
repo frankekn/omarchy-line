@@ -157,7 +157,13 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // 面板內文字大小（設定裡的 textScale，%）。bar 上的圖示仍跟隨 bar 自己的設定。
-  readonly property real fontScale: Math.max(0.5, Number(setting("textScale", 100)) / 100)
+  // 跟 windowWidth／scrollSpeed 一樣要自己夾：`omarchy bar set` 不驗 schema，
+  // 手改成 999 的話整個面板一行只剩一兩個字。
+  function clampTextScale(value) {
+    return PanelKit.clampTextScale(value)
+  }
+
+  readonly property real fontScale: clampTextScale(setting("textScale", 100)) / 100
   readonly property int fontBody: Math.round(Style.font.bodySmall * fontScale)
   readonly property int fontTitle: Math.round(Style.font.body * fontScale)
 
@@ -311,7 +317,7 @@ Panel {
   readonly property bool canLogin: loginStatus === "idle" || loginStatus === "error"
   // daemon 每次產生 QR 都換檔名，所以純綁定就會自動重載 ——
   // 不要用 imperative 去指派 source，面板沒開時那個 Image 還不存在。
-  readonly property string qrSource: loginInfo && loginInfo.qrPng ? "file://" + loginInfo.qrPng : ""
+  readonly property string qrSource: loginInfo && loginInfo.qrPng ? PanelKit.fileUrl(loginInfo.qrPng) : ""
 
   // "list" or "chat"
   property string view: "list"
@@ -628,7 +634,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (!root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid)
+          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
         }
       }
     }
@@ -808,6 +814,9 @@ Panel {
     var bootChanged = stBoot.length > 0 && root.lastBootId.length > 0
                       && stBoot !== root.lastBootId
     if (stBoot.length > 0) root.lastBootId = stBoot
+    // 新的一輪 seq 從 1 重來。lastBootId 已經換成新的，events.json 和推播都
+    // 不會再判出重啟 —— 舊的 watermark 留著，新一輪前面那幾百筆會被當成吃過。
+    if (bootChanged) root.lastSeq = 0
 
     // 要自己抓歷史的三個條件：手上根本沒有這一間（loadedAt === 0，推進來的事件
     // 只接得動泡泡接不動整頁）；這個 daemon 不寫 events（舊版，或 events.json
@@ -815,16 +824,21 @@ Panel {
     // （bootChanged —— 重啟前的事件再也拿不到）。推播流著、檔案也讀得出來的
     // 時候不用看 —— 缺口各自有人補。
     // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
-    if (root.sockConnected && (root.view === "chat" || root.twoPane) && root.activeChat) {
+    // 但 boot 換了這件事只有這一刻看得到：新 daemon 先寫 state.json 才開始聽
+    // socket，線接上時 lastBootId 早就是新的了。所以先把重抓記下來，等
+    // reconcileAfterConnect 在線接上時補。
+    if ((root.sockConnected || bootChanged)
+        && (root.view === "chat" || root.twoPane) && root.activeChat) {
       var fresh = root.chatById(root.activeChat.mid)
-      var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
+      var moved = root.sockConnected && !!fresh
+          && Number(fresh.lastTime || 0) > root.loadedAt
       if ((moved && (root.loadedAt === 0 || !root.eventsLive)) || bootChanged) {
         root.historyReloadAfterGeneration = Math.max(root.historyReloadAfterGeneration,
                                                      root.historyGen + 1)
         root.historyReloadChat = String(root.activeChat.mid || "")
-        if (!root.loading) {
+        if (root.sockConnected && !root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid)
+          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
         }
       }
     }
@@ -2201,7 +2215,9 @@ Panel {
     if (root.loading) return true
     if (root.reconciliationAttemptedEpoch === root.reconciliationEpoch) return true
     root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-    root.loadHistory(root.activeChat.mid)
+    // twoPane 右欄跟著面板重開、view 還在 list 時不能順便標已讀；
+    // 使用者已點開對話、view 是 chat 時，斷線補抓也要送已讀。
+    root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
     return true
   }
 
@@ -2841,7 +2857,7 @@ Panel {
       root.finishImageRetry(msgId)
       var paths = Object.assign({}, root.imagePaths)
       paths[msgId] = res.ok && res.data && res.data.path
-        ? "file://" + res.data.path : ""
+        ? PanelKit.fileUrl(res.data.path) : ""
       // Age-cap the path table (see imagePathsMax): an entry is cheap, but
       // it only left on a read error or logout, so the map grew with every
       // image the shell ever displayed in one login. Forgetting the oldest
@@ -3179,13 +3195,48 @@ Panel {
 
   // 字級寫回 shell.json 走 omarchy 自己的指令，存檔後會熱重載，
   // settings 跟著更新 → fontScale 重算。不要自己寫 shell.json。
-  Process { id: settingWriter; running: false }
+  // 所有寫 shell.json 的地方都排進同一列（理由見 PanelKit.queueSetting）：
+  // settingQueue 是還沒送的 { key, value }，settingInFlight 是正在跑的那一筆。
+  property var settingQueue: []
+  property var settingInFlight: null
+
+  Process {
+    id: settingWriter
+    running: false
+    // 掛在 running 上而不是 exited，理由同 clipWriter：起不來的失敗沒有 exited。
+    // callLater 讓下一條命令在這個訊號收完之後才起，不在 Process 自己的通知裡重入。
+    onRunningChanged: if (!running) Qt.callLater(root.drainSettings)
+  }
+
+  function writeSetting(key, value) {
+    root.settingQueue = PanelKit.queueSetting(root.settingQueue, key, value)
+    root.drainSettings()
+  }
+
+  function drainSettings() {
+    if (settingWriter.running) return
+    if (root.settingQueue.length === 0) {
+      root.settingInFlight = null
+      return
+    }
+    var head = root.settingQueue[0]
+    root.settingQueue = root.settingQueue.slice(1)
+    root.settingInFlight = head
+    settingWriter.command = ["omarchy", "bar", "set", root.moduleName, head.key, String(head.value)]
+    settingWriter.running = true
+  }
+
+  // 這個 key 寫完之後會是什麼。步進一律從這裡算，不只看現值：熱重載還沒回來之前
+  // 再按一下，要從上一下的結果往下走。
+  function pendingSetting(key, current) {
+    return PanelKit.pendingSetting(root.settingQueue, root.settingInFlight, key, current)
+  }
 
   function setTextScale(delta) {
-    var next = Math.max(80, Math.min(160, Math.round(root.fontScale * 100) + delta))
-    if (next === Math.round(root.fontScale * 100)) return
-    settingWriter.command = ["omarchy", "bar", "set", root.moduleName, "textScale", String(next)]
-    settingWriter.running = true
+    var cur = Math.round(Number(root.pendingSetting("textScale", Math.round(root.fontScale * 100))))
+    var next = Math.max(80, Math.min(160, cur + delta))
+    if (next === cur) return
+    root.writeSetting("textScale", next)
   }
 
   // 面板位置也寫回 shell.json，跟字級同一條路。
@@ -3201,10 +3252,10 @@ Panel {
     return PanelKit.placementLabel(mode, tr)
   }
 
+  // 排著的值是寫進設定檔的字面（"Center of screen"），先換回模式再往下走。
   function togglePlacement() {
-    settingWriter.command = ["omarchy", "bar", "set", root.moduleName, "placement",
-      root.nextPlacement(root.placement)]
-    settingWriter.running = true
+    var cur = root.placementMode(root.pendingSetting("placement", root.placement))
+    root.writeSetting("placement", root.nextPlacement(cur))
   }
 
   // 捲動速度也是同一條路。按一下換下一段：比現在大的第一段，到頂繞回最小 ——
@@ -3221,9 +3272,8 @@ Panel {
   }
 
   function stepScrollSpeed() {
-    settingWriter.command = ["omarchy", "bar", "set", root.moduleName, "scrollSpeed",
-      String(root.nextScroll(root.scrollPercent))]
-    settingWriter.running = true
+    var cur = Number(root.pendingSetting("scrollSpeed", root.scrollPercent))
+    root.writeSetting("scrollSpeed", root.nextScroll(cur))
   }
 
   // 讀取筆數走同一條路：找「下一個更大的段位」而不是查現在排第幾，手改成 37
@@ -3239,27 +3289,24 @@ Panel {
   }
 
   function stepHistoryPage() {
-    settingWriter.command = ["omarchy", "bar", "set", root.moduleName, "historyPage",
-      String(root.nextHistory(root.historyPage))]
-    settingWriter.running = true
+    var cur = Number(root.pendingSetting("historyPage", root.historyPage))
+    root.writeSetting("historyPage", root.nextHistory(cur))
   }
 
   // App 視窗被拉大／縮小之後把尺寸記回 shell.json，下次開一樣大。
-  Process { id: sizeWriter; running: false }
-
+  // 寬高是兩次 `omarchy bar set`，跟其他設定排同一列：各開一個 Process 的話，
+  // 拖完視窗緊接著按 A+，兩邊會各自讀寫一次 shell.json 互相蓋掉。
   function saveWindowSize(w, h) {
-    var nw = root.clampWindowSize(w, root.windowWidth, 560)
-    var nh = root.clampWindowSize(h, root.windowHeight, 480)
+    var curW = Number(root.pendingSetting("windowWidth", root.windowWidth))
+    var curH = Number(root.pendingSetting("windowHeight", root.windowHeight))
+    var nw = root.clampWindowSize(w, curW, 560)
+    var nh = root.clampWindowSize(h, curH, 480)
     // 沒變就別寫。寫回去會讓 settings 熱重載、implicitWidth 重算，
-    // 每次都寫等於自己一直觸發自己。
-    if (nw === root.windowWidth && nh === root.windowHeight) return
-    // 一個 Process 一次只跑一條命令，而寬高是兩次 `omarchy bar set`，同時送會
-    // 各自讀寫一次 shell.json 互相蓋掉；包一層 sh 讓它們依序跑。值是上面自己
-    // 夾出來的整數，沒有引號問題。
-    sizeWriter.command = ["sh", "-c",
-      "omarchy bar set " + root.moduleName + " windowWidth " + nw +
-      " && omarchy bar set " + root.moduleName + " windowHeight " + nh]
-    sizeWriter.running = true
+    // 每次都寫等於自己一直觸發自己。比的是「寫完之後會是什麼」，
+    // 還在排隊的同一個尺寸不用再排一次。
+    if (nw === curW && nh === curH) return
+    root.writeSetting("windowWidth", nw)
+    root.writeSetting("windowHeight", nh)
   }
 
   function pickerComposerStillOwned(chat, version, generation) {
@@ -3569,7 +3616,7 @@ Panel {
   // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
   // ←/→ 會走到一格空白，看起來就是燈箱壞了。
   function pictureList(messages) {
-    return PanelKit.pictureList(messages)
+    return PanelKit.pictureList(messages, tr)
   }
 
   // 縮放固定在 [1,4]：小於 1 就沒有放大的意義，大於 4 縮圖會糊成馬賽克。
@@ -3660,7 +3707,7 @@ Panel {
       // 原檔就只是躺在快取裡，沒有別的事要做 —— 尤其不能拿去開外部程式：
       // 那是使用者從頭到尾沒要求過的動作，畫面上會莫名其妙跳出一個看圖視窗。
       if (root.lightbox && root.lightbox.id === id)
-        root.lightbox = { id: root.lightbox.id, source: "file://" + path,
+        root.lightbox = { id: root.lightbox.id, source: PanelKit.fileUrl(path),
                           name: root.lightbox.name, index: root.lightbox.index }
       return
     }
@@ -3686,7 +3733,8 @@ Panel {
     root.closeLightbox()
     if (!root.appWindow) root.close()
     // FLEX 圖是 http 網址，沒有本地檔可以開，交給瀏覽器也算「打開它」。
-    Quickshell.execDetached(["xdg-open", src.indexOf("file://") === 0 ? src.slice(7) : src])
+    // 燈箱的 source 是 fileUrl 跳脫過的網址，xdg-open 要的是解回來的真實路徑。
+    Quickshell.execDetached(["xdg-open", PanelKit.localPath(src)])
   }
 
   // ------------------------------------------------------------ 訊息清單
@@ -3863,10 +3911,11 @@ Panel {
   }
 
   // 回覆哪一則。存的是畫得出來的那三個欄位，跟 daemon 給的 replyTo 同一個形狀。
+  // 回自己的那句時 fromName 是直接畫在引言上的字，要照介面語言走，不能寫死「我」。
   function startReply(m) {
     if (!root.canActOn(m)) return
     root.replyTarget = { id: String(m.id),
-      fromName: String(m.from === root.myMid ? "我" : (m.fromName || "")),
+      fromName: String(m.from === root.myMid ? tr("me") : (m.fromName || "")),
       text: root.oneLine(root.bodyText(m)) }
   }
 
@@ -4307,7 +4356,7 @@ Panel {
       anchors.fill: parent
       // 載入中、或路徑指到一個已經不在的檔案時，看得見的是底下那顆縮寫圓。
       visible: badge.hasPicture && badgePicture.status === Image.Ready
-      source: badge.hasPicture ? "file://" + badge.picture : ""
+      source: badge.hasPicture ? PanelKit.fileUrl(badge.picture) : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
       cache: true
@@ -6026,7 +6075,7 @@ Panel {
               // 打不開的附件連縮圖都不畫，跟 pictureList 同一條規則 ——
               // 兩邊要是各判各的，就會出現一張看得到、←/→ 卻走不到的圖。
               source: msgDelegate.mediaOk && modelData.mediaPath
-                ? "file://" + modelData.mediaPath : ""
+                ? PanelKit.fileUrl(modelData.mediaPath) : ""
               fillMode: Image.PreserveAspectFit
               width: Math.min(parent.width, Style.space(220))
               height: Math.min(implicitHeight * (width / Math.max(1, implicitWidth)), Style.space(220))
@@ -6047,7 +6096,7 @@ Panel {
                     return
                   }
                   if (modelData.contentType === "IMAGE")
-                    root.showPicture(modelData.id, "file://" + modelData.mediaPath,
+                    root.showPicture(modelData.id, PanelKit.fileUrl(modelData.mediaPath),
                                      modelData.fileName || tr("image"))
                   else root.openMedia(modelData.id, "external")
                 }
