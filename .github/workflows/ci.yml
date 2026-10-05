@@ -35,6 +35,8 @@ jobs:
           '
       - name: qml harness
         run: node tests/qml/run.js
+      - name: review finalizer tests
+        run: node --test .github/scripts/needlefish-finalize.test.cjs
       - name: qml key tests
         # qmltestrunner ships in /usr/lib/qt6/bin, which is not on PATH; the
         # runner script probes for it by name, so extend PATH for the call.
