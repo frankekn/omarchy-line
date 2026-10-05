@@ -400,6 +400,12 @@ function onTalkOp(op: RawOperationFields): void {
     if (!ev) return;
 
     if (ev.kind === "read") {
+      const myMid = String(me.mid ?? "");
+      // Taken before applyReadOp moves it: whether our own cursor advanced is
+      // the whole question below.
+      const prevMine = ev.by === myMid
+        ? readRanges.get(ev.chat)?.get(myMid)
+        : undefined;
       // The ranges take every read, ours included; whether the panel hears
       // about it is applyReadOp's call, and ours is the one it withholds.
       const push = applyReadOp(ev);
@@ -410,7 +416,19 @@ function onTalkOp(op: RawOperationFields): void {
       // round would otherwise pay the next push's pending onto the stale count
       // (5 shown, the phone reads, server 0, +1 arrives, shows 6 instead of 1).
       // A peer's op 55 never moves our unread and keeps the incremental path.
-      if (ev.by === String(me.mid ?? "")) {
+      //
+      // Only when the cursor actually moved, though. markChatRead records the
+      // cursor it sent, so the echo of our own check -- and a replayed or
+      // duplicate op -- lands at or behind it: that read is already booked
+      // (its round is already scheduled by the send), and forcing another
+      // full round for it doubled the getMessageBoxes cost of every message
+      // read in an open chat. A real read elsewhere always moves it forward.
+      // An id that does not parse proves nothing, so it keeps the old answer.
+      const upTo = asMessageId(ev.messageId);
+      if (
+        ev.by === myMid &&
+        (upTo === null || prevMine === undefined || prevMine < upTo)
+      ) {
         setForceFullRefresh(true);
         scheduleRefresh();
       }

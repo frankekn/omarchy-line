@@ -1066,6 +1066,18 @@ export function scheduledCount() {
 export function pushedList() {
   return pushed;
 }
+export function seedOwnCursor(chat: string, upTo: bigint) {
+  let ranges = readRanges.get(chat);
+  if (!ranges) readRanges.set(chat, ranges = new Map());
+  ranges.set(String(me.mid), upTo);
+}
+export function ownCursor(chat: string) {
+  return readRanges.get(chat)?.get(String(me.mid));
+}
+export function resetSpies() {
+  forceFullRefresh = false;
+  scheduled = 0;
+}
 `,
   );
   try {
@@ -1093,6 +1105,56 @@ Deno.test("our own read op from another device forces a full round and schedules
   assertEquals(m.scheduledCount(), 1);
   // And the withholding stands: our own read is still not an event.
   assertEquals(m.pushedList(), []);
+});
+
+Deno.test("an own read that advances a known cursor still forces a full round", async () => {
+  const m = await loadReadBranch();
+  m.seedOwnCursor(READ_PEER, 18000000000005n);
+  m.onReadBranch({
+    kind: "read",
+    chat: READ_PEER,
+    messageId: "18000000000006",
+    by: READ_ME,
+  });
+  assertEquals(m.forceFullValue(), true);
+  assertEquals(m.scheduledCount(), 1);
+  assertEquals(m.ownCursor(READ_PEER), 18000000000006n);
+});
+
+Deno.test("the echo of our own markRead does not book a second full round", async () => {
+  const m = await loadReadBranch();
+  // markChatRead recorded the cursor it sent and already scheduled the round
+  // that settles unread; the op 40 LINE echoes back for that very check must
+  // not force one more.
+  m.seedOwnCursor(READ_PEER, 18000000000006n);
+  m.onReadBranch({
+    kind: "read",
+    chat: READ_PEER,
+    messageId: "18000000000006",
+    by: READ_ME,
+  });
+  assertEquals(m.forceFullValue(), false);
+  assertEquals(m.scheduledCount(), 0);
+  assertEquals(m.pushedList(), []);
+});
+
+Deno.test("a duplicate or replayed own read op books nothing", async () => {
+  const m = await loadReadBranch();
+  const op = {
+    kind: "read" as const,
+    chat: READ_PEER,
+    messageId: "18000000000008",
+    by: READ_ME,
+  };
+  m.onReadBranch(op);
+  assertEquals(m.scheduledCount(), 1);
+  m.resetSpies();
+  // The same op again (a reconnect replaying the backlog), then an older one.
+  m.onReadBranch(op);
+  m.onReadBranch({ ...op, messageId: "18000000000007" });
+  assertEquals(m.forceFullValue(), false);
+  assertEquals(m.scheduledCount(), 0);
+  assertEquals(m.ownCursor(READ_PEER), 18000000000008n);
 });
 
 Deno.test("a peer's read op leaves the next round incremental", async () => {

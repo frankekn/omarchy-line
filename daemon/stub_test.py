@@ -399,6 +399,41 @@ class ContractTest(unittest.TestCase):
         self.s.call(cmd="history", chat=mid, count=5, markRead=True)
         self.assertEqual(revision + 1, self.s.state()["chatsRevision"])
 
+    def test_mark_read_command_zeroes_unread_once(self):
+        # Not cstub-family: the stub is shared across the class, and the
+        # history markRead test above needs that one still unread.
+        mid = "rstub-lunch"
+        revision = self.s.state()["chatsRevision"]
+        self.assertGreater(
+            [c for c in self.s.state()["chats"] if c["mid"] == mid][0]["unread"], 0)
+        newest = self.s.call(cmd="history", chat=mid, count=1)["data"][-1]["id"]
+        res = self.s.call(cmd="markRead", chat=mid, upTo=newest)
+        self.assertEqual((True, {"marked": True}), (res["ok"], res["data"]))
+        self.assertEqual(
+            0, [c for c in self.s.state()["chats"] if c["mid"] == mid][0]["unread"])
+        self.assertEqual(revision + 1, self.s.state()["chatsRevision"])
+        # Nothing left to read: no revision bump, and the reply says so.
+        res = self.s.call(cmd="markRead", chat=mid, upTo=newest)
+        self.assertEqual((True, {"marked": False}), (res["ok"], res["data"]))
+        self.assertEqual(revision + 1, self.s.state()["chatsRevision"])
+
+    def test_mark_read_command_refuses_bad_arguments(self):
+        for chat, up_to, error in (
+                (None, "1", "不支援的聊天室"),
+                ("../x", "1", "不支援的聊天室"),
+                ("cstub-family", None, "訊息 id 不對"),
+                ("cstub-family", "", "訊息 id 不對"),
+                ("cstub-family", "a b", "訊息 id 不對"),
+                ("cstub-family", 18000000000010, "訊息 id 不對")):
+            args = {"cmd": "markRead"}
+            if chat is not None:
+                args["chat"] = chat
+            if up_to is not None:
+                args["upTo"] = up_to
+            res = self.s.call(**args)
+            self.assertEqual((False, error), (res["ok"], res.get("error")),
+                             args)
+
     def test_send_appends_and_updates_summary(self):
         mid = "ustub-notes"
         before = len(self.s.call(cmd="history", chat=mid, count=100)["data"])

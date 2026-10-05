@@ -16,8 +16,8 @@ import { pooledMap } from "../pool.ts";
 import {
   PANEL_BACKGROUND_COMMANDS,
   PANEL_MESSAGE_COMMANDS,
-  PANEL_MUTATION_COMMANDS,
   PANEL_SESSION_INDEPENDENT_COMMANDS,
+  panelMustAdmitRequest,
   servePanelConnection,
 } from "../panelserver.ts";
 import {
@@ -68,6 +68,8 @@ import {
 import { cacheMedia, toPluginMessage } from "./messages.ts";
 import {
   bumpChatsRevision,
+  chats,
+  dirtyMids,
   login,
   me,
   pushEvent,
@@ -78,7 +80,11 @@ import {
   writeState,
 } from "./state.ts";
 import { loadReadRange } from "./push.ts";
-import { refreshChats, setForceFullRefresh } from "./refresh.ts";
+import {
+  refreshChats,
+  scheduleRefresh,
+  setForceFullRefresh,
+} from "./refresh.ts";
 import { notePanelClosed, notePanelOpened } from "./notify.ts";
 import type { Client } from "@evex/linejs";
 import { TalkMessage } from "@evex/linejs";
@@ -144,6 +150,93 @@ function historyCount(value: unknown): number {
   return Math.max(1, Math.min(HISTORY_COUNT_MAX, n));
 }
 // enil:histcount-end
+
+// The block between the enil:markread markers is sliced out verbatim by
+// markread_test.ts on top of stub state; asMessageId comes from the real
+// readrange block, loaded next to it.
+// enil:markread-begin
+/**
+ * The `markRead` command's arguments, or the refusal it gets. `chat` follows
+ * history's rule (a store path segment and a mid on the wire). `upTo` must be
+ * a decimal string: message ids are 64-bit and a JSON number past 2^53 would
+ * already have been rounded to a neighbouring message by the time it got here.
+ */
+function markReadArgs(
+  req: Json,
+): { chat: string; upTo: string } | { error: string } {
+  const chat = String(req.chat ?? "");
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(chat)) return { error: "不支援的聊天室" };
+  const upTo = typeof req.upTo === "string" ? req.upTo : "";
+  if (!/^\d{1,30}$/.test(upTo)) return { error: "訊息 id 不對" };
+  return { chat, upTo };
+}
+
+/**
+ * Tells LINE the chat is read up to `upTo`, unless it plainly already is.
+ * Shared by `history markRead` and `markRead`. Answers true when the check
+ * went out, false when it was skipped or LINE refused it, and null when the
+ * session that asked has been retired -- the caller's 尚未登入.
+ *
+ * The panel asks on every message that lands in an open chat, so the common
+ * case is a chat with nothing left to read, and each check that does go out
+ * costs a full getMessageBoxes round (see below). Two things prove there is
+ * nothing to send:
+ *  - our own cursor already covers `upTo`. op 40 (our read, from any device,
+ *    this one's echo included) and loadReadRange both keep it, and the send
+ *    below records it, so a repeated ask for the same message stops here.
+ *  - the row says 0 unread and no push has booked uncounted debt on it. A
+ *    push that repaints an existing row leaves `unread` alone and books the
+ *    message in dirtyMids instead, so `unread` alone would read a fresh
+ *    message as already read. A chat with no row proves nothing either way.
+ *
+ * After a send, the server's unread count moved and no per-box source can say
+ * by how much: only the full round's box.unreadCount knows, hence the forced
+ * full round. It goes through the debouncer, not refreshChats(), so it shares
+ * a window with the op 40 echo LINE sends back for this very check (and with
+ * the next message's ask) instead of paying a round of its own. A refused
+ * send moved nothing: no cursor, no round.
+ */
+async function markChatRead(
+  owner: Client,
+  generation: number,
+  chat: string,
+  upTo: string,
+): Promise<boolean | null> {
+  if (!sessionIsCurrent(owner, generation)) return null;
+  const myMid = String(me.mid ?? "");
+  const id = asMessageId(upTo);
+  const mine = readRanges.get(chat)?.get(myMid);
+  if (id !== null && mine !== undefined && mine >= id) return false;
+  const row = chats.find((c) => c.mid === chat);
+  if (row && row.unread === 0 && (dirtyMids.get(chat)?.pending ?? 0) === 0) {
+    return false;
+  }
+  const seq = await owner.base.getReqseq();
+  if (!sessionIsCurrent(owner, generation)) return null;
+  const sent = await owner.base.talk.sendChatChecked({
+    chatMid: chat,
+    lastMessageId: upTo,
+    seq,
+  }).then(() => true, (e: Error) => {
+    console.error("[read]", e.message);
+    return false;
+  });
+  if (!sessionIsCurrent(owner, generation)) return null;
+  if (!sent) return false;
+  // Forward only, like applyReadOp: the op 40 echo can land before the send
+  // resolves and may already have put a newer cursor here. readIndex needs no
+  // reset -- readIndexOf leaves our own mid out of the index.
+  if (id !== null && myMid) {
+    let ranges = readRanges.get(chat);
+    if (!ranges) readRanges.set(chat, ranges = new Map());
+    const prev = ranges.get(myMid);
+    if (prev === undefined || prev < id) ranges.set(myMid, id);
+  }
+  setForceFullRefresh(true);
+  scheduleRefresh();
+  return true;
+}
+// enil:markread-end
 
 async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -308,31 +401,25 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
 
     if (req.markRead && out.length) {
       const newest = out[out.length - 1];
-      if (!sessionIsCurrent(owner, generation)) {
-        return { ok: false, error: "尚未登入" };
-      }
-      const seq = await owner.base.getReqseq();
-      if (!sessionIsCurrent(owner, generation)) {
-        return { ok: false, error: "尚未登入" };
-      }
-      await owner.base.talk.sendChatChecked({
-        chatMid,
-        lastMessageId: newest.id,
-        seq,
-      }).catch((e: Error) => console.error("[read]", e.message));
-      if (!sessionIsCurrent(owner, generation)) {
-        return { ok: false, error: "尚未登入" };
-      }
-      // Reading the chat moved the server's unread count, and no per-box
-      // source can tell the incremental round by how much -- the full round's
-      // box.unreadCount is the only authority there is.
-      setForceFullRefresh(true);
-      refreshChats();
+      const marked = await markChatRead(owner, generation, chatMid, newest.id);
+      if (marked === null) return { ok: false, error: "尚未登入" };
     }
 
     // Thumbnails land behind the answer, not in front of it.
     if (pageRaws?.length) warmPagePreviews(pageRaws, owner, generation);
     return { ok: true, data: out };
+  }
+
+  // The open chat's "the reader saw this" signal. It used to ride on
+  // `history count:1`, which paid a read-range fetch and a background page
+  // revalidation for every message that arrived while the chat was on screen;
+  // the panel already holds that page, and only the check itself was wanted.
+  if (cmd === "markRead") {
+    const args = markReadArgs(req);
+    if ("error" in args) return { ok: false, error: args.error };
+    const marked = await markChatRead(owner, generation, args.chat, args.upTo);
+    if (marked === null) return { ok: false, error: "尚未登入" };
+    return { ok: true, data: { marked } };
   }
 
   if (cmd === "members") {
@@ -923,11 +1010,7 @@ async function servePanel(
       backgroundCommands: PANEL_BACKGROUND_COMMANDS,
       backgroundPriority: (cmd) => cmd === "image",
       messageCommands: PANEL_MESSAGE_COMMANDS,
-      mustAdmitRequest(req) {
-        const cmd = String(req.cmd ?? "");
-        return PANEL_MUTATION_COMMANDS.has(cmd) ||
-          (cmd === "history" && req.markRead === true);
-      },
+      mustAdmitRequest: panelMustAdmitRequest,
       sessionIndependentCommands: PANEL_SESSION_INDEPENDENT_COMMANDS,
       backgroundSignal: panelMediaRetirementSignal,
       attachPusher(send) {

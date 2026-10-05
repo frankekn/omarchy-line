@@ -7,10 +7,10 @@ import {
   PANEL_MEDIA_BUSY_TEXT,
   PANEL_MEDIA_QUEUE_MAX,
   PANEL_MESSAGE_COMMANDS,
-  PANEL_MUTATION_COMMANDS,
   PANEL_ORDINARY_QUEUE_MAX,
   PANEL_SESSION_INDEPENDENT_COMMANDS,
   type PanelConnection,
+  panelMustAdmitRequest,
   servePanelConnection,
 } from "./panelserver.ts";
 import { LatencyTracker, WorkLane } from "./runtime.ts";
@@ -129,9 +129,7 @@ function options(
     lane,
     backgroundCommands: PANEL_BACKGROUND_COMMANDS,
     messageCommands: PANEL_MESSAGE_COMMANDS,
-    mustAdmitRequest: (req: JsonReply) =>
-      PANEL_MUTATION_COMMANDS.has(String(req.cmd ?? "")) ||
-      (req.cmd === "history" && req.markRead === true),
+    mustAdmitRequest: panelMustAdmitRequest,
     sessionIndependentCommands: PANEL_SESSION_INDEPENDENT_COMMANDS,
     encodeError: "encode",
     refusalText: (error: unknown) => String(error),
@@ -729,8 +727,34 @@ Deno.test("132 token-bearing sends each execute or receive a refusal", async () 
   await serving;
 });
 
+Deno.test("markRead is a side effect whatever its arguments say", () => {
+  // Admission is decided before the handler validates anything, so the
+  // command name alone has to carry it: a malformed markRead is refused by
+  // the handler, never parked behind the queue as if it were a plain read.
+  for (
+    const req of [
+      { cmd: "markRead", chat: "u" + "0".repeat(32), upTo: "18000000000010" },
+      { cmd: "markRead", chat: "u" + "0".repeat(32) },
+      { cmd: "markRead", upTo: 18000000000010 },
+      { cmd: "markRead" },
+    ]
+  ) {
+    assertEquals(panelMustAdmitRequest(req), true, JSON.stringify(req));
+  }
+  assertEquals(panelMustAdmitRequest({ cmd: "history", markRead: true }), true);
+  assertEquals(panelMustAdmitRequest({ cmd: "history" }), false);
+  assertEquals(panelMustAdmitRequest({ cmd: "history", markRead: 1 }), false);
+});
+
+Deno.test("the socket admits with the predicate this suite drives", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./modules/socket.ts", import.meta.url),
+  );
+  assert(source.includes("mustAdmitRequest: panelMustAdmitRequest,"));
+});
+
 Deno.test("overflowed ordinary mutations receive recoverable refusals", async () => {
-  for (const cmd of ["logout", "hide", "react", "unsend"]) {
+  for (const cmd of ["logout", "hide", "react", "unsend", "markRead"]) {
     let releaseFirst: () => void = () => {};
     const firstGate = new Promise<void>((resolve) => releaseFirst = resolve);
     const handled: Array<{ id: number; cmd: string }> = [];

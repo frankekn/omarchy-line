@@ -179,19 +179,38 @@ Deno.test("a recall tombstone suppresses a queued message publication", async ()
   assert(protect >= 0 && track >= 0 && drain >= 0);
 });
 
-Deno.test("marked-read history rechecks session ownership around both awaits", async () => {
+Deno.test("marking a chat read rechecks session ownership around both awaits", async () => {
   const source = await Deno.readTextFile(
     new URL("./modules/socket.ts", import.meta.url),
   );
-  const history = source.indexOf('if (cmd === "history")');
-  const seq = source.indexOf("await owner.base.getReqseq()", history);
+  // Both `history markRead` and the `markRead` command go through the one
+  // shared helper, so the ordering is pinned there and the callers are pinned
+  // to the helper (and to turning its null into 尚未登入).
+  const mark = source.indexOf("async function markChatRead(");
+  const entry = source.indexOf("sessionIsCurrent(owner, generation)", mark);
+  const seq = source.indexOf("await owner.base.getReqseq()", mark);
   const send = source.indexOf("await owner.base.talk.sendChatChecked", seq);
-  const returned = source.indexOf("return { ok: true, data: out }", send);
+  const done = source.indexOf("// enil:markread-end", send);
   const between = source.slice(seq, send);
-  const after = source.slice(send, returned);
-  assert(history >= 0 && seq > history && send > seq && returned > send);
+  const after = source.slice(send, done);
+  assert(mark >= 0 && entry > mark && seq > entry && send > seq && done > send);
   assert(between.includes("sessionIsCurrent(owner, generation)"));
   assert(after.includes("sessionIsCurrent(owner, generation)"));
+  // The cursor is recorded only once the session is proven current again.
+  assert(
+    after.indexOf("sessionIsCurrent(owner, generation)") <
+      after.indexOf("ranges.set(myMid, id)"),
+  );
+  for (const cmd of ['if (cmd === "history")', 'if (cmd === "markRead")']) {
+    const at = source.indexOf(cmd);
+    const call = source.indexOf("await markChatRead(owner, generation", at);
+    const stale = source.indexOf(
+      'if (marked === null) return { ok: false, error: "尚未登入" }',
+      call,
+    );
+    const next = source.indexOf("\n  if (cmd === ", at + cmd.length);
+    assert(at >= 0 && call > at && stale > call && stale < next, cmd);
+  }
 });
 
 Deno.test("retired message tasks cannot clean replacement-session state", async () => {

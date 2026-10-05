@@ -1246,6 +1246,34 @@ def handle(req):
             write_state()
         return {"ok": True, "data": msgs}
 
+    if cmd == "markRead":
+        # The daemon's lightweight check: no page, just the read. Same
+        # refusals and the same "nothing to do" answer for a row that is
+        # already at 0 -- the stub has no LINE cursor, so `unread` is its
+        # whole notion of read. One deliberate difference: the daemon wants
+        # `upTo` to be a decimal string, because real message ids are, but
+        # the fixtures' ids are "<chat>-m<n>", so here any non-empty string
+        # (never a number) is a message id.
+        mid = req.get("chat")
+        up_to = req.get("upTo")
+        if not isinstance(mid, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{1,128}", mid):
+            return {"ok": False, "error": "不支援的聊天室"}
+        if not isinstance(up_to, str) or not re.fullmatch(
+                r"[A-Za-z0-9_-]{1,128}", up_to):
+            return {"ok": False, "error": "訊息 id 不對"}
+        marked = False
+        with lock:
+            for c in state["chats"]:
+                if c["mid"] == mid and c.get("unread", 0) != 0:
+                    c["unread"] = 0
+                    state["chatsRevision"] = int(
+                        state.get("chatsRevision") or 0) + 1
+                    marked = True
+        if marked:
+            write_state()
+        return {"ok": True, "data": {"marked": marked}}
+
     if cmd == "members":
         mid = req.get("chat") or ""
         # Same three answers as the daemon: a 1:1 box has no member list, a

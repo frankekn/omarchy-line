@@ -956,6 +956,7 @@ Socket commands (one JSON line per request, replies
 | cmd | Args | `data` on success |
 |---|---|---|
 | `history` | `chat`, `count` (1–200, clamped, non-numbers count as 30), `before?` (message id to page back from), `markRead?` | message array, oldest first |
+| `markRead` | `chat`, `upTo` (newest message id read, as a decimal string) | `{ "marked": bool }` — `false` when nothing went to LINE: our own read cursor already covers `upTo`, the row already shows 0 unread with nothing uncounted, or LINE refused the check |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | none |
 | `reply` | `chat`, `text`, `replyTo` (message id), `mentions?`, `requestId?` | none |
 | `react` | `chat`, `messageId`, `type` | none |
@@ -1227,7 +1228,7 @@ plain text, multiline, failed E2EE, image, video, file, sticker, FLEX, system
 events, your own sends, unsent and expired), `empty` (an empty list), `busy`
 (200 chats, for list scrolling and search), and `notify` (same as `default`
 but opens with one `wanted` already set — see the notification-click flow at
-once). `history` pages by `before`, `markRead` clears unread, `send` echoes a
+once). `history` pages by `before`, `markRead` (the flag and the command) clears unread, `send` echoes a
 message back (`mentions` validated like the daemon then re-attached),
 `sendFile` answers `r…` with the same refusal as the daemon, `download` does
 the same for unsent/expired. `members` returns a fake list for groups and the

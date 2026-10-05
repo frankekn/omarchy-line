@@ -30,7 +30,21 @@ export const PANEL_MUTATION_COMMANDS: ReadonlySet<string> = new Set([
   "react",
   "unsend",
   "probeClipboardImage",
+  "markRead",
 ]);
+
+/**
+ * Whether an ordinary request carries a side effect, so an overflowing queue
+ * must answer it at once rather than park the refusal behind every accepted
+ * reply. `history` only counts when it also marks the chat read; its plain
+ * page is a read the panel can simply ask for again. Shared by the socket and
+ * dispatch_test.ts so the suite drives the predicate the daemon runs.
+ */
+export function panelMustAdmitRequest(req: JsonReply): boolean {
+  const cmd = String(req.cmd ?? "");
+  return PANEL_MUTATION_COMMANDS.has(cmd) ||
+    (cmd === "history" && req.markRead === true);
+}
 export const PANEL_ORDINARY_QUEUE_MAX = 64;
 export const PANEL_MEDIA_QUEUE_MAX = 16;
 export const PANEL_MEDIA_BUSY_TEXT = "媒體請求過多，請稍後再試";
