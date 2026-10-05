@@ -116,9 +116,9 @@ class Stub:
             self.sock.close()
         finally:
             self.proc.terminate()
-            # 15, not 5: termination goes through the stub's cleanup on a
-            # loaded CI runner, and a too-tight bound turns that into a flake.
-            self.proc.wait(timeout=15)
+            # Well under the stub's 30s HEARTBEAT: a SIGTERM that only lands
+            # once the main loop's sleep ends must fail here, not pass late.
+            self.proc.wait(timeout=10)
             self.proc.stdout.close()
             shutil.rmtree(self.dir, ignore_errors=True)
 
