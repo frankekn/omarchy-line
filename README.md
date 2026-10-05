@@ -761,6 +761,7 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 | `events.json` | live event ring (atomic write, `FileView`-watched), see below |
 | `sock` | unix socket, one JSON request/reply per line; connected panels also receive push frames here |
 | `storage.json` | LINE credentials and E2EE keys (`chmod 600`, daemon-only) |
+| `lock` | single-instance gate: the running daemon holds an `flock` on it, and a second daemon exits instead of sharing the session (empty, daemon-only) |
 | `media/` | downloaded image/video thumbnail cache (swept at 14 days or 500 MB) |
 | `media/avatars/` | avatar cache (**age-insensitive**, 20 MB cap, sweeps oldest first) |
 | `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |

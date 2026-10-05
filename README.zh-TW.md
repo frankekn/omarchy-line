@@ -594,6 +594,7 @@ bar 面板，所以什麼都不做。
 | `events.json` | 即時事件環（原子寫入，外掛用 `FileView` 監看），見下 |
 | `sock` | unix socket，一行一個 JSON 請求／回應；連線中的面板也從這裡收推播幀 |
 | `storage.json` | LINE 憑證與 E2EE 金鑰（`chmod 600`，daemon 專用） |
+| `lock` | 單一實例鎖：執行中的 daemon 對它持有 `flock`，第二個 daemon 會直接退出、不共用同一個 session（空檔，daemon 專用） |
 | `media/` | 下載過的圖片／影片縮圖快取（14 天或 500 MB 到就掃掉舊的） |
 | `media/avatars/` | 大頭貼快取（**不看時間**，只有 20 MB 上限，滿了先掃最舊的） |
 | `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |

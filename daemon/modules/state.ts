@@ -366,9 +366,9 @@ function writeState(): Promise<void> {
       2,
     );
     const started = performance.now();
-    // Pid-suffixed tmp: two daemons (the single-instance gate tries to
-    // prevent it; a hand-run one does not always) must not rename a
-    // half-written file onto each other's state.
+    // Pid-suffixed tmp: belt and braces behind the single-instance gate
+    // (modules/instance.ts) -- two writers must never rename a half-written
+    // file onto each other's state.
     const tmp = `${STATE_PATH}.${Deno.pid}.tmp`;
     let committed = false;
     try {

@@ -17,6 +17,7 @@ import {
   AVATAR_DIR,
   HEARTBEAT_MS,
   IMAGE_DIR,
+  LOCK_PATH,
   messageStore,
   POLL_MS,
   recoverClipboardStages,
@@ -45,6 +46,10 @@ import {
   watchdogTick,
 } from "./modules/watchdog.ts";
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
+import { claimInstance } from "./modules/instance.ts";
+
+/** Held for the life of the process: closing it would release the gate. */
+let instanceLock: Deno.FsFile | null = null;
 
 async function main() {
   installRejectionGuard();
@@ -53,6 +58,16 @@ async function main() {
   // daemon restart for an explicit logout.
   setLoginState({ status: "starting", attempt: "resume" });
   await Deno.mkdir(AVATAR_DIR, { recursive: true }); // and MEDIA_DIR with it
+  // Before anything else touches the state dir: a second daemon must not
+  // resume the stored session, rewrite state.json or take over the socket.
+  instanceLock = await claimInstance(LOCK_PATH);
+  if (!instanceLock) {
+    console.error(
+      `enil: another daemon already holds ${LOCK_PATH}; refusing to start ` +
+        `a second one on the same session`,
+    );
+    Deno.exit(1);
+  }
   await recoverClipboardStages().catch((error) =>
     console.error(`[clipboard] stage recovery failed: ${errorLine(error)}`)
   );
