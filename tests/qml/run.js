@@ -4350,10 +4350,58 @@ ok(
   "size is only tracked while the window is actually on screen",
 );
 ok(
-  /interval: 800/.test(winSrc) &&
-    /onTriggered: if \(root\.visible\) root\.sizeSettled\(/.test(winSrc),
+  /interval: 800/.test(winSrc) && /id: sizeSettleTimer/.test(winSrc),
   "and only after it settles for 800ms, so dragging a border is not a save loop",
 );
+// A Hyprland retile changes width/height exactly like a border drag does. Only a
+// floating window's size is the user's; a tiled one is whatever the layout gave it.
+{
+  const settle = winSrc.slice(winSrc.indexOf("id: sizeSettleTimer"),
+    winSrc.indexOf("id: floatCheckTimer"));
+  const check = winSrc.slice(winSrc.indexOf("id: floatCheckTimer"),
+    winSrc.indexOf("function ownIpcObject()"));
+  ok(
+    /import Quickshell\.Hyprland/.test(winSrc) &&
+      /Hyprland\.refreshToplevels\(\)/.test(settle) &&
+      /floatCheckTimer\.restart\(\)/.test(settle),
+    "a settled size first asks Hyprland for fresh window state",
+  );
+  ok(
+    /ipc && ipc\.floating === true/.test(check) &&
+      /root\.sizeSettled\(/.test(check),
+    "and is only reported when Hyprland says the window floats",
+  );
+  ok(
+    /Hyprland\.requestSocketPath === ""/.test(settle),
+    "outside Hyprland there is no one to ask, so it falls back to saving",
+  );
+  ok(
+    /floatCheckTimer\.stop\(\)/.test(winSrc),
+    "hiding the window drops a pending float check too",
+  );
+  const winLines = winSrc.split("\n");
+  const ownStart = winLines.findIndex((l) => l.trimEnd() === "  function ownIpcObject() {");
+  const ownEnd = winLines.findIndex((l, i) => i > ownStart && l === "  }");
+  const ownIpcObject = new Function("root", "Hyprland", "Quickshell",
+    winLines.slice(ownStart + 1, ownEnd).join("\n"));
+  const tl = (o) => ({ lastIpcObject: o });
+  const hypr = { toplevels: { values: [
+    tl({ pid: 7, title: "Omarchy dev gallery", class: "org.quickshell", floating: true }),
+    tl({ pid: 9, title: "LINE", class: "org.quickshell", floating: true }),
+    tl({ pid: 7, title: "LINE", class: "org.quickshell", floating: false }),
+    tl({}),
+  ] } };
+  const own = ownIpcObject({ title: "LINE" }, hypr, { processId: 7 });
+  ok(
+    !!own && own.pid === 7 && own.title === "LINE" && own.floating === false,
+    "the window finds its own Hyprland entry by pid, class and title -- the dev " +
+      "gallery shares the class, another process may share the title",
+  );
+  ok(
+    ownIpcObject({ title: "LINE" }, { toplevels: { values: [] } }, { processId: 7 }) === null,
+    "no entry yet (IPC not answered) is null, which saves nothing",
+  );
+}
 ok(
   /if \(!root\.appWindow\) root\.switchPanel\(direction\)/.test(src),
   "Tab is a bar-panel gesture; in a normal window it does nothing",

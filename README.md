@@ -739,7 +739,9 @@ windowrule = size 1040 720, class:^(org\.quickshell)$, title:^(LINE)$
 ```
 
 The window remembers its size (written back to `windowWidth`/`windowHeight`
-0.8 s after you stop resizing) and reopens the same. Or set it directly:
+0.8 s after you stop resizing a floating window; a tiled window's size is the
+layout's, so retiles are not recorded) and reopens the same. Or set it
+directly:
 
 ```bash
 omarchy bar set io.github.frankekn.line windowWidth 1280

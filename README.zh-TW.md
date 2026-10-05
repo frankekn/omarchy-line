@@ -572,7 +572,7 @@ windowrule = float, class:^(org\.quickshell)$, title:^(LINE)$
 windowrule = size 1040 720, class:^(org\.quickshell)$, title:^(LINE)$
 ```
 
-視窗大小會自己記起來（停手 0.8 秒後寫回 `windowWidth` / `windowHeight`），
+視窗大小會自己記起來（浮動視窗停手 0.8 秒後寫回 `windowWidth` / `windowHeight`；平鋪時大小由版面決定，重排不會記），
 下次開一樣大。也可以直接指定：
 
 ```bash

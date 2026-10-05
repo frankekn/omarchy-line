@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import qs.Commons
 
 // App window 模式的宿主：一個真正的 toplevel 視窗，Hyprland 當成一般應用程式管
@@ -45,6 +46,7 @@ FloatingWindow {
       })
     } else {
       sizeSettleTimer.stop()
+      floatCheckTimer.stop()
       if (wanted && owner && "close" in owner) owner.close()
     }
   }
@@ -53,10 +55,51 @@ FloatingWindow {
   onWidthChanged: if (visible) sizeSettleTimer.restart()
   onHeightChanged: if (visible) sizeSettleTimer.restart()
 
+  // 拉邊框和 Hyprland 重排在這裡長得一模一樣：都只是 width/height 變了，
+  // 合成器不會說是誰動的。平鋪的視窗大小是版面決定的（開一個視窗、換一個
+  // workspace 就重排一次），記下來也沒用 —— 記住的尺寸只有浮動時才套得上。
+  // 所以安定之後先問 Hyprland 這個視窗是不是浮動的，是才記。
   Timer {
     id: sizeSettleTimer
     interval: 800
-    onTriggered: if (root.visible) root.sizeSettled(Math.round(root.width), Math.round(root.height))
+    onTriggered: {
+      if (!root.visible) return
+      // 不在 Hyprland 底下就沒人可問，照舊直接記。
+      if (Hyprland.requestSocketPath === "") {
+        root.sizeSettled(Math.round(root.width), Math.round(root.height))
+        return
+      }
+      // lastIpcObject 是上一次 refresh 拿到的快照，浮動與否可能早就變了；
+      // 先刷新一次，回覆是非同步的，等一下再看。
+      Hyprland.refreshToplevels()
+      floatCheckTimer.restart()
+    }
+  }
+
+  Timer {
+    id: floatCheckTimer
+    interval: 300
+    onTriggered: {
+      if (!root.visible) return
+      var ipc = root.ownIpcObject()
+      // 找不到自己（IPC 還沒回、或回不了）就不記：寧可少記一次，也不要把
+      // 平鋪出來的大小當成使用者要的。
+      if (ipc && ipc.floating === true)
+        root.sizeSettled(Math.round(root.width), Math.round(root.height))
+    }
+  }
+
+  // 自己在 Hyprland 那邊的那一筆。class 和 dev gallery 共用，所以還要對 title
+  // 和 pid —— 同一個 quickshell 行程裡 title 叫 LINE 的只有這一個。
+  function ownIpcObject() {
+    var list = Hyprland.toplevels.values
+    for (var i = 0; i < list.length; i++) {
+      var o = list[i] ? list[i].lastIpcObject : null
+      if (!o || o.pid !== Quickshell.processId) continue
+      if (o.title !== root.title || o["class"] !== "org.quickshell") continue
+      return o
+    }
+    return null
   }
 
   Item {
