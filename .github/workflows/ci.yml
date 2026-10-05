@@ -6,10 +6,20 @@ on:
 
 jobs:
   checks:
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: x64-ci
     container: ubuntu:24.04
     steps:
+      - name: Require a trusted CI source
+        env:
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          CI_REPO: ${{ github.repository }}
+        run: |
+          if [ "$CI_EVENT_NAME" = push ] || { [ "$CI_EVENT_NAME" = pull_request ] && [ "$CI_HEAD_REPO" = "$CI_REPO" ]; }; then
+            exit 0
+          fi
+          echo "::error::AWS CI only accepts main-branch pushes and pull requests from branches in this repository. Fork pull requests require a trusted branch before checks can run."
+          exit 1
       - name: Install check dependencies
         run: |
           apt-get update -qq

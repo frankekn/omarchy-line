@@ -1384,6 +1384,11 @@ map back at `jsr:@evex/linejs`.
 
 ## Development
 
+CI uses the self-hosted AWS `x64-ci` pool for main-branch pushes and PRs
+from branches in this repository. Fork PRs fail before checkout; a maintainer
+must move the reviewed changes to a trusted branch before CI runs the tests.
+All external contributors' fork workflows require approval in GitHub.
+
 After any change, run:
 
 ```bash

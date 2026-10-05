@@ -1112,6 +1112,10 @@ cd daemon && deno task check && deno task test
 
 ## 開發
 
+CI 使用自架 AWS `x64-ci` pool，只測試 main 分支的 push 和本 repo 分支的 PR。
+Fork PR 會在 checkout 前明確失敗；維護者必須先審查變更並移到受信任分支，CI 才會跑測試。
+所有外部貢獻者的 fork workflow 都需要在 GitHub 核准。
+
 改完一定要跑：
 
 ```bash
