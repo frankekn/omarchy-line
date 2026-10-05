@@ -7981,6 +7981,53 @@ ok(
   e.historyCalls.join() === "C1",
   "a restart refetches instead: the events from before it are unrecoverable",
 );
+// The new daemon writes state.json before its socket listens. parseState is
+// then the only place that sees the boot change -- by the time the socket is up
+// lastBootId is already the new boot, so neither the ring read nor a push can
+// spot the restart. The old round's watermark must not survive into the new one.
+e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
+e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
+e.root.lastBootId = "boot-1";
+e.root.lastSeq = 900;
+e.root.eventsConsumed = true;
+e.root.eventsLive = true;
+e.parseState(evState({ bootId: "boot-2", events: undefined }));
+ok(
+  e.root.lastBootId === "boot-2" && e.root.lastSeq === 0,
+  "a boot change seen in state.json resets the seq watermark: " +
+    e.root.lastSeq,
+);
+ok(
+  e.historyCalls.length === 0 && e.root.historyReloadChat === "C1" &&
+    e.root.historyReloadAfterGeneration > 0,
+  "with the socket down nothing is fetched, but the catch-up is recorded",
+);
+e.sock.connected = true;
+e.root.reconciliationEpoch++;
+e.root.eventsSyncing = true;
+ok(
+  e.reconcileAfterConnect() === true && e.historyCalls.join() === "C1",
+  "and the reconnect refetches the open chat, like a restart seen while connected",
+);
+e.onReply(JSON.stringify({
+  id: e.sent.filter((r) => r.cmd === "history").at(-1).id,
+  ok: true,
+  data: [MSG("m1", "THEM", "a")],
+}));
+e.parseEventsText(evState({
+  bootId: "boot-2",
+  events: [EV(1, "message", "C1", { message: MSG("b2-1", "THEM", "b") })],
+}));
+e.onPushedEvent({
+  boot: "boot-2",
+  event: EV(2, "message", "C1", { message: MSG("b2-2", "THEM", "c") }),
+});
+ok(
+  e.root.messages.map((m) => m.id).join() === "m1,b2-1,b2-2" &&
+    e.root.lastSeq === 2 && e.root.eventsLive === true,
+  "the new boot's seq 1 from the ring and seq 2 from the push both land: " +
+    e.root.messages.map((m) => m.id).join(),
+);
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
 e.root.lastBootId = "boot-1";

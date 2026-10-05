@@ -808,6 +808,9 @@ Panel {
     var bootChanged = stBoot.length > 0 && root.lastBootId.length > 0
                       && stBoot !== root.lastBootId
     if (stBoot.length > 0) root.lastBootId = stBoot
+    // 新的一輪 seq 從 1 重來。lastBootId 已經換成新的，events.json 和推播都
+    // 不會再判出重啟 —— 舊的 watermark 留著，新一輪前面那幾百筆會被當成吃過。
+    if (bootChanged) root.lastSeq = 0
 
     // 要自己抓歷史的三個條件：手上根本沒有這一間（loadedAt === 0，推進來的事件
     // 只接得動泡泡接不動整頁）；這個 daemon 不寫 events（舊版，或 events.json
@@ -815,14 +818,19 @@ Panel {
     // （bootChanged —— 重啟前的事件再也拿不到）。推播流著、檔案也讀得出來的
     // 時候不用看 —— 缺口各自有人補。
     // 面板關著時 socket 也斷了，這時抓歷史只會留下假的「daemon 沒在跑」。
-    if (root.sockConnected && (root.view === "chat" || root.twoPane) && root.activeChat) {
+    // 但 boot 換了這件事只有這一刻看得到：新 daemon 先寫 state.json 才開始聽
+    // socket，線接上時 lastBootId 早就是新的了。所以先把重抓記下來，等
+    // reconcileAfterConnect 在線接上時補。
+    if ((root.sockConnected || bootChanged)
+        && (root.view === "chat" || root.twoPane) && root.activeChat) {
       var fresh = root.chatById(root.activeChat.mid)
-      var moved = !!fresh && Number(fresh.lastTime || 0) > root.loadedAt
+      var moved = root.sockConnected && !!fresh
+          && Number(fresh.lastTime || 0) > root.loadedAt
       if ((moved && (root.loadedAt === 0 || !root.eventsLive)) || bootChanged) {
         root.historyReloadAfterGeneration = Math.max(root.historyReloadAfterGeneration,
                                                      root.historyGen + 1)
         root.historyReloadChat = String(root.activeChat.mid || "")
-        if (!root.loading) {
+        if (root.sockConnected && !root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
           root.loadHistory(root.activeChat.mid)
         }
