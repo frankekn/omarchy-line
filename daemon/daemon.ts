@@ -104,7 +104,11 @@ async function main() {
     try {
       sleepMonitor?.kill("SIGTERM");
     } catch { /* already gone */ }
-    Deno.removeSync(SOCK_PATH);
+    // A socket someone already removed must not throw here: that would skip
+    // the store flush below and die with an uncaught error instead.
+    try {
+      Deno.removeSync(SOCK_PATH);
+    } catch { /* already gone */ }
     // Store appends coalesce for 150ms; a signal inside that window would
     // drop records the daemon already confirmed it had seen. The timer caps
     // the wait so a stalled write cannot hold the process past it.
