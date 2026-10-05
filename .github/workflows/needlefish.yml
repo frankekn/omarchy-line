@@ -1,6 +1,6 @@
 name: needlefish
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
     inputs:
@@ -278,6 +278,7 @@ jobs:
           NEEDLEFISH_TIMEOUT_MS: "1200000"
           NEEDLEFISH_REVIEW_TIMEOUT_MS: "3300000"
           NEEDLEFISH_NO_RETRY: "1"
+          NEEDLEFISH_DEEP_CONCURRENCY: "6"
           NEEDLEFISH_MODEL_FALLBACKS: ${{ vars.NEEDLEFISH_MODEL_FALLBACKS || 'devin/deepseek-v4-1-flash,deepseek-v4.1-flash' }}
           NEEDLEFISH_RECHECK: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: |

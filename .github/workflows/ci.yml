@@ -2,7 +2,12 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request_target:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
 
 jobs:
   checks:
@@ -15,10 +20,10 @@ jobs:
           CI_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           CI_REPO: ${{ github.repository }}
         run: |
-          if [ "$CI_EVENT_NAME" = push ] || { [ "$CI_EVENT_NAME" = pull_request ] && [ "$CI_HEAD_REPO" = "$CI_REPO" ]; }; then
+          if [ "$CI_EVENT_NAME" = push ] || [ "$CI_EVENT_NAME" = workflow_dispatch ] || { [ "$CI_EVENT_NAME" = pull_request_target ] && [ "$CI_HEAD_REPO" = "$CI_REPO" ]; }; then
             exit 0
           fi
-          echo "::error::AWS CI only accepts main-branch pushes and pull requests from branches in this repository. Fork pull requests require a trusted branch before checks can run."
+          echo "::error::AWS CI only accepts trusted repository branches. Fork pull requests require a trusted branch before checks can run."
           exit 1
       - name: Install check dependencies
         run: |
@@ -27,6 +32,8 @@ jobs:
           useradd --create-home ci
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
           submodules: true
       - uses: actions/setup-node@v4
         with:
@@ -59,3 +66,20 @@ jobs:
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
         run: node -e 'const m = require("./manifest.json"); for (const k of ["id", "name", "version"]) if (!m[k]) throw new Error("manifest.json missing " + k)'
+      - name: Report PR CI result
+        if: always() && github.event_name == 'pull_request_target'
+        uses: actions/github-script@v8
+        env:
+          CI_RESULT: ${{ job.status }}
+        with:
+          script: |
+            const passed = process.env.CI_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.payload.pull_request.head.sha,
+              context: 'ci / checks',
+              state: passed ? 'success' : 'failure',
+              description: passed ? 'AWS CI passed' : 'AWS CI failed; see the run for details',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+            });

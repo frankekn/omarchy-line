@@ -1385,9 +1385,13 @@ map back at `jsr:@evex/linejs`.
 ## Development
 
 CI uses the self-hosted AWS `x64-ci` pool for main-branch pushes and PRs
-from branches in this repository. Fork PRs fail before checkout; a maintainer
+from branches in this repository. PR workflows run from the base branch via
+`pull_request_target`; the trust guard runs before checking out the exact PR
+head. Fork PRs fail before checkout; a maintainer
 must move the reviewed changes to a trusted branch before CI runs the tests.
-All external contributors' fork workflows require approval in GitHub.
+The result is published to the PR head as `ci / checks`. Manual runs can test
+a trusted branch before workflow changes reach main. All external contributors'
+fork workflows require approval in GitHub.
 
 After any change, run:
 

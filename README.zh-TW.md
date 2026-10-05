@@ -1113,7 +1113,9 @@ cd daemon && deno task check && deno task test
 ## 開發
 
 CI 使用自架 AWS `x64-ci` pool，只測試 main 分支的 push 和本 repo 分支的 PR。
+PR workflow 透過 `pull_request_target` 使用 base 分支的定義，先檢查信任來源，才 checkout PR 的精確 head。
 Fork PR 會在 checkout 前明確失敗；維護者必須先審查變更並移到受信任分支，CI 才會跑測試。
+結果會以 `ci / checks` 發佈到 PR head；workflow 變更進 main 前，可手動測試受信任分支。
 所有外部貢獻者的 fork workflow 都需要在 GitHub 核准。
 
 改完一定要跑：
