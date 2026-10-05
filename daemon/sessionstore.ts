@@ -48,7 +48,15 @@ export class SessionStore extends BaseStorage {
         mode: 0o600,
       });
       try {
-        await file.write(new TextEncoder().encode(JSON.stringify(data)));
+        const bytes = new TextEncoder().encode(JSON.stringify(data));
+        let offset = 0;
+        // A successful write may accept only a prefix. Never publish the
+        // temp file until every byte of the session has landed.
+        while (offset < bytes.byteLength) {
+          const written = await file.write(bytes.subarray(offset));
+          if (written <= 0) throw new Error("session store accepted no bytes");
+          offset += written;
+        }
         await file.sync();
       } finally {
         file.close();

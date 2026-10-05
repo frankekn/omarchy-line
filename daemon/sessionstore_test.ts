@@ -62,6 +62,54 @@ Deno.test("concurrent sets on one instance all land", async () => {
   });
 });
 
+Deno.test("short writes persist the entire session, including multibyte values", async () => {
+  await withDir(async (dir) => {
+    const store = new SessionStore(`${dir}/storage.json`);
+    const write = Deno.FsFile.prototype.write;
+    Deno.FsFile.prototype.write = function (bytes: Uint8Array) {
+      return write.call(this, bytes.subarray(0, 3));
+    };
+    try {
+      const token = "token-測試-🔑";
+      await store.set(".auth", token);
+      assertEquals(await store.getAll(), { ".auth": token });
+    } finally {
+      Deno.FsFile.prototype.write = write;
+    }
+  });
+});
+
+for (const failure of ["error", "zero"] as const) {
+  Deno.test(`a short write followed by ${failure} preserves the old session`, async () => {
+    await withDir(async (dir) => {
+      const path = `${dir}/storage.json`;
+      const store = new SessionStore(path);
+      await store.set(".auth", "old");
+      const before = await Deno.readTextFile(path);
+      const write = Deno.FsFile.prototype.write;
+      let calls = 0;
+      Deno.FsFile.prototype.write = function (bytes: Uint8Array) {
+        if (calls++ === 0) return write.call(this, bytes.subarray(0, 3));
+        return failure === "zero"
+          ? Promise.resolve(0)
+          : Promise.reject(new Error("disk full"));
+      };
+      try {
+        await assertRejects(() => store.set(".auth", "new"));
+      } finally {
+        Deno.FsFile.prototype.write = write;
+      }
+      assertEquals(await Deno.readTextFile(path), before);
+      const names: string[] = [];
+      for await (const entry of Deno.readDir(dir)) names.push(entry.name);
+      assertEquals(names, ["storage.json"]);
+      // A failed partial write must not wedge subsequent rotations.
+      await store.set(".auth", "after");
+      assertEquals(await store.get(".auth"), "after");
+    });
+  });
+}
+
 Deno.test("a write that cannot land rejects and keeps the old token", async () => {
   await withDir(async (dir) => {
     const path = `${dir}/storage.json`;
