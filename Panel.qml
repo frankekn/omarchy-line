@@ -2209,7 +2209,9 @@ Panel {
     if (root.loading) return true
     if (root.reconciliationAttemptedEpoch === root.reconciliationEpoch) return true
     root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-    root.loadHistory(root.activeChat.mid)
+    // 跟重開面板那一趟同一條規矩：twoPane 右欄留著的對話只是跟著面板被打開、
+    // 線剛好接上，使用者沒點開它，補抓不能順便標已讀。單欄停在聊天室裡就是人在看。
+    root.loadHistory(root.activeChat.mid, !root.twoPane)
     return true
   }
 

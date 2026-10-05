@@ -8028,6 +8028,24 @@ ok(
   "the new boot's seq 1 from the ring and seq 2 from the push both land: " +
     e.root.messages.map((m) => m.id).join(),
 );
+// The reconnect catch-up follows the reopen rule for read receipts: in a
+// two-column placement the right pane's chat only came back with the panel, so
+// refetching it must not mark it read. A single-pane chat view is being read.
+for (const twoPane of [true, false]) {
+  e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: twoPane ? "list" : "chat" });
+  e.root.historyReloadChat = "C1";
+  e.root.historyReloadAfterGeneration = 1;
+  e.root.reconciliationEpoch++;
+  e.reconcileAfterConnect();
+  const reconcilePage = e.sent.filter((r) => r.cmd === "history").at(-1);
+  ok(
+    !!reconcilePage && reconcilePage.markRead === !twoPane,
+    (twoPane
+      ? "two-column reconnect refetch does not mark the right pane read"
+      : "single-pane reconnect refetch still marks the open chat read") +
+      ": " + JSON.stringify(reconcilePage),
+  );
+}
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
 e.root.lastBootId = "boot-1";
