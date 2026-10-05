@@ -198,6 +198,7 @@ const B = {
   lightboxCaption: body("  function lightboxCaption() {"),
   mediaLabel: body("  function mediaLabel(m) {"),
   mediaUsable: body("  function mediaUsable(m) {"),
+  thumbPath: body("  function thumbPath(m) {"),
   openPicture: body("  function openPicture(id, source, name, index) {"),
   showPicture: body("  function showPicture(id, source, name) {"),
   stepPicture: body("  function stepPicture(dx) {"),
@@ -566,6 +567,7 @@ function makeEnv(opts) {
     imageConsumers: {},
     imageRetries: [],
     previewRequests: {},
+    previewPaths: {},
     previewRetries: [],
     previewRefreshNeeded: false,
     previewRetryAttempts: {},
@@ -1102,6 +1104,12 @@ function makeEnv(opts) {
     mediaUsable(m) {
       return api.mediaUsable(m);
     },
+    thumbPath(m) {
+      return api.thumbPath(m);
+    },
+    fetchPreview(m, invalidate) {
+      api.fetchPreview(m, invalidate);
+    },
     pictureList(list) {
       return api.pictureList(list);
     },
@@ -1600,6 +1608,8 @@ function makeEnv(opts) {
   const fCaption = mk("lightboxCaption");
   const fMediaLabel = mk("mediaLabel", ["m"]);
   const fMediaUsable = mk("mediaUsable", ["m"]);
+  const fThumbPath = mk("thumbPath", ["m"]);
+  const fFetchPreview = mk("fetchPreview", ["m", "invalidate"]);
   const fPlacementMode = mk("placementMode", ["value"]);
   const fNextPlacement = mk("nextPlacement", ["mode"]);
   const fPlacementLabel = mk("placementLabel", ["mode"]);
@@ -1906,6 +1916,8 @@ function makeEnv(opts) {
     lightboxCaption: () => q(fCaption),
     mediaLabel: (m) => q((...a) => fMediaLabel(...a, m)),
     mediaUsable: (m) => q((...a) => fMediaUsable(...a, m)),
+    thumbPath: (m) => q((...a) => fThumbPath(...a, m)),
+    fetchPreview: (m, inv) => q((...a) => fFetchPreview(...a, m, inv)),
     placementMode: (v) => q((...a) => fPlacementMode(...a, v)),
     nextPlacement: (m) => q((...a) => fNextPlacement(...a, m)),
     placementLabel: (m) => q((...a) => fPlacementLabel(...a, m)),
@@ -5019,7 +5031,8 @@ ok(
   "the 📎 line retries a failed image instead of handing it to xdg-open",
 );
 ok(
-  /source: msgDelegate\.mediaOk && modelData\.mediaPath/.test(msgRows),
+  /source: msgDelegate\.mediaOk && msgDelegate\.thumbPath/.test(msgRows) &&
+    /readonly property string thumbPath: root\.thumbPath\(modelData\)/.test(msgRows),
   "and an unusable attachment draws no thumbnail either, so the strip and the rows agree",
 );
 ok(
@@ -12979,6 +12992,124 @@ ok(
   "so the reader scrolling up afterwards still pages back",
 );
 
+group("(y6c) thumbnails arriving for an open chat never swap the model");
+const previewFrames = (e) => e.sent.filter((f) => f.cmd === "preview");
+const previewReply = (e, id, path) => {
+  const frame = previewFrames(e).filter((f) => f.messageId === id).pop();
+  e.onReply(JSON.stringify({ id: frame.id, ok: true, data: { path } }));
+};
+e = makeEnv({ view: "list", activeChat: null });
+e.root.chats = [{ mid: "C1", unread: 0 }, { mid: "C2", unread: 0 }];
+e.root.historyCache = {};
+view6b = swapView(e);
+e.openChat({ mid: "C1", unread: 0 });
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: pagedRows(false) }));
+e.root.messages.forEach((m) => e.root.fetchPreview(m));
+ok(
+  previewFrames(e).map((f) => f.messageId).join() === "p1,p2,p3",
+  "a page without thumbnails asks for every picture on it: " +
+    previewFrames(e).map((f) => f.messageId).join(),
+);
+const swapsBeforeThumbs = view6b.swaps;
+previewReply(e, "p1", "/cache/p1-preview");
+previewReply(e, "p2", "/cache/p2-preview");
+previewReply(e, "p3", "/cache/p3-preview");
+ok(
+  view6b.swaps === swapsBeforeThumbs,
+  "three thumbnail replies leave the model alone: " +
+    (view6b.swaps - swapsBeforeThumbs) + " swaps",
+);
+ok(
+  e.root.messages.map((m) => e.thumbPath(m)).join() ===
+    "/cache/p1-preview,/cache/p2-preview,/cache/p3-preview",
+  "yet every bubble resolves its new thumbnail: " +
+    JSON.stringify(e.root.messages.map((m) => e.thumbPath(m))),
+);
+ok(
+  e.root.messages.every((m) => m.mediaPath === undefined) &&
+    e.root.messages.every((m) => !e.root.previewRequests[m.id]),
+  "the rows themselves stay as the daemon sent them, with no request left in flight",
+);
+e.showPicture("p2", PanelKit.fileUrl(e.thumbPath(e.root.messages[1])), "p2.jpg");
+ok(
+  e.root.lightbox && e.root.lightbox.index === 1 &&
+    e.pictureList(e.root.messages).map((p) => p.source).join() ===
+      ["p1", "p2", "p3"].map((id) => PanelKit.fileUrl("/cache/" + id + "-preview")).join(),
+  "the lightbox opens on the bubble's picture and walks the same thumbnails: " +
+    JSON.stringify(e.root.lightbox) + " " +
+    JSON.stringify(e.pictureList(e.root.messages).map((p) => p.source)),
+);
+e.root.loadHistory("C1");
+const swapsBeforeRefetch = view6b.swaps;
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: pagedRows(false) }));
+ok(
+  view6b.swaps === swapsBeforeRefetch &&
+    e.thumbPath(e.root.messages[0]) === "/cache/p1-preview",
+  "a refetch of the same page neither swaps nor loses the thumbnails: " +
+    (view6b.swaps - swapsBeforeRefetch) + " swaps, " + e.thumbPath(e.root.messages[0]),
+);
+const expiredRow = Object.assign({}, pagedRows(false)[0], { id: "p0", mediaState: "expired" });
+e.root.messages = e.withDay([expiredRow].concat(e.root.messages));
+e.root.previewRequests = { p0: true };
+e.root.pending = { 90: { cmd: "preview", msgId: "p0", chat: "C1", gen: e.root.historyGen } };
+e.onReply(JSON.stringify({ id: 90, ok: true, data: { path: "/cache/p0-preview" } }));
+ok(
+  e.thumbPath(e.root.messages[0]) === "" &&
+    e.pictureList(e.root.messages).every((p) => p.id !== "p0"),
+  "a path for a picture that can no longer be opened draws nothing anywhere: " +
+    JSON.stringify(e.thumbPath(e.root.messages[0])),
+);
+
+e.openChat({ mid: "C2", unread: 0 });
+const otherRows = [{ id: "q1", chat: "C2", from: "THEM", time: NOW48,
+  contentType: "IMAGE", hasMedia: true, mediaState: "ok" }];
+e.onReply(JSON.stringify({ id: lastHistory(e).id, ok: true, data: otherRows }));
+e.root.messages.forEach((m) => e.root.fetchPreview(m));
+ok(
+  e.thumbPath(e.root.messages[0]) === "" &&
+    previewFrames(e).filter((f) => f.messageId === "q1").length === 1,
+  "another chat's picture starts without a thumbnail and asks for its own: " +
+    JSON.stringify(e.thumbPath(e.root.messages[0])),
+);
+e.openChat({ mid: "C1", unread: 0 });
+ok(
+  e.root.messages.length > 0 &&
+    e.thumbPath(e.root.messages.filter((m) => m.id === "p1")[0]) === "/cache/p1-preview",
+  "coming back to the first chat shows its thumbnails again at once",
+);
+e.clearSession();
+ok(
+  Object.keys(e.root.previewPaths).length === 0 &&
+    e.thumbPath(pagedRows(false)[0]) === "",
+  "logging out forgets every thumbnail path: " + JSON.stringify(e.root.previewPaths),
+);
+
+const mapOnlyRetryRoot = {
+  previewDecodeRetries: {},
+  previewPaths: { m1: "/tmp/corrupt", m2: "/tmp/fine" },
+  messages: [{ id: "m1", chat: "C1", contentType: "IMAGE", hasMedia: true }],
+  activeChat: { mid: "C1" },
+  fetches: [],
+  swaps: 0,
+  withFields: (m, f) => ({ ...m, ...f }),
+  fetchPreview(m, invalidate) {
+    this.fetches.push([m.id, invalidate]);
+  },
+  setMessages() {
+    this.swaps++;
+  },
+  rememberHistory() {},
+};
+new Function("root", "id", "automatic", B.retryPreview)(mapOnlyRetryRoot, "m1", true);
+ok(
+  mapOnlyRetryRoot.swaps === 0 &&
+    JSON.stringify(mapOnlyRetryRoot.previewPaths) === '{"m2":"/tmp/fine"}' &&
+    JSON.stringify(mapOnlyRetryRoot.fetches) === '[["m1",true]]',
+  "retrying a thumbnail that only the map knows drops that one entry and asks again, " +
+    "without a swap: " + mapOnlyRetryRoot.swaps + " swaps, " +
+    JSON.stringify(mapOnlyRetryRoot.previewPaths),
+);
+
 group("(y7) reopening or refetching a chat arms the paging again");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.messages = e.withDay([{ id: "m9", time: NOW48 }]);
@@ -15887,6 +16018,7 @@ ok(
 );
 const decodeLoopRoot = {
   previewDecodeRetries: {},
+  previewPaths: {},
   messages: [
     { id: "m1", chat: "C1", mediaPath: "/tmp/corrupt" },
   ],
@@ -16715,6 +16847,7 @@ const queuedPreviewRoot = {
   previewRetryQueue: { m1: { invalidate: true } },
   previewRefreshNeeded: false,
   mediaUsable: () => true,
+  thumbPath: () => "",
   request(cmd, args) {
     queuedPreviewRequests.push({ cmd, args });
     return true;
@@ -16739,6 +16872,7 @@ const refusedPreviewRoot = {
   previewRetryQueue: { m1: { invalidate: true } },
   previewRefreshNeeded: false,
   mediaUsable: () => true,
+  thumbPath: () => "",
   request: () => false,
 };
 new Function("root", "sock", "m", "invalidate", B.fetchPreview)(
@@ -16757,6 +16891,7 @@ const offlineInvalidationRoot = {
   previewRetryQueue: {},
   previewRefreshNeeded: false,
   mediaUsable: () => true,
+  thumbPath: () => "",
   request: () => false,
 };
 new Function("root", "sock", "m", "invalidate", B.fetchPreview)(
@@ -16887,9 +17022,11 @@ e.onReply(
   JSON.stringify({ id: 8, ok: true, data: { path: "/tmp/m1-preview" } }),
 );
 ok(
-  e.root.messages[0].mediaPath === "/tmp/m1-preview" &&
+  e.thumbPath(e.root.messages[0]) === "/tmp/m1-preview" &&
+    e.root.messages[0].mediaPath === undefined &&
     e.root.messages[1].text === "keep",
-  "the thumbnail is merged without replacing the page",
+  "the thumbnail resolves for its bubble without touching the page: " +
+    JSON.stringify([e.thumbPath(e.root.messages[0]), e.root.messages[0].mediaPath]),
 );
 ok(
   e.root.atBottom === true,

@@ -27,6 +27,11 @@ Panel {
   property var imageRetryAttempts: ({})
   property var imageConsumers: ({})
   property var previewRequests: ({})
+  // 畫面上才抓到的縮圖路徑（訊息 id → 路徑），泡泡經 thumbPath 讀。不寫回
+  // messages：寫回去每張縮圖就整份換一次模型，ListView 每換一次都先清空再放回
+  // 位置，開一間有圖的聊天室會看到對話跳上跳下好幾次（量過五次）。
+  // 上限跟 imagePaths 同一套（imagePathsMax），登出時清掉。
+  property var previewPaths: ({})
   property var previewRetryQueue: ({})
   property var previewRetryAttempts: ({})
   property var previewDecodeRetries: ({})
@@ -889,6 +894,7 @@ Panel {
     root.imageRetryQueue = ({})
     root.imageRetryAttempts = ({})
     root.imagePaths = ({})
+    root.previewPaths = ({})
     // 登出後那一筆通知指向的聊天室已經開不起來了（daemon 也會把 wanted 拿掉）。
     root.pendingWanted = ""
     root.activeChat = null
@@ -2846,14 +2852,12 @@ Panel {
       root.finishPreviewRetry(msgId)
       var previewPath = String(res.data && res.data.path ? res.data.path : "")
       if (!previewPath) return
-      var changed = []
-      for (var pi = 0; pi < root.messages.length; pi++) {
-        var pm = root.messages[pi]
-        changed.push(String(pm.id || "") === String(msgId) && root.mediaUsable(pm)
-          ? root.withFields(pm, { mediaPath: previewPath }) : pm)
-      }
-      root.setMessages(changed)
-      if (root.activeChat) root.rememberHistory(root.activeChat.mid, root.messages)
+      var thumbs = Object.assign({}, root.previewPaths)
+      delete thumbs[String(msgId)]
+      thumbs[String(msgId)] = previewPath
+      var tkeys = Object.keys(thumbs)
+      for (var td = 0; td < tkeys.length - root.imagePathsMax; td++) delete thumbs[tkeys[td]]
+      root.previewPaths = thumbs
       return
     }
 
@@ -3190,7 +3194,7 @@ Panel {
 
   // ---------------------------------------------------------------- 媒體
 
-  // 畫面上的圖片 delegate 透過 preview 指令延遲抓縮圖，路徑回填在 msg.mediaPath。
+  // 畫面上的圖片 delegate 透過 preview 指令延遲抓縮圖，路徑回填在 previewPaths。
   // 檔案是點了才抓，抓完交給 xdg-open。
   //
   // openWanted 是「這次抓回來要幹嘛」：id → "lightbox"（燈箱要換上原圖）或
@@ -3508,7 +3512,7 @@ Panel {
   function fetchPreview(m, invalidate) {
     var kind = m ? String(m.contentType || "") : ""
     var supported = kind === "IMAGE" || (kind === "VIDEO" && m.previewable === true)
-    if (!m || !supported || m.mediaPath
+    if (!m || !supported || root.thumbPath(m)
         || !root.mediaUsable(m) || root.previewRequests[m.id]
         || !root.activeChat
         || String(m.chat || "") !== String(root.activeChat.mid || "")) return
@@ -3568,12 +3572,19 @@ Panel {
       decodeRetries[retryId] = true
     } else delete decodeRetries[retryId]
     root.previewDecodeRetries = decodeRetries
+    var thumbs = Object.assign({}, root.previewPaths)
+    delete thumbs[retryId]
+    root.previewPaths = thumbs
     var changed = []
     var target = null
+    var rowChanged = false
     for (var i = 0; i < root.messages.length; i++) {
       var message = root.messages[i]
-      if (String(message.id || "") === String(id || "")) {
-        target = root.withFields(message, { mediaPath: undefined })
+      if (String(message.id || "") === retryId) {
+        // 列裡自己帶的路徑（daemon 快取過的那種）才要改列；只在 previewPaths
+        // 裡的上面已經拿掉了，模型不必換。
+        rowChanged = !!message.mediaPath
+        target = rowChanged ? root.withFields(message, { mediaPath: undefined }) : message
         changed.push(target)
       } else changed.push(message)
     }
@@ -3582,6 +3593,7 @@ Panel {
     // onModelDataChanged handler then sees the in-flight entry and cannot race
     // this cache-invalidating retry with an ordinary preview request.
     root.fetchPreview(target, true)
+    if (!rowChanged) return
     root.setMessages(changed, false)
     if (root.activeChat) root.rememberHistory(root.activeChat.mid, root.messages)
   }
@@ -3612,6 +3624,12 @@ Panel {
     return PanelKit.mediaUsable(m)
   }
 
+  // 這一則的縮圖在哪：列裡自己帶的優先，再看 previewPaths；打不開的一律沒有。
+  // 泡泡、燈箱、fetchPreview 問的都是這一支，三邊才不會各看各的。
+  function thumbPath(m) {
+    return EventLog.previewPathFor(m, root.previewPaths)
+  }
+
   // 打不開的理由寫在名字後面。daemon 連要都不會去要，少了這幾個字，
   // 使用者看到的只是一行點不動的灰字，會以為是自己按錯地方。
   // 收回的訊息 hasMedia 是 false，走不到這一行，但燈箱標題也用同一支，還是擋著。
@@ -3627,7 +3645,7 @@ Panel {
   // 收回、過期的一樣不進來：版面上那一格已經不畫圖了，這串卻還留著位子的話，
   // ←/→ 會走到一格空白，看起來就是燈箱壞了。
   function pictureList(messages) {
-    return PanelKit.pictureList(messages, tr)
+    return PanelKit.pictureList(EventLog.withPreviewPaths(messages, root.previewPaths), tr)
   }
 
   // 縮放固定在 [1,4]：小於 1 就沒有放大的意義，大於 4 縮圖會糊成馬賽克。
@@ -5862,6 +5880,7 @@ Panel {
             readonly property bool recalled: modelData.unsent === true
             // 縮圖、點擊、燈箱三處要問的是同一句話，問一次就好。
             readonly property bool mediaOk: root.mediaUsable(modelData)
+            readonly property string thumbPath: root.thumbPath(modelData)
             readonly property bool mediaLoading:
               !!root.previewRequests[String(modelData.id || "")]
             readonly property bool sticker: !recalled
@@ -6133,8 +6152,8 @@ Panel {
               visible: status === Image.Ready
               // 打不開的附件連縮圖都不畫，跟 pictureList 同一條規則 ——
               // 兩邊要是各判各的，就會出現一張看得到、←/→ 卻走不到的圖。
-              source: msgDelegate.mediaOk && modelData.mediaPath
-                ? PanelKit.fileUrl(modelData.mediaPath) : ""
+              source: msgDelegate.mediaOk && msgDelegate.thumbPath
+                ? PanelKit.fileUrl(msgDelegate.thumbPath) : ""
               fillMode: Image.PreserveAspectFit
               width: Math.min(parent.width, Style.space(220))
               height: Math.min(implicitHeight * (width / Math.max(1, implicitWidth)), Style.space(220))
@@ -6155,7 +6174,7 @@ Panel {
                     return
                   }
                   if (modelData.contentType === "IMAGE")
-                    root.showPicture(modelData.id, PanelKit.fileUrl(modelData.mediaPath),
+                    root.showPicture(modelData.id, PanelKit.fileUrl(msgDelegate.thumbPath),
                                      modelData.fileName || tr("image"))
                   else root.openMedia(modelData.id, "external")
                 }
@@ -6165,7 +6184,7 @@ Panel {
             Text {
               width: parent.width
               visible: modelData.hasMedia
-                && (!modelData.mediaPath || thumb.status === Image.Error)
+                && (!msgDelegate.thumbPath || thumb.status === Image.Error)
               // 過期的圖片沒有縮圖可看，但那不是「載入失敗」—— 那句話正是
               // U39 要拿掉的謊。過不了 mediaUsable 就一律走 📎 那條，
               // 名字後面自己會帶（已過期）。
