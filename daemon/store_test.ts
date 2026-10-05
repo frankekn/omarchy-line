@@ -317,3 +317,34 @@ Deno.test("binary wire fields revive as Uint8Array, not tagged objects", async (
     assertEquals([...(chunk as Uint8Array)], [217, 177, 9]);
   });
 });
+
+Deno.test("a chat id that is not one plain segment never reaches the disk", async () => {
+  await withStore(async (store, dir) => {
+    // A .jsonl outside the store that a "../" chat id would name.
+    await Deno.mkdir(`${dir}/messages/${ME}`, { recursive: true });
+    await Deno.writeTextFile(
+      `${dir}/outside.jsonl`,
+      JSON.stringify(msg(1, "not yours")) + "\n",
+    );
+    for (const chat of ["../../outside", "../x", "a/b", "", "."]) {
+      assertEquals(await store.tail(ME, chat, 10), null, chat);
+      assertEquals(await store.get(ME, chat, "1"), null, chat);
+      assertEquals(await store.pageBefore(ME, chat, "1", 10), null, chat);
+      store.append(ME, chat, [msg(2, "x")]);
+    }
+    store.append("../evil", CHAT, [msg(3, "y")]);
+    await store.flush();
+    assertEquals(
+      await Deno.readTextFile(`${dir}/outside.jsonl`),
+      JSON.stringify(msg(1, "not yours")) + "\n",
+    );
+    const names: string[] = [];
+    for await (const e of Deno.readDir(dir)) names.push(e.name);
+    assertEquals(names.sort(), ["messages", "outside.jsonl"]);
+    const inside: string[] = [];
+    for await (const e of Deno.readDir(`${dir}/messages/${ME}`)) {
+      inside.push(e.name);
+    }
+    assertEquals(inside, []);
+  });
+});

@@ -231,6 +231,11 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
 
   if (cmd === "history") {
     const chatMid = String(req.chat ?? "");
+    // The id is a path segment in the message store and a mid on the wire;
+    // anything else is no chat this daemon could have.
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(chatMid)) {
+      return { ok: false, error: "不支援的聊天室" };
+    }
     const count = historyCount(req.count);
     const before = req.before ? String(req.before) : "";
     const myMid = String(me.mid ?? "");
