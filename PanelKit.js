@@ -169,7 +169,7 @@ function pictureList(messages, tr) {
       continue
     }
     if (m.contentType === "IMAGE" && mediaUsable(m) && m.mediaPath)
-      out.push({ id: String(m.id), source: "file://" + m.mediaPath, name: String(m.fileName || tr("image")) })
+      out.push({ id: String(m.id), source: fileUrl(m.mediaPath), name: String(m.fileName || tr("image")) })
   }
   return out
 }
@@ -838,4 +838,61 @@ function accountsWithAmbiguous(accounts, account, byChat, changedChats, removedB
   if (Object.keys(chats).length > 0) next[account] = chats
   else delete next[account]
   return next
+}
+
+// 本地檔案路徑轉成 Image 吃得下的網址。路徑原封不動接在 file:// 後面的話，$HOME 或
+// XDG_STATE_HOME 裡只要有 #、?、% 或空白，QUrl 就會把後半段當成 fragment／query
+// 或壞掉的跳脫序列，圖就這樣破了。逐段 encodeURIComponent，斜線留著當分隔。
+// 空路徑照舊回 "file://"：呼叫端原本就各自擋掉空值，這裡不替它們改判斷。
+function fileUrl(path) {
+  var p = String(path === undefined || path === null ? "" : path)
+  if (p.length === 0) return "file://"
+  var parts = p.split("/")
+  for (var i = 0; i < parts.length; i++) parts[i] = encodeURIComponent(parts[i])
+  return "file://" + parts.join("/")
+}
+
+// fileUrl 的反方向：交給 xdg-open 的是檔案系統路徑，不是網址，跳脫要解回來。
+// 不是 file:// 的（FLEX 圖的 https）原樣奉還；解不開的跳脫序列也原樣奉還，
+// 總比丟一個例外、讓按鍵整個沒反應好。
+function localPath(url) {
+  var s = String(url === undefined || url === null ? "" : url)
+  if (s.indexOf("file://") !== 0) return s
+  try {
+    return decodeURIComponent(s.slice(7))
+  } catch (e) {
+    return s.slice(7)
+  }
+}
+
+// shell.json 的寫入佇列。`omarchy bar set` 每次都是整份讀進來、改一格、整份寫回，
+// 兩條同時跑就會互相蓋掉；一個 Process 又在跑的時候再設 running = true 什麼都不會
+// 發生，第二下就這樣不見了。所以所有寫入排成一列、一次只送一條。
+// 同一個 key 只留一筆，後來的值就地取代前面那筆：反正只有最後一個值算數，
+// 位置不動是為了不讓別的 key 因此被往後擠。回傳新陣列（鐵則 11）。
+function queueSetting(queue, key, value) {
+  var list = Array.isArray(queue) ? queue : []
+  var out = []
+  var replaced = false
+  for (var i = 0; i < list.length; i++) {
+    if (list[i] && list[i].key === key) {
+      if (!replaced) out.push({ key: key, value: value })
+      replaced = true
+    } else {
+      out.push(list[i])
+    }
+  }
+  if (!replaced) out.push({ key: key, value: value })
+  return out
+}
+
+// 「這個 key 馬上就會是什麼值」：佇列裡等著的優先，其次是正在寫的那筆，
+// 都沒有才是設定檔現在的值。連按兩下 A+ 時熱重載還沒回來，只看現值的話
+// 兩下會算出同一個數字，等於只按了一下。
+function pendingSetting(queue, inFlight, key, current) {
+  var list = Array.isArray(queue) ? queue : []
+  for (var i = list.length - 1; i >= 0; i--)
+    if (list[i] && list[i].key === key) return list[i].value
+  if (inFlight && inFlight.key === key) return inFlight.value
+  return current
 }

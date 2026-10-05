@@ -53,7 +53,8 @@ const PanelKit = new Function(
     " stickerTabIndex, stickerPack, stickerPackName, stickerTabClamp," +
     " stickerTabScroll, stickerTabInView, storedRecent, stickerRequest," +
     " recentPush, stickerGridHeight, stickerStatusText, nextPlacement," +
-    " chatById, accountsWithAmbiguous };",
+    " chatById, accountsWithAmbiguous, fileUrl, localPath, queueSetting," +
+    " pendingSetting };",
 )();
 
 // Helpers take a trailing `tr` translator for visible strings. Old call sites
@@ -212,6 +213,11 @@ const B = {
   clampWindowSize: body("  function clampWindowSize(value, fallback, min) {"),
   togglePlacement: body("  function togglePlacement() {"),
   saveWindowSize: body("  function saveWindowSize(w, h) {"),
+  // Every shell.json write goes through one queue and one Process.
+  writeSetting: body("  function writeSetting(key, value) {"),
+  drainSettings: body("  function drainSettings() {"),
+  pendingSetting: body("  function pendingSetting(key, current) {"),
+  setTextScale: body("  function setTextScale(delta) {"),
   pickerComposerStillOwned: body(
     "  function pickerComposerStillOwned(chat, version, generation) {",
   ),
@@ -477,10 +483,8 @@ const ARGS = [
   // Process could only ever run one viewer at a time)
   "keyCatcher",
   "Quickshell",
-  // the two settings written straight back to shell.json: the
-  // placement enum and the App window's remembered size
+  // the single Process every shell.json write is queued through
   "settingWriter",
-  "sizeWriter",
   // U42: wl-copy's stdin, the right-click menu, and the theme
   // colour the link markup carries (TextEdit has no linkColor)
   "clipWriter",
@@ -610,6 +614,19 @@ function makeEnv(opts) {
     appWindow: !!opts.appWindow,
     windowWidth: opts.windowWidth === undefined ? 1040 : opts.windowWidth,
     windowHeight: opts.windowHeight === undefined ? 720 : opts.windowHeight,
+    // fontScale is a binding in Panel.qml (textScale through its clamp, / 100).
+    fontScale: opts.fontScale === undefined ? 1 : opts.fontScale,
+    settingQueue: [],
+    settingInFlight: null,
+    writeSetting(k, v) {
+      api.writeSetting(k, v);
+    },
+    drainSettings() {
+      api.drainSettings();
+    },
+    pendingSetting(k, c) {
+      return api.pendingSetting(k, c);
+    },
     placementMode(v) {
       return api.placementMode(v);
     },
@@ -1322,9 +1339,32 @@ function makeEnv(opts) {
       execed.push(argv.slice());
     },
   };
-  // Quickshell Processes: the code only ever assigns command then running.
-  const settingWriter = { command: null, running: false };
-  const sizeWriter = { command: null, running: false };
+  // The shell.json writer. Like a real Process, setting running=true while it
+  // is already running does nothing; and the panel's onRunningChanged handler
+  // (not sliced: it is a one-liner on the Process) is mirrored here -- falling
+  // back to false defers a drainSettings() through Qt.callLater. `started`
+  // logs every command that actually launched; `overlaps` counts attempts to
+  // start a second command over a running one.
+  const settingWriter = {
+    command: null,
+    started: [],
+    overlaps: 0,
+    _running: false,
+    get running() {
+      return this._running;
+    },
+    set running(v) {
+      v = !!v;
+      if (v && this._running) {
+        this.overlaps++;
+        return;
+      }
+      if (v === this._running) return;
+      this._running = v;
+      if (v) this.started.push(this.command.slice());
+      else deferred.push(() => api.drainSettings());
+    },
+  };
   // wl-copy's Process. Every assignment is logged in order so a test can see
   // that stdin is opened, the text written, and stdin closed again -- wl-copy
   // waits for EOF, so a missed close is a copy that never lands.
@@ -1438,7 +1478,6 @@ function makeEnv(opts) {
       keyCatcher,
       Quickshell,
       settingWriter,
-      sizeWriter,
       clipWriter,
       msgMenu,
       Color,
@@ -1565,6 +1604,10 @@ function makeEnv(opts) {
   const fClampWindow = mk("clampWindowSize", ["value", "fallback", "min"]);
   const fTogglePlacement = mk("togglePlacement");
   const fSaveWindowSize = mk("saveWindowSize", ["w", "h"]);
+  const fWriteSetting = mk("writeSetting", ["key", "value"]);
+  const fDrainSettings = mk("drainSettings");
+  const fPendingSetting = mk("pendingSetting", ["key", "current"]);
+  const fSetTextScale = mk("setTextScale", ["delta"]);
   const fClampScroll = mk("clampScroll", ["value"]);
   const fWheelDistance = mk("wheelDistance", ["angleDeltaY", "pixelDeltaY"]);
   const fWheelScroll = mk("wheelScroll", [
@@ -1734,7 +1777,13 @@ function makeEnv(opts) {
     execed,
     focused,
     settingWriter,
-    sizeWriter,
+    // The running `omarchy bar set` exits: the Process falls back to false and
+    // the deferred drain starts whatever is queued next.
+    finishSetting: () => {
+      settingWriter.running = false;
+      const d = deferred.splice(0);
+      d.forEach((f) => f());
+    },
     clipWriter,
     clipLog,
     msgMenu,
@@ -1857,6 +1906,10 @@ function makeEnv(opts) {
     clampWindowSize: (v, f, min) => q((...a) => fClampWindow(...a, v, f, min)),
     togglePlacement: () => q(fTogglePlacement),
     saveWindowSize: (w, h) => q((...a) => fSaveWindowSize(...a, w, h)),
+    writeSetting: (k, v) => q((...a) => fWriteSetting(...a, k, v)),
+    drainSettings: () => q(fDrainSettings),
+    pendingSetting: (k, c) => q((...a) => fPendingSetting(...a, k, c)),
+    setTextScale: (d) => q((...a) => fSetTextScale(...a, d)),
     clampScroll: (v) => q((...a) => fClampScroll(...a, v)),
     wheelDistance: (ad, pd) => q((...a) => fWheelDistance(...a, ad, pd)),
     wheelScroll: (v, ad, pd) => q((...a) => fWheelScroll(...a, v, ad, pd)),
@@ -4174,6 +4227,8 @@ const placementSchema =
 const written = [];
 let cur = "bar";
 for (let i = 0; i < 4; i++) {
+  // each press lands after the previous write finished and hot-reloaded
+  e.finishSetting();
   e.root.placement = cur;
   e.togglePlacement();
   const cmd = e.settingWriter.command;
@@ -4251,56 +4306,74 @@ group(
   "(n4) the App window remembers its size, and only writes when it changed",
 );
 e = makeEnv({ windowWidth: 1040, windowHeight: 720 });
+const sizeCmds = () => e.settingWriter.started.map((c) => c.join(" "));
 e.saveWindowSize(1040, 720);
 ok(
-  e.sizeWriter.command === null && e.sizeWriter.running === false,
+  e.settingWriter.started.length === 0 && e.settingWriter.running === false &&
+    e.root.settingQueue.length === 0,
   "nothing moved -> nothing written (writing would hot-reload and retrigger itself)",
 );
 e.saveWindowSize(1200, 800);
-ok(e.sizeWriter.running === true, "a real resize is written");
-const sizeCmd = e.sizeWriter.command;
+ok(e.settingWriter.running === true, "a real resize is written");
 ok(
-  sizeCmd[0] === "sh" && sizeCmd[1] === "-c" && sizeCmd.length === 3,
-  "one process, so the two `omarchy bar set` calls cannot race each other: " +
-    JSON.stringify(sizeCmd.slice(0, 2)),
+  sizeCmds().join(" | ") ===
+      "omarchy bar set io.github.frankekn.line windowWidth 1200" &&
+    e.root.settingQueue.length === 1 &&
+    e.root.settingQueue[0].key === "windowHeight" &&
+    e.root.settingQueue[0].value === 800,
+  "width goes first, height waits behind it in the same queue -- two " +
+    "`omarchy bar set` at once would each rewrite shell.json over the other: " +
+    JSON.stringify(sizeCmds()),
 );
+e.saveWindowSize(1200, 800);
 ok(
-  sizeCmd[2] === "omarchy bar set io.github.frankekn.line windowWidth 1200" +
-      " && omarchy bar set io.github.frankekn.line windowHeight 800",
-  "width then height, in order: " + JSON.stringify(sizeCmd[2]),
+  e.root.settingQueue.length === 1 && e.settingWriter.started.length === 1,
+  "a second settle at the size already on its way queues nothing new",
+);
+e.finishSetting();
+ok(
+  sizeCmds()[1] === "omarchy bar set io.github.frankekn.line windowHeight 800" &&
+    e.settingWriter.overlaps === 0,
+  "height runs once width has finished: " + JSON.stringify(sizeCmds()),
+);
+e.finishSetting();
+ok(
+  e.settingWriter.running === false && e.root.settingQueue.length === 0 &&
+    e.root.settingInFlight === null,
+  "and the queue drains completely",
 );
 // A settle can fire once the settings have caught up; that second pass is a no-op.
-e.sizeWriter.command = null;
-e.sizeWriter.running = false;
 e.root.windowWidth = 1200;
 e.root.windowHeight = 800;
 e.saveWindowSize(1200, 800);
 ok(
-  e.sizeWriter.command === null,
+  e.settingWriter.started.length === 2 && e.settingWriter.running === false,
   "a second settle at the same size writes nothing",
 );
 // shell.json is hand-editable and `omarchy bar set` does not validate, so the
 // clamp is the only thing between a typo and an unusable window.
 e = makeEnv({});
 e.saveWindowSize(10, 10);
+e.finishSetting();
 ok(
-  /windowWidth 560 .. omarchy bar set io.github.frankekn.line windowHeight 480$/
-    .test(e.sizeWriter.command[2]),
+  e.settingWriter.started.map((c) => c.slice(4).join(" ")).join(",") ===
+    "windowWidth 560,windowHeight 480",
   "below the minimum clamps to 560x480: " +
-    JSON.stringify(e.sizeWriter.command[2]),
+    JSON.stringify(e.settingWriter.started),
 );
 e = makeEnv({});
 e.saveWindowSize(99999, 99999);
+e.finishSetting();
 ok(
-  /windowWidth 4096 .. omarchy bar set io.github.frankekn.line windowHeight 4096$/
-    .test(e.sizeWriter.command[2]),
+  e.settingWriter.started.map((c) => c.slice(4).join(" ")).join(",") ===
+    "windowWidth 4096,windowHeight 4096",
   "above the maximum clamps to 4096: " +
-    JSON.stringify(e.sizeWriter.command[2]),
+    JSON.stringify(e.settingWriter.started),
 );
 e = makeEnv({});
 e.saveWindowSize("nonsense", null);
 ok(
-  e.sizeWriter.command === null,
+  e.settingWriter.started.length === 0 && e.root.settingQueue.length === 0,
   "garbage falls back to the current size, which by definition has not changed",
 );
 ok(
@@ -4324,6 +4397,223 @@ ok(
   manifest.barWidget.defaults.windowWidth === 1040 &&
     manifest.barWidget.defaults.windowHeight === 720,
   "defaults match the fallbacks Panel.qml reads",
+);
+
+group("(n4b) every shell.json write is queued behind the one writer");
+{
+  const cmds = (env) => env.settingWriter.started.map((c) => c.slice(4).join(" "));
+  e = makeEnv({ placement: "bar" });
+  e.togglePlacement();
+  e.togglePlacement();
+  ok(
+    cmds(e).join(",") === "placement Center of screen" &&
+      e.settingWriter.overlaps === 0 &&
+      e.root.settingQueue.length === 1 &&
+      e.root.settingQueue[0].value === "App window",
+    "a second click while the first write is still running is queued, not " +
+      "lost, and steps on from the first: " + JSON.stringify(e.root.settingQueue),
+  );
+  e.finishSetting();
+  ok(
+    cmds(e).join(",") === "placement Center of screen,placement App window" &&
+      e.settingWriter.running === true,
+    "and it runs once the first has finished: " + JSON.stringify(cmds(e)),
+  );
+  e.finishSetting();
+  ok(
+    e.settingWriter.running === false && e.root.settingInFlight === null &&
+      e.root.settingQueue.length === 0 && e.settingWriter.started.length === 2,
+    "then the queue is empty and nothing else is started",
+  );
+
+  // Same key twice while something else is running: one entry, latest value.
+  e = makeEnv({ scrollPercent: 100 });
+  e.writeSetting("textScale", 110);
+  e.writeSetting("scrollSpeed", 150);
+  e.writeSetting("historyPage", 100);
+  e.writeSetting("scrollSpeed", 300);
+  ok(
+    JSON.stringify(e.root.settingQueue) ===
+      JSON.stringify([
+        { key: "scrollSpeed", value: 300 },
+        { key: "historyPage", value: 100 },
+      ]),
+    "the same key queued twice keeps only the latest value, in its original " +
+      "place: " + JSON.stringify(e.root.settingQueue),
+  );
+  e.finishSetting();
+  e.finishSetting();
+  e.finishSetting();
+  ok(
+    cmds(e).join(",") ===
+      "textScale 110,scrollSpeed 300,historyPage 100" &&
+      e.settingWriter.running === false && e.root.settingQueue.length === 0 &&
+      e.settingWriter.overlaps === 0,
+    "the queue drains completely, one command at a time: " +
+      JSON.stringify(cmds(e)),
+  );
+
+  // Two A+ before the hot-reload lands are two steps.
+  e = makeEnv({ fontScale: 1 });
+  e.setTextScale(10);
+  e.setTextScale(10);
+  ok(
+    cmds(e).join(",") === "textScale 110" &&
+      e.root.settingQueue.length === 1 &&
+      e.root.settingQueue[0].value === 120,
+    "two A+ clicks before the reload step twice (110 then 120), not 110 twice: " +
+      JSON.stringify(e.root.settingQueue),
+  );
+  e.setTextScale(-10);
+  ok(
+    e.root.settingQueue.length === 1 && e.root.settingQueue[0].value === 110,
+    "an A- right after walks back from the queued value",
+  );
+  e = makeEnv({ fontScale: 1.6 });
+  e.setTextScale(10);
+  ok(
+    e.settingWriter.started.length === 0 && e.root.settingQueue.length === 0,
+    "at the top of the range A+ still writes nothing",
+  );
+  e = makeEnv({ fontScale: 1.5 });
+  e.setTextScale(10);
+  e.setTextScale(10);
+  ok(
+    cmds(e).join(",") === "textScale 160" && e.root.settingQueue.length === 0,
+    "and the clamp applies to the pending value too: " + JSON.stringify(cmds(e)),
+  );
+
+  e = makeEnv({ scrollPercent: 100 });
+  e.stepScrollSpeed();
+  e.stepScrollSpeed();
+  ok(
+    cmds(e).join(",") === "scrollSpeed 150" &&
+      e.root.settingQueue[0].value === 200,
+    "scroll speed: two quick presses are two steps (150, 200)",
+  );
+  e = makeEnv({ historyPage: 60 });
+  e.stepHistoryPage();
+  e.stepHistoryPage();
+  ok(
+    cmds(e).join(",") === "historyPage 100" &&
+      e.root.settingQueue[0].value === 150,
+    "history page: two quick presses are two steps (100, 150)",
+  );
+
+  // A window resize while another setting is being written waits for it.
+  e = makeEnv({ windowWidth: 1040, windowHeight: 720, placement: "app" });
+  e.togglePlacement();
+  e.saveWindowSize(1200, 800);
+  ok(
+    cmds(e).join(",") === "placement Below the bar" &&
+      e.root.settingQueue.map((x) => x.key).join(",") ===
+        "windowWidth,windowHeight" &&
+      e.settingWriter.overlaps === 0,
+    "a resize while a setting write is in flight queues behind it -- no " +
+      "second writer on shell.json: " + JSON.stringify(e.root.settingQueue),
+  );
+  e.saveWindowSize(1300, 800);
+  ok(
+    e.root.settingQueue.length === 2 && e.root.settingQueue[0].value === 1300 &&
+      e.root.settingQueue[1].value === 800,
+    "a later resize replaces the queued size instead of adding to it",
+  );
+  e.finishSetting();
+  e.finishSetting();
+  e.finishSetting();
+  ok(
+    cmds(e).join(",") ===
+      "placement Below the bar,windowWidth 1300,windowHeight 800" &&
+      e.settingWriter.running === false && e.root.settingQueue.length === 0 &&
+      e.root.settingInFlight === null && e.settingWriter.overlaps === 0,
+    "and everything drains in order: " + JSON.stringify(cmds(e)),
+  );
+
+  ok(
+    !/sizeWriter/.test(src) &&
+      (src.match(/settingWriter\.running = true/g) || []).length === 1,
+    "one writer, started from one place (drainSettings)",
+  );
+  ok(
+    /onRunningChanged: if \(!running\) Qt\.callLater\(root\.drainSettings\)/
+      .test(src),
+    "the writer drains the queue when it stops, deferred out of its own signal",
+  );
+  ok(
+    JSON.stringify(PanelKit.queueSetting([], "a", 1)) === '[{"key":"a","value":1}]' &&
+      PanelKit.pendingSetting([], null, "a", 7) === 7 &&
+      PanelKit.pendingSetting([], { key: "a", value: 3 }, "a", 7) === 3 &&
+      PanelKit.pendingSetting([{ key: "a", value: 4 }], { key: "a", value: 3 },
+        "a", 7) === 4 &&
+      PanelKit.pendingSetting([{ key: "b", value: 4 }], null, "a", 7) === 7,
+    "pendingSetting: queued beats in flight beats the live value",
+  );
+  const q0 = [{ key: "a", value: 1 }];
+  const q1 = PanelKit.queueSetting(q0, "a", 2);
+  ok(q0[0].value === 1 && q1 !== q0, "queueSetting returns a new array");
+}
+
+group("(n4c) file:// sources are percent-encoded per path segment");
+ok(
+  PanelKit.fileUrl("/home/u/.local/state/line/a.jpg") ===
+    "file:///home/u/.local/state/line/a.jpg",
+  "a plain path is unchanged",
+);
+ok(
+  PanelKit.fileUrl("/home/a#b/c%d/e?f/g h/圖.png") ===
+    "file:///home/a%23b/c%25d/e%3Ff/g%20h/%E5%9C%96.png",
+  "#, %, ?, space and CJK are encoded; slashes stay separators: " +
+    PanelKit.fileUrl("/home/a#b/c%d/e?f/g h/圖.png"),
+);
+ok(
+  PanelKit.fileUrl("") === "file://" && PanelKit.fileUrl(undefined) === "file://",
+  "an empty path still yields the bare prefix the call sites guard against",
+);
+ok(
+  PanelKit.localPath(PanelKit.fileUrl("/home/a#b/g h/圖.png")) ===
+    "/home/a#b/g h/圖.png" &&
+    PanelKit.localPath("https://x/y%20z") === "https://x/y%20z" &&
+    PanelKit.localPath("file:///bad%zz") === "/bad%zz",
+  "localPath undoes fileUrl, leaves http alone and survives a bad escape",
+);
+{
+  const kitNoFileUrl = kitSrc.replace(
+    /\nfunction fileUrl\(path\) \{[\s\S]*?\n\}\n/,
+    "\n",
+  );
+  ok(
+    !/"file:\/\/"\s*\+/.test(src) && !/"file:\/\/"\s*\+/.test(kitNoFileUrl),
+    "no raw \"file://\" + path is left in Panel.qml or PanelKit.js outside fileUrl",
+  );
+  ok(
+    !/slice\(7\)/.test(src),
+    "nothing in Panel.qml strips file:// by hand; localPath decodes it",
+  );
+}
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.messages = [{
+  id: "m1",
+  contentType: "IMAGE",
+  hasMedia: true,
+  mediaPath: "/home/a#b/圖 1.jpg",
+}];
+e.showPicture("m1", PanelKit.fileUrl("/home/a#b/圖 1.jpg"), "圖片");
+ok(
+  e.root.lightbox !== null && e.root.lightbox.index === 0 &&
+    e.root.lightbox.source === "file:///home/a%23b/%E5%9C%96%201.jpg",
+  "the thumbnail's encoded source still finds its place in pictureList",
+);
+e.onReply(JSON.stringify({ id: 1, ok: true, data: { path: "/home/a#b/full 1.jpg" } }));
+ok(
+  e.root.lightbox.source === "file:///home/a%23b/full%201.jpg",
+  "the downloaded original is encoded the same way: " + e.root.lightbox.source,
+);
+e.openExternally();
+ok(
+  e.execed.length > 0 &&
+    e.execed[e.execed.length - 1].join("|") === "xdg-open|/home/a#b/full 1.jpg",
+  "and `o` hands xdg-open the real path, decoded: " +
+    JSON.stringify(e.execed[e.execed.length - 1]),
 );
 
 group(
@@ -6386,8 +6676,8 @@ ok(
 // Nothing that carries message text may ever be assembled into a command line.
 const shellArgv = src.match(/\["(?:ba)?sh", "-c",[\s\S]*?\n[^\n]*\]/g) || [];
 ok(
-  shellArgv.length === 2,
-  "the only two sh -c calls are the settings writer and the file picker (" +
+  shellArgv.length === 1,
+  "the only sh -c call is the file picker -- settings go through argv now (" +
     shellArgv.length + ")",
 );
 ok(
@@ -6396,7 +6686,7 @@ ok(
       c,
     )
   ),
-  "and neither of them touches a message, a link or the clipboard",
+  "and it does not touch a message, a link or the clipboard",
 );
 ok(
   /command: \["wl-copy"\]/.test(src),
@@ -11020,11 +11310,12 @@ group("public images use daemon paths and recover after disconnect");
     "one daemon request per remote image",
   );
   root.pending[1] = { cmd: "image", msgId: url };
-  new Function("root", "line", "tr", "trErr", B.onReply)(
+  new Function("root", "line", "tr", "trErr", "PanelKit", B.onReply)(
     root,
     JSON.stringify({ id: 1, ok: true, data: { path: "/tmp/image.png" } }),
     Tzh,
     Ezh,
+    PanelKit,
   );
   ok(
     root.imagePaths[url] === "file:///tmp/image.png",
@@ -11035,11 +11326,12 @@ group("public images use daemon paths and recover after disconnect");
     "background image replies preserve the notice",
   );
   root.pending[2] = { cmd: "image", msgId: url };
-  new Function("root", "line", "tr", "trErr", B.onReply)(
+  new Function("root", "line", "tr", "trErr", "PanelKit", B.onReply)(
     root,
     JSON.stringify({ id: 2, ok: false }),
     Tzh,
     Ezh,
+    PanelKit,
   );
   ok(
     root.imagePaths[url] === "",
@@ -11047,7 +11339,7 @@ group("public images use daemon paths and recover after disconnect");
   );
   delete root.imagePaths[url];
   root.pending[3] = { cmd: "image", msgId: url, invalidate: true };
-  new Function("root", "line", "tr", "trErr", B.onReply)(
+  new Function("root", "line", "tr", "trErr", "PanelKit", B.onReply)(
     root,
     JSON.stringify({
       id: 3,
@@ -11056,6 +11348,7 @@ group("public images use daemon paths and recover after disconnect");
     }),
     Tzh,
     Ezh,
+    PanelKit,
   );
   ok(
     root.imageRetries.length === 1 &&
@@ -11126,7 +11419,7 @@ group("public images use daemon paths and recover after disconnect");
   };
   root.imagePathsMax = 2;
   root.pending[5] = { cmd: "image", msgId: "https://example.com/d.png" };
-  new Function("root", "line", "tr", "trErr", B.onReply)(
+  new Function("root", "line", "tr", "trErr", "PanelKit", B.onReply)(
     root,
     JSON.stringify({
       id: 5,
@@ -11135,6 +11428,7 @@ group("public images use daemon paths and recover after disconnect");
     }),
     Tzh,
     Ezh,
+    PanelKit,
   );
   ok(
     root.imagePaths["https://example.com/d.png"] === "file:///tmp/d.png" &&
@@ -11645,6 +11939,7 @@ e = makeEnv({});
 const scrollWrites = [];
 let atPercent = 100;
 for (let i = 0; i < SCROLL_STEPS.length; i++) {
+  e.finishSetting();
   e.root.scrollPercent = atPercent;
   e.stepScrollSpeed();
   const cmd = e.settingWriter.command;
@@ -12117,6 +12412,7 @@ e = makeEnv({});
 const pageWrites = [];
 let atPage = HISTORY_STEPS[0];
 for (let i = 0; i < HISTORY_STEPS.length; i++) {
+  e.finishSetting();
   e.root.historyPage = atPage;
   e.stepHistoryPage();
   const cmd = e.settingWriter.command;
