@@ -1678,6 +1678,34 @@ Deno.test("a push to a peer that stopped reading times out and closes", async ()
   await serving;
 });
 
+Deno.test("a request line past the cap closes the connection", async () => {
+  let closedReported = false;
+  const config = {
+    ...options((req) => Promise.resolve({ ok: true, data: { cmd: req.cmd } })),
+    maxLineChars: 32,
+    onClosed() {
+      closedReported = true;
+    },
+  };
+  // Lines under the cap are served, however many of them share a chunk; the
+  // runaway one arrives in pieces and never sends its newline.
+  const conn = controlledConnection([
+    '{"id":1,"cmd":"sync"}\n{"id":2,"cmd":"sync"}\n{"id":3,',
+  ]);
+  const serving = servePanelConnection(conn, config).catch(() => {});
+  await waitFor(() => conn.replies().length === 2, "short lines not served");
+  conn.send('"cmd":"sync"}\n');
+  await waitFor(() => conn.replies().length === 3, "split line not served");
+  conn.send("x".repeat(20));
+  conn.send("x".repeat(20));
+  await waitFor(
+    () => closedReported && conn.isClosed(),
+    "an unbounded line kept the connection open",
+  );
+  await serving;
+  assertEquals(conn.replies().map((r) => r.id), [1, 2, 3]);
+});
+
 Deno.test("chat row pushes ride the same sink the events do", async () => {
   // The single-row call sites are the wiring; a source pin is the only honest
   // check here, the same way the logout ordering above is pinned.

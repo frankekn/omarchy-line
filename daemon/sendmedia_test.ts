@@ -949,3 +949,25 @@ Deno.test("concurrent clipboard consumers admit exactly one upload", async () =>
     assertEquals(await names(dir), []);
   });
 });
+
+Deno.test("only a regular file has a size worth sending", async () => {
+  const m = await loadBlock<{
+    regularFileSize(path: string): Promise<number | null>;
+  }>("regularfile", "export { regularFileSize };");
+  const dir = await Deno.makeTempDir({ prefix: "enil-regularfile-test-" });
+  try {
+    await Deno.writeFile(`${dir}/a.png`, new Uint8Array(42));
+    assertEquals(await m.regularFileSize(`${dir}/a.png`), 42);
+    await Deno.symlink(`${dir}/a.png`, `${dir}/link.png`);
+    assertEquals(await m.regularFileSize(`${dir}/link.png`), 42);
+    // The ones whose readFile would hang or fail after passing the size cap.
+    const fifo = await new Deno.Command("mkfifo", { args: [`${dir}/pipe`] })
+      .output();
+    assert(fifo.success, "mkfifo failed");
+    assertEquals(await m.regularFileSize(`${dir}/pipe`), null);
+    assertEquals(await m.regularFileSize("/dev/zero"), null);
+    assertEquals(await m.regularFileSize(dir), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

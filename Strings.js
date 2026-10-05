@@ -221,6 +221,7 @@ var WIRE_EN = {
   "已收回訊息": "Message unsent",
   "我": "me",
   "找不到檔案": "File not found",
+  "不是一般檔案": "Not a regular file",
   "找不到訊息": "Message not found",
   "檔案已過期（LINE 只保留 7 天）": "File expired (LINE keeps files for 7 days)",
   "檔案已過期或已被刪除": "File expired or deleted",
@@ -257,6 +258,7 @@ var WIRE_PREFIX = [
   ["貼圖清單讀不到：", "Couldn't load stickers: "],
   ["剪貼簿的圖片格式不支援: ", "Unsupported clipboard image type: "],
   ["找不到檔案: ", "File not found: "],
+  ["不是一般檔案: ", "Not a regular file: "],
 ];
 
 // 可以出現在字串中段的安全 token（多字、不會撞到一般中文名詞）——

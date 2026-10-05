@@ -37,6 +37,12 @@ export const PANEL_MEDIA_BUSY_TEXT = "媒體請求過多，請稍後再試";
 export const PANEL_COMMAND_BUSY_TEXT = "請求過多，請稍後再試";
 export const PANEL_WRITE_TIMEOUT_MS = 5_000;
 export const PANEL_OVERLOAD_WAIT_TIMEOUT_MS = 5_000;
+/**
+ * The longest request line, in UTF-16 units. The biggest real one is a text
+ * message (LINE caps those at 10k characters) or a file path; this is two
+ * orders of magnitude above either.
+ */
+export const PANEL_LINE_MAX_CHARS = 1 << 20;
 
 export interface PanelConnection {
   readable: ReadableStream<Uint8Array>;
@@ -84,6 +90,7 @@ export interface PanelServerOptions {
   now?: () => number;
   writeTimeoutMs?: number;
   overloadWaitTimeoutMs?: number;
+  maxLineChars?: number;
 }
 
 const REPLY_ENCODER = new TextEncoder();
@@ -128,6 +135,37 @@ export async function writeAll(
 }
 
 /**
+ * Errors the stream once a line runs past `max` without a newline.
+ * TextLineStream buffers a partial line without bound, so a peer that never
+ * sends "\n" would otherwise grow the daemon until it is killed. The error
+ * reaches the read loop like a reset and closes the connection.
+ */
+function lineLengthCap(max: number): TransformStream<string, string> {
+  let pending = 0;
+  return new TransformStream({
+    transform(chunk, controller) {
+      // Every line the chunk completes, then the partial one it leaves.
+      let start = 0;
+      for (
+        let nl = chunk.indexOf("\n");
+        nl >= 0;
+        nl = chunk.indexOf("\n", start)
+      ) {
+        if (pending + nl - start > max) break;
+        pending = 0;
+        start = nl + 1;
+      }
+      pending += chunk.length - start;
+      if (pending > max) {
+        controller.error(new Error("panel request line too long"));
+        return;
+      }
+      controller.enqueue(chunk);
+    },
+  });
+}
+
+/**
  * Serves one panel connection.
  *
  * Ordinary commands remain ordered. Selected read-only commands run through
@@ -148,6 +186,7 @@ export async function servePanelConnection(
     PANEL_OVERLOAD_WAIT_TIMEOUT_MS;
   const lines = conn.readable
     .pipeThrough(new TextDecoderStream())
+    .pipeThrough(lineLengthCap(options.maxLineChars ?? PANEL_LINE_MAX_CHARS))
     .pipeThrough(new TextLineStream());
   const reader = lines.getReader();
   let writing = Promise.resolve();
