@@ -37,14 +37,16 @@ type Json = Record<string, unknown>;
 type PluginChat = Record<string, unknown>;
 let resolveBoxes: (value: unknown) => void = () => {};
 let rejectBoxes: (reason: unknown) => void = () => {};
+let boxesCalls = 0;
 function pendingBoxes() {
+  boxesCalls++;
   return new Promise((resolve, reject) => {
     resolveBoxes = resolve;
     rejectBoxes = reject;
   });
 }
 const calls = {
-  writes: 0, failures: 0, oks: 0, retries: 0, names: 0,
+  writes: 0, failures: 0, oks: 0, retries: 0, names: 0, halts: 0,
   timings: [] as string[],
 };
 const recentCalls: string[] = [];
@@ -140,7 +142,20 @@ async function pooledMap(items: unknown[], _limit: number, fn: (item: unknown) =
 }
 function noteRefreshOk() { calls.oks++; }
 function noteRefreshFailed() { calls.failures++; }
-function classifyLoginError() { return "network" as const; }
+// The classifier answers per thrown error so one prelude covers a network
+// failure, a maintenance window and an account restriction.
+function classifyLoginError(e: unknown) {
+  const text = String((e as { message?: unknown } | null)?.message ?? "");
+  if (/ABUSE_BLOCK|BANNED|EXCESSIVE_ACCESS/.test(text)) return "restricted";
+  if (/MAINTENANCE_ERROR/.test(text)) return "unknown";
+  return "network";
+}
+let restriction: { code: string; since: number } | null = null;
+function haltForRestriction() {
+  calls.halts++;
+  restriction = { code: "X", since: 1 };
+}
+
 function clearRefreshRetry() {
   if (refreshRetryTimer !== null) clearTimeout(refreshRetryTimer);
   refreshRetryTimer = null;
@@ -196,6 +211,9 @@ export function succeedWithEqualTimeMessage(id: string, text: string) {
   });
 }
 export function fail() { rejectBoxes(new Error("late failure")); }
+export function failWith(message: string) { rejectBoxes(new Error(message)); }
+export function boxesCalled() { return boxesCalls; }
+export function restricted() { return restriction !== null; }
 export function logout() {
   sessionGeneration++;
   client = null;
@@ -305,6 +323,7 @@ Deno.test("a successful refresh that settles after logout cannot publish", async
     oks: 0,
     retries: 0,
     names: 0,
+    halts: 0,
     timings: ["chats.decrypt", "chats.refresh"],
   });
   assertEquals(m.state(), {
@@ -327,6 +346,7 @@ Deno.test("a failed refresh that settles after logout cannot restore health", as
     oks: 0,
     retries: 0,
     names: 0,
+    halts: 0,
     // The boxes fetch itself failed: no decrypt pool ever started.
     timings: ["chats.refresh"],
   });
@@ -349,6 +369,7 @@ Deno.test("a current refresh publishes revision and incomplete-list health", asy
     oks: 1,
     retries: 0,
     names: 0,
+    halts: 0,
     timings: ["chats.decrypt", "chats.refresh"],
   });
   assertEquals(m.state(), {
@@ -1223,4 +1244,37 @@ Deno.test("a peer's read op leaves the next round incremental", async () => {
     by: READ_PEER,
     upTo: "18000000000007",
   }]);
+});
+
+Deno.test("a refused account halts the round: no retry, and the next round sends nothing", async () => {
+  for (const code of ["ABUSE_BLOCK", "BANNED", "EXCESSIVE_ACCESS"]) {
+    const m = await loadModule();
+    const round = m.start();
+    m.failWith(
+      `Request internal failed, getMessageBoxes(/S4) -> {"code":"${code}"}`,
+    );
+    assertEquals(await round, false, code);
+    assertEquals(m.calls.halts, 1, code);
+    assertEquals(m.calls.failures, 1, code);
+    assertEquals(m.retryArmed(), false, code);
+    // The poll, the debouncer and the refreshAgain chain all land here: a
+    // halted account answers them with no request on the wire.
+    assertEquals(await m.start(), false, code);
+    assertEquals(m.boxesCalled(), 1, code);
+  }
+});
+
+Deno.test("a maintenance window halts nothing: the next poll runs a round", async () => {
+  const m = await loadModule();
+  const round = m.start();
+  m.failWith(
+    'Request internal failed, getMessageBoxes(/S4) -> {"code":"MAINTENANCE_ERROR"}',
+  );
+  assertEquals(await round, false);
+  assertEquals(m.calls.halts, 0);
+  assertEquals(m.restricted(), false);
+  const next = m.start();
+  m.succeed();
+  assertEquals(await next, true);
+  assertEquals(m.boxesCalled(), 2);
 });

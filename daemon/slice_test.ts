@@ -131,6 +131,7 @@ Deno.test("every marker pair used by the suite is present and ordered", async ()
       "statepublished",
       "pushsummary",
       "storageguard",
+      "restriction",
     ]
   ) {
     const block = await sliceBlock(name);

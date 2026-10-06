@@ -21,7 +21,13 @@ interface RejectClient {
   listen(options?: unknown): void;
 }
 interface RejectionModule {
-  calls: { listen: number; close: number; refresh: number; write: number };
+  calls: {
+    listen: number;
+    close: number;
+    refresh: number;
+    write: number;
+    halt: number;
+  };
   logs: string[];
   makeClient(): RejectClient;
   onUnhandledRejection(reason: unknown): boolean;
@@ -43,7 +49,7 @@ type FakeClient = {
   base: { push: { conns: Array<FakeConn | null> }; poll: { islisten: boolean } };
   listen(options?: unknown): void;
 };
-export const calls = { listen: 0, close: 0, refresh: 0, write: 0 };
+export const calls = { halt: 0, listen: 0, close: 0, refresh: 0, write: 0 };
 export const logs: string[] = [];
 export const PUSH_STALE_MS = 180_000;
 export const RECONNECT_BASE_MS = 1_000;
@@ -61,6 +67,15 @@ function setForceFullRefresh(value: boolean) {
 export let login: LoginState = { status: "ok" };
 export let link: LinkState | null = null;
 export let listenAbort: AbortController | null = null;
+// The restriction halt (restriction.ts) gates the watchdog; the halt itself
+// is a stub here, restriction_test.ts drives the real one.
+export let restriction: { code: string; since: number } | null = null;
+export function setRestriction(r: { code: string; since: number } | null) {
+  restriction = r;
+}
+function setListenAbort(ctrl: AbortController) { listenAbort = ctrl; return ctrl; }
+function abortListen() { listenAbort?.abort(); listenAbort = null; }
+function haltForRestriction() { calls.halt++; }
 export let client: FakeClient | null = null;
 export function setClient(c: FakeClient | null) { client = c; }
 export function setNextReconnectAt(t: number) { nextReconnectAt = t; }
@@ -216,4 +231,19 @@ Deno.test("a reset inside the backoff window is recorded but not acted on", asyn
   assertEquals(m.calls.listen, 0, "the backoff gate held");
   assertEquals(m.calls.close, 0);
   assertEquals(m.state().reconnectAttempts, 0);
+});
+
+Deno.test("a refusal of the account is claimed by halting, never by reconnecting", async () => {
+  const m = await loadModule();
+  m.setClient(m.makeClient());
+  const claimed = m.onUnhandledRejection({
+    name: "RequestError",
+    message: 'Request internal failed, x(/S4) -> {"code":"ABUSE_BLOCK"}',
+    data: { code: "ABUSE_BLOCK" },
+  });
+  await settle();
+  assertEquals(claimed, true);
+  assertEquals(m.calls.halt, 1);
+  assertEquals(m.calls.listen, 0);
+  assertEquals(m.calls.close, 0);
 });

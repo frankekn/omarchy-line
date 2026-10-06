@@ -51,7 +51,7 @@ type FakeClient = {
   base: { push: { conns: Array<FakeConn | null> }; poll: { islisten: boolean } };
   listen(options?: unknown): void;
 };
-export const calls = { listen: 0, close: 0, refresh: 0, write: 0 };
+export const calls = { halt: 0, listen: 0, close: 0, refresh: 0, write: 0 };
 export const PUSH_STALE_MS = ${opts.staleMs ?? 180_000};
 export const RECONNECT_BASE_MS = 1_000;
 export const RECONNECT_CAP_MS = 60_000;
@@ -68,6 +68,15 @@ function setForceFullRefresh(value: boolean) {
 export let login: LoginState = { status: "ok" };
 export let link: LinkState | null = null;
 export let listenAbort: AbortController | null = null;
+// The restriction halt (restriction.ts) gates the watchdog; the halt itself
+// is a stub here, restriction_test.ts drives the real one.
+export let restriction: { code: string; since: number } | null = null;
+export function setRestriction(r: { code: string; since: number } | null) {
+  restriction = r;
+}
+function setListenAbort(ctrl: AbortController) { listenAbort = ctrl; return ctrl; }
+function abortListen() { listenAbort?.abort(); listenAbort = null; }
+function haltForRestriction() { calls.halt++; }
 export let client: FakeClient | null = null;
 export function setClient(c: FakeClient | null) { client = c; }
 export function setLogin(l: LoginState) { login = l; }

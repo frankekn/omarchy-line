@@ -3169,6 +3169,36 @@ ok(
   "down without `since` drops the parenthetical, keeps the affordance",
 );
 
+group("(j3b) a restriction halt names the code and offers a retry, not a reconnect");
+ok(
+  notice({
+    state: stateWith({
+      link: { push: "down", since: NOW - 60000, reason: "restricted", code: "EXCESSIVE_ACCESS" },
+    }),
+  }) ===
+    "LINE 限制了這個帳號（EXCESSIVE_ACCESS），已暫停連線，點此重試",
+  "restricted: code, no 重連中, tap to retry",
+);
+ok(
+  notice({
+    state: stateWith({
+      link: { push: "down", since: NOW - 60000, reason: "restricted" },
+    }),
+  }) ===
+    "LINE 限制了這個帳號（?），已暫停連線，點此重試",
+  "restricted without a code still says why",
+);
+ok(
+  notice({
+    state: stateWith({
+      link: { push: "down", since: NOW - 60000, reason: "restricted", code: "BANNED" },
+      chatList: { complete: false, loaded: 3 },
+    }),
+    chats: [{ mid: "a" }, { mid: "b" }, { mid: "c" }],
+  }).indexOf("LINE 限制了這個帳號（BANNED）") === 0,
+  "restricted still leads the partial-list suffix",
+);
+
 group("(j4) DAEMON 離線 outranks the link line");
 ok(
   notice({
@@ -3198,6 +3228,10 @@ ok(
   "token_expired",
 );
 ok(detailFor({ reason: "network" }) === "連不上 LINE，稍後重試", "network");
+ok(
+  detailFor({ reason: "restricted" }) === "LINE 限制了這個帳號，稍後再登入",
+  "restricted",
+);
 ok(
   detailFor({ reason: "unknown" }) === "RequestError: boom",
   "unknown -> the raw text",

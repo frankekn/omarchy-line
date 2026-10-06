@@ -16,6 +16,7 @@
  * replaced, in the caller's order, so values and timing are unchanged.
  */
 import { RefreshHealthState } from "../refreshcontrol.ts";
+import type { RefreshFailureReason } from "../refreshcontrol.ts";
 import { createChatSummaryStore } from "../chatsummary.ts";
 import { writeAtomic } from "../atomicfile.ts";
 import { CHAT_LIMIT } from "./env.ts";
@@ -540,7 +541,7 @@ function noteRefreshOk(now: number = Date.now()): void {
 }
 
 function noteRefreshFailed(
-  reason: "token_expired" | "network" | "unknown",
+  reason: RefreshFailureReason,
   now: number = Date.now(),
 ): void {
   refreshHealthState.fail(reason, now);

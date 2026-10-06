@@ -154,6 +154,9 @@ const UNKNOWN_ERROR = "不明錯誤";
 // is the one every error-path slice already pastes in front.
 const NET_DOWN_TEXT = "連不上 LINE，稍後重試";
 const TOKEN_EXPIRED_TEXT = "登入已過期，請重新掃描";
+// The third refusal: LINE refused the account itself, and the daemon has
+// stopped talking to it until the user asks again (see restriction.ts).
+const RESTRICTED_TEXT = "LINE 限制了這個帳號，已暫停連線";
 
 /**
  * What a caught value says to the user.
@@ -196,6 +199,7 @@ export {
   NET_DOWN_TEXT,
   redactMids,
   refusal,
+  RESTRICTED_TEXT,
   TOKEN_EXPIRED_TEXT,
   UNSENT_ERROR,
   UNSENT_TEXT,
@@ -208,7 +212,7 @@ export {
 // for module state other than what a stub prelude can provide.
 // enil:loginerror-begin
 /**
- * Why a login or resume failed, in the three shapes the panel can give useful
+ * Why a login or resume failed, in the four shapes the panel can give useful
  * advice for.
  *
  * Everything worth matching on is spread across a cause chain, so the whole
@@ -241,9 +245,8 @@ export {
  *
  * Only the classification escapes; the struct itself is never logged.
  */
-function classifyLoginError(
-  e: unknown,
-): "token_expired" | "network" | "unknown" {
+/** Every name, message and thrift code on the cause chain, as one string. */
+function errorChainText(e: unknown): string {
   const parts: string[] = [];
   let cur: unknown = e;
   // Bounded on purpose: a real chain is two or three deep, and a cyclic
@@ -262,7 +265,33 @@ function classifyLoginError(
     );
     cur = err.cause;
   }
-  const text = parts.join(" ");
+  return parts.join(" ");
+}
+
+/**
+ * The TalkException codes that say LINE refused the account, not the request:
+ * nothing the daemon retries on its own can change the answer, and retrying
+ * is what turns a rate limit into a ban. MAINTENANCE_ERROR is deliberately
+ * absent (it clears by itself), as are the codes a request can earn from its
+ * target rather than from the account (NOT_AVAILABLE_USER is also what
+ * sending to a deleted account returns). Returns the code name, which is all
+ * of the error the log and state.json carry.
+ */
+function restrictionCode(e: unknown): string | null {
+  const match = /\b(ABUSE_BLOCK|BANNED|EXCESSIVE_ACCESS)\b/.exec(
+    errorChainText(e),
+  );
+  return match ? match[1] : null;
+}
+
+function classifyLoginError(
+  e: unknown,
+): "token_expired" | "network" | "restricted" | "unknown" {
+  // First, because it is the strongest claim and the only one that must not
+  // be answered with another request: a refused account keeps its stored
+  // credentials and waits for the user.
+  if (restrictionCode(e) !== null) return "restricted";
+  const text = errorChainText(e);
   // RefreshError means the access token asked to be refreshed and no refresh
   // token was stored -- there is nothing left to renew with, only a new scan.
   // V3_TOKEN_CLIENT_LOGGED_OUT has only ever been seen nested inside a
@@ -282,6 +311,6 @@ function classifyLoginError(
 }
 // enil:loginerror-end
 
-export { classifyLoginError };
+export { classifyLoginError, restrictionCode };
 
 export type { MediaState };

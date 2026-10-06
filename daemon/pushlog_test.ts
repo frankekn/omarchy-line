@@ -20,7 +20,13 @@ interface PushClient {
   listen(options?: unknown): void;
 }
 interface PushLogModule {
-  calls: { listen: number; close: number; refresh: number; write: number };
+  calls: {
+    listen: number;
+    close: number;
+    refresh: number;
+    write: number;
+    halt: number;
+  };
   makeClient(): PushClient;
   onPushLog(
     type: string,
@@ -49,7 +55,7 @@ type FakeClient = {
   listen(options?: unknown): void;
 };
 type Json = Record<string, unknown>;
-export const calls = { listen: 0, close: 0, refresh: 0, write: 0 };
+export const calls = { halt: 0, listen: 0, close: 0, refresh: 0, write: 0 };
 export const PUSH_STALE_MS = 180_000;
 export const RECONNECT_BASE_MS = 1_000;
 export const RECONNECT_CAP_MS = 60_000;
@@ -66,6 +72,15 @@ function setForceFullRefresh(value: boolean) {
 export let login: LoginState = { status: "ok" };
 export let link: LinkState | null = null;
 export let listenAbort: AbortController | null = null;
+// The restriction halt (restriction.ts) gates the watchdog; the halt itself
+// is a stub here, restriction_test.ts drives the real one.
+export let restriction: { code: string; since: number } | null = null;
+export function setRestriction(r: { code: string; since: number } | null) {
+  restriction = r;
+}
+function setListenAbort(ctrl: AbortController) { listenAbort = ctrl; return ctrl; }
+function abortListen() { listenAbort?.abort(); listenAbort = null; }
+function haltForRestriction() { calls.halt++; }
 export let client: FakeClient | null = null;
 export function setClient(c: FakeClient | null) { client = c; }
 export function setLogin(l: LoginState) { login = l; }
@@ -83,6 +98,10 @@ export function makeClient(): FakeClient {
 }
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
+function classifyLoginError(e: unknown): string {
+  const text = String((e as { message?: unknown } | null | undefined)?.message ?? "");
+  return /ABUSE_BLOCK|BANNED|EXCESSIVE_ACCESS/.test(text) ? "restricted" : "unknown";
+}
 export { markPushAlive, onPushLog, pushIsStale, watchdogTick };
 `;
   return await loadBlocks<PushLogModule>(["watchdog", "pushlog"], prelude);
@@ -240,4 +259,18 @@ Deno.test("anything else on the log channel is left alone", async () => {
   assertEquals(lines, []);
   assertEquals(m.calls.listen, 0);
   assertEquals(m.state().lastPushAt, before);
+});
+
+Deno.test("a pusher refused for the account halts instead of reconnecting", async () => {
+  const m = await loadModule();
+  m.setClient(m.makeClient());
+  m.onPushLog(
+    "LegyPusherError",
+    { error: new Error('init failed -> {"code":"BANNED"}') },
+    false,
+  );
+  await new Promise((r) => setTimeout(r, 50));
+  assertEquals(m.calls.halt, 1);
+  assertEquals(m.calls.listen, 0);
+  assertEquals(m.calls.close, 0);
 });

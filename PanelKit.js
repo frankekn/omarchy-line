@@ -531,6 +531,14 @@ function linkNoticeText(state, online, nowMs, searching, chatsCount, tr) {
   var partial = partialListNoticeText(cl, chatsCount, searching, tr)
   if (!online) return partial
   var l = state && state.link ? state.link : null
+  // link.reason "restricted"：daemon 碰到 LINE 拒絕整個帳號的錯誤碼（ABUSE_BLOCK、
+  // BANNED、EXCESSIVE_ACCESS），自己停掉所有自動連線，等人來按。這行同樣是按鈕，
+  // 但不能寫「重連中」—— 沒有在重連，這正是重點。
+  if (l && String(l.push || "") === "down" && String(l.reason || "") === "restricted") {
+    var code = String(l.code || "")
+    var r0 = tr("link.restricted", code || "?")
+    return r0 + tr("link.restrictedHint") + (partial ? tr("sep.semi") + partial : "")
+  }
   if (l && String(l.push || "") === "down") {
     // since 是選填／可能是 0，agoText 這時會回空字串，就不要留一個空括號。
     var ago = agoText(Number(l.since || 0), nowMs, tr)
@@ -573,6 +581,7 @@ function loginErrorDetail(loginInfo, tr) {
   var reason = loginInfo ? String(loginInfo.reason || "") : ""
   if (reason === "token_expired") return tr("login.tokenExpired")
   if (reason === "network") return tr("login.network")
+  if (reason === "restricted") return tr("login.restricted")
   return loginInfo ? String(loginInfo.error || "") : ""
 }
 

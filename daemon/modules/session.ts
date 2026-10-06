@@ -16,6 +16,24 @@ import type { Client } from "@evex/linejs";
 
 let client: Client | null = null;
 /**
+ * listen() has no stop API; aborting this signal closes the event streams.
+ * Login starts the listen, reconnectPush rebuilds it, and a restriction halt
+ * ends it, so the handle lives with the session rather than with any of them.
+ */
+let listenAbort: AbortController | null = null;
+
+/** The caller that starts a listen() registers its controller here. */
+export function setListenAbort(ctrl: AbortController): AbortController {
+  listenAbort = ctrl;
+  return ctrl;
+}
+
+/** Aborts the current listen(), if any, and drops the handle. */
+export function abortListen(): void {
+  listenAbort?.abort();
+  listenAbort = null;
+}
+/**
  * Monotonic owner for asynchronous session work. A client can finish a talk
  * request after logout (or after another account logged in); the generation
  * makes that completion observable as stale before it touches shared state.
@@ -35,4 +53,4 @@ export function bumpSessionGeneration(): void {
   sessionGeneration++;
 }
 
-export { client, sessionGeneration, sessionIsCurrent };
+export { client, listenAbort, sessionGeneration, sessionIsCurrent };

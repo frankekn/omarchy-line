@@ -46,20 +46,20 @@ import {
   setMe,
 } from "./state.ts";
 import {
+  abortListen,
   bumpSessionGeneration,
   client,
   sessionGeneration,
   sessionIsCurrent,
   setClient,
+  setListenAbort,
 } from "./session.ts";
+import { liftRestriction } from "./restriction.ts";
 import {
   backoffDelay,
-  clearListenAbort,
-  listenAbort,
   markPushAlive,
   onPushLog,
   reconnectPush,
-  setListenAbort,
 } from "./watchdog.ts";
 import {
   clearRefreshRetry,
@@ -104,6 +104,7 @@ import {
   errorLine,
   errorText,
   NET_DOWN_TEXT,
+  RESTRICTED_TEXT,
   TOKEN_EXPIRED_TEXT,
 } from "./text.ts";
 
@@ -248,6 +249,7 @@ async function startLogin(): Promise<boolean> {
 async function onLoggedIn(c: Client): Promise<void> {
   bumpSessionGeneration();
   setClient(c);
+  liftRestriction();
   const generation = sessionGeneration;
   try {
     const profile = await c.getMyProfile();
@@ -565,8 +567,9 @@ async function logoutClaimed(
   // Retire the old refresh round immediately. The login gate remains held
   // until cleanup and the idle state write finish.
   resetRefreshRound(sessionGeneration);
-  listenAbort?.abort();
-  clearListenAbort();
+  abortListen();
+  // A halt belongs to the session that hit it; the next login starts clean.
+  liftRestriction();
   // A retry armed by the last failed refresh would otherwise fire into a
   // session that no longer exists.
   clearRefreshRetry();
@@ -698,6 +701,7 @@ function refreshErrorHint(): string {
   const reason = refreshHealthValue()?.reason;
   if (reason === "token_expired") return TOKEN_EXPIRED_TEXT;
   if (reason === "network") return NET_DOWN_TEXT;
+  if (reason === "restricted") return RESTRICTED_TEXT;
   return "LINE 沒有回應，稍後再試";
 }
 
@@ -734,6 +738,8 @@ async function syncNow(): Promise<Json> {
   if (!owner) return { ok: false, error: "尚未登入" };
   // No user data: a count of manual syncs is the whole point of the line.
   console.log("[sync] requested");
+  // The one way out of a restriction halt besides a login: the user asked.
+  liftRestriction();
   // A manual sync is a statement about the whole list, not about the chats
   // pushes happen to have touched -- it is the button the user presses when
   // they suspect the list is stale in a way pushes cannot see.

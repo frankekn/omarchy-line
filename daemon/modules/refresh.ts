@@ -32,6 +32,7 @@ import {
 } from "./state.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import { classifyLoginError } from "./text.ts";
+import { haltForRestriction, restriction } from "./restriction.ts";
 import type { Client } from "@evex/linejs";
 import type { PluginChat } from "./types.ts";
 
@@ -413,6 +414,7 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     console.error("[chats] refresh failed:", (e as Error).message);
     const kind = classifyLoginError(e);
     noteRefreshFailed(kind);
+    if (kind === "restricted") haltForRestriction(e);
     // guardedFetch now makes a dead post-suspend connection fail within 30s
     // instead of hanging, but the next scheduled refresh would still be the
     // 5-minute poll -- so take one shot sooner. Not "one only" in practice:
@@ -480,6 +482,11 @@ function incrementalRefreshDue(): boolean {
  * that drive the full round drive this decision with it.
  */
 async function startRound(c: Client, generation: number): Promise<boolean> {
+  // Every automatic caller (the poll, the debouncer, the retry timer, the
+  // refreshAgain chain) funnels through here; a halted account answers them
+  // all with "not fresh" and no request. syncNow lifts the halt before it
+  // asks, so the one round a user wanted still runs.
+  if (restriction) return false;
   if (forceFullRefresh || !incrementalRefreshDue()) {
     return await runRefresh(c, generation);
   }
@@ -767,6 +774,7 @@ async function runIncrementalRefresh(
     const kind = classifyLoginError(e);
     console.error("[chats] incremental refresh failed:", (e as Error).message);
     noteRefreshFailed(kind);
+    if (kind === "restricted") haltForRestriction(e);
     // The retry that follows must answer the whole list, not re-read the
     // same handful of chats that just failed.
     forceFullRefresh = true;

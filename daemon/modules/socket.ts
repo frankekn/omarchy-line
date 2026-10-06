@@ -30,6 +30,7 @@ import {
   expiresAtOf,
   mediaStateFrom,
   NET_DOWN_TEXT,
+  RESTRICTED_TEXT,
   TOKEN_EXPIRED_TEXT,
   UNSENT_ERROR,
   unsentOf,
@@ -101,6 +102,7 @@ import type {
   TalkMsg,
 } from "./types.ts";
 import { resolveName, warmNames } from "./names.ts";
+import { haltForRestriction } from "./restriction.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import {
   asMessageId,
@@ -1008,6 +1010,7 @@ function refusalText(e: unknown): string {
   const kind = classifyLoginError(e);
   if (kind === "network") return NET_DOWN_TEXT;
   if (kind === "token_expired") return TOKEN_EXPIRED_TEXT;
+  if (kind === "restricted") return RESTRICTED_TEXT;
   return errorText(e);
 }
 // enil:refusaltext-end
@@ -1071,6 +1074,11 @@ async function servePanel(
         return cmd === "logout" && client === null;
       },
       reportFailure(cmd, error, background) {
+        // A send or a fetch the account was refused for stops the automatic
+        // paths too; the reply itself goes out through refusalText.
+        if (classifyLoginError(error) === "restricted") {
+          haltForRestriction(error);
+        }
         console.error(
           `[cmd] ${cmd}${background ? " background" : ""} failed: ${
             errorLine(error)

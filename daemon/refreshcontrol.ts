@@ -1,4 +1,8 @@
-export type RefreshFailureReason = "token_expired" | "network" | "unknown";
+export type RefreshFailureReason =
+  | "token_expired"
+  | "network"
+  | "restricted"
+  | "unknown";
 
 export interface RefreshHealth {
   at: number;

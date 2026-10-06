@@ -380,3 +380,64 @@ Deno.test("a no-token resume publishes a durable completed attempt", async () =>
     true,
   );
 });
+
+Deno.test("an account LINE refused is restricted, by struct field or by text", async () => {
+  const { classifyLoginError, restrictionCode } = await loadBlock<{
+    classifyLoginError(error: unknown): string;
+    restrictionCode(error: unknown): string | null;
+  }>("loginerror", "export { classifyLoginError, restrictionCode };\n");
+  for (const code of ["ABUSE_BLOCK", "BANNED", "EXCESSIVE_ACCESS"]) {
+    const byField = {
+      name: "RequestError",
+      message:
+        `Request internal failed, sendMessage(/S4) -> {"code":"${code}"}`,
+      data: { code },
+    };
+    assertEquals(classifyLoginError(byField), "restricted", code);
+    assertEquals(restrictionCode(byField), code);
+    // The hasError branch of linejs' requestCore puts the code one level
+    // deeper, so the text alone has to carry it.
+    const byText = {
+      name: "RequestError",
+      message: `Request internal failed, x(/S4) -> {"e":{"code":"${code}"}}`,
+    };
+    assertEquals(classifyLoginError(byText), "restricted", code);
+    assertEquals(restrictionCode(byText), code);
+  }
+  // A restriction beats a dead-token marker in the same struct: nothing may
+  // be revoked or retried over an account LINE has refused.
+  assertEquals(
+    classifyLoginError({
+      name: "RequestError",
+      message:
+        'Request internal failed, x(/S4) -> {"code":"BANNED","reason":"NOT_AUTHORIZED_DEVICE"}',
+    }),
+    "restricted",
+  );
+});
+
+Deno.test("a maintenance window and a per-target refusal are not restrictions", async () => {
+  const { classifyLoginError, restrictionCode } = await loadBlock<{
+    classifyLoginError(error: unknown): string;
+    restrictionCode(error: unknown): string | null;
+  }>("loginerror", "export { classifyLoginError, restrictionCode };\n");
+  for (
+    const code of [
+      "MAINTENANCE_ERROR",
+      "NOT_AVAILABLE_USER",
+      "FEATURE_RESTRICTED",
+    ]
+  ) {
+    const e = {
+      name: "RequestError",
+      message: `Request internal failed, x(/S4) -> {"code":"${code}"}`,
+      data: { code },
+    };
+    assertEquals(classifyLoginError(e), "unknown", code);
+    assertEquals(restrictionCode(e), null, code);
+  }
+  // A substring is not a code: "UNBANNED" or "BANNED_WORD" would be a
+  // different enum member, and a transport error is still network.
+  assertEquals(restrictionCode(new Error("UNBANNED_X BANNEDISH")), null);
+  assertEquals(classifyLoginError(new TypeError("fetch failed")), "network");
+});

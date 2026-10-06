@@ -15,7 +15,9 @@ import { loadBlock } from "./slice_test.ts";
 const CHATSUMMARY = new URL("./chatsummary.ts", import.meta.url).href;
 
 interface SyncModule {
-  calls: { reconnect: string[]; refresh: number; log: string[] };
+  calls: { reconnect: string[]; refresh: number; log: string[]; lift: number };
+  restriction: { code: string; since: number } | null;
+  setRestriction(r: { code: string; since: number } | null): void;
   finishReconnect(): void;
   refreshChats(): Promise<boolean>;
   refreshErrorHint(): string;
@@ -29,7 +31,7 @@ interface SyncModule {
     health: {
       at: number;
       failures: number;
-      reason?: "token_expired" | "network" | "unknown";
+      reason?: "token_expired" | "network" | "restricted" | "unknown";
     } | null,
   ): void;
   state(): {
@@ -47,7 +49,9 @@ interface SyncModule {
 async function loadModule() {
   const prelude = `
 import { createChatSummaryStore } from "${CHATSUMMARY}";
-export const calls = { reconnect: [] as string[], refresh: 0, log: [] as string[] };
+export const calls = {
+  reconnect: [] as string[], refresh: 0, log: [] as string[], lift: 0,
+};
 type Chat = { mid: string };
 type LinkState = { push: "up" | "down"; since: number };
 type Health = { at: number; failures: number; reason?: "token_expired" | "network" | "unknown" };
@@ -55,6 +59,11 @@ export let client: object | null = null;
 export let sessionGeneration = 1;
 export let chats: Chat[] = [];
 export let link: LinkState | null = { push: "up", since: 1 };
+export let restriction: { code: string; since: number } | null = null;
+export function setRestriction(r: { code: string; since: number } | null) {
+  restriction = r;
+}
+function liftRestriction() { restriction = null; calls.lift++; }
 export let refreshHealth: Health | null = null;
 function refreshHealthValue() { return refreshHealth; }
 // The real store: the sliced syncNow reads its epoch state the way the
@@ -330,4 +339,15 @@ Deno.test("manual sync propagates a required reconciliation failure", async () =
   assertEquals(result.ok, false);
   assertEquals(m.calls.refresh, 2);
   m.finishReconnect();
+});
+
+Deno.test("a manual sync lifts a restriction halt before it refreshes", async () => {
+  const m = await loadModule();
+  m.setClient({});
+  m.setRestriction({ code: "EXCESSIVE_ACCESS", since: 1 });
+  const reply = await within(m.syncNow(), 500);
+  assertEquals(m.calls.lift, 1);
+  assertEquals(m.restriction, null);
+  assertEquals(m.calls.refresh, 1);
+  assertEquals((reply as { ok?: boolean }).ok, true);
 });

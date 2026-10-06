@@ -3,17 +3,18 @@
  * backoff (enil:watchdog block), the base-client log listener that reads the
  * push layer's only window (enil:pushlog block), the transport-failure
  * rejection guard (enil:unhandled block), and the logind suspend monitor.
- * Owns the listen() abort controller both login and reconnect use.
+ * The listen() abort handle lives in session.ts, next to the client it belongs to.
  *
  * Dependency direction: imports state (login, link via setLink, writeState),
- * session (client), refresh (refreshChats, setForceFullRefresh) and text
- * (classifyLoginError is re-exported from text.ts). login.ts calls
- * markPushAlive/reconnectPush/backoffDelay and the abort accessors here;
- * this module never imports login.
+ * session (client, the listen abort handle), restriction (the halt), refresh
+ * (refreshChats, setForceFullRefresh) and text (classifyLoginError). login.ts
+ * calls markPushAlive/reconnectPush/backoffDelay here; this module never
+ * imports login.
  */
 import { link, login, setLink, writeState } from "./state.ts";
 import { refreshChats, setForceFullRefresh } from "./refresh.ts";
-import { client } from "./session.ts";
+import { abortListen, client, setListenAbort } from "./session.ts";
+import { haltForRestriction, restriction } from "./restriction.ts";
 import { classifyLoginError } from "./text.ts";
 import {
   PUSH_REINIT_GRACE_MS,
@@ -33,20 +34,6 @@ let reconnecting = false;
 let reconnectAttempts = 0;
 let nextReconnectAt = 0;
 let sleepMonitor: Deno.ChildProcess | null = null;
-
-/** listen() has no stop API; aborting this signal closes the event streams. */
-let listenAbort: AbortController | null = null;
-
-/** Login starts the listen; the accessor returns the controller for it. */
-export function setListenAbort(ctrl: AbortController): AbortController {
-  listenAbort = ctrl;
-  return ctrl;
-}
-
-/** Reconnect drops the stale controller's handle. */
-export function clearListenAbort(): void {
-  listenAbort = null;
-}
 
 // The block between the enil:watchdog markers is sliced out verbatim by the
 // unit test harness and evaluated against stubs, so it must not reach for
@@ -82,6 +69,9 @@ function setLinkState(next: "up" | "down"): void {
 
 /** Traffic is the only proof a reconnect worked, so it is what clears the backoff. */
 function markPushAlive(): void {
+  // A ping on the connection the halt left idle is not a repaired link, and
+  // writing "up" here would erase the reason the panel is showing.
+  if (restriction) return;
   lastPushAt = Date.now();
   reconnectAttempts = 0;
   nextReconnectAt = 0;
@@ -106,6 +96,7 @@ async function reconnectPush(
 ): Promise<void> {
   const c = client;
   if (!c || login.status !== "ok") return; // no session to repair
+  if (restriction) return; // halted: only syncNow or a login may reconnect
   if (reconnecting) return;
   // A reconnect that is about to happen is already a broken link, whatever the
   // reason -- the resume path gets here before the watchdog ever sees a gap.
@@ -128,8 +119,7 @@ async function reconnectPush(
       (reason === "manual" ? "" : ` attempt=${reconnectAttempts}`),
   );
   try {
-    listenAbort?.abort();
-    listenAbort = null;
+    abortListen();
     const before = c.base?.push?.conns?.[0] ?? null;
     try {
       before?.close();
@@ -155,8 +145,8 @@ async function reconnectPush(
         console.error("[push] islisten reset:", (e as Error).message);
       }
     }
-    listenAbort = new AbortController();
-    c.listen({ talk: true, square: false, signal: listenAbort.signal });
+    const abort = setListenAbort(new AbortController());
+    c.listen({ talk: true, square: false, signal: abort.signal });
     // The link just came back from the dead -- anything could have happened on
     // the server while it was down, so the first round answers for the whole
     // list instead of only the chats pushes happened to name.
@@ -170,7 +160,7 @@ async function reconnectPush(
 }
 
 function watchdogTick(): void {
-  if (!client || login.status !== "ok") return;
+  if (!client || login.status !== "ok" || restriction) return;
   if (!pushIsStale()) return;
   // Before the backoff gate: staleness is what the panel has to show, and a
   // long backoff must not leave it claiming the link is fine for a minute.
@@ -239,6 +229,11 @@ function onPushLog(
     `[push] ${type}: ${err?.constructor?.name ?? "?"}`,
     err?.message ?? "",
   );
+  // A refused account is the one push failure a reconnect must not answer.
+  if (classifyLoginError(err) === "restricted") {
+    haltForRestriction(err);
+    return;
+  }
   if (loopAlive) return;
   lastPushAt = 0;
   watchdogTick();
@@ -272,9 +267,17 @@ function onUnhandledRejection(reason: unknown): boolean {
   const err = (reason ?? {}) as { name?: unknown; message?: unknown };
   const name = String(err.name ?? typeof reason);
   console.error(`[unhandled] ${name}: ${String(err.message ?? reason)}`);
+  const kind = classifyLoginError(reason);
+  // linejs' unawaited push fetch is where a refusal of the account surfaces
+  // when the push side is the one LINE turned away; it is handled, but by
+  // standing down rather than by reconnecting.
+  if (kind === "restricted") {
+    haltForRestriction(reason);
+    return true;
+  }
   // Anything but a transport failure says nothing about the push link, and
   // tearing a working connection down over it would be the worse bug.
-  if (classifyLoginError(reason) !== "network") return false;
+  if (kind !== "network") return false;
   // Report it as the gap it is and let the existing path take over: going
   // through watchdogTick keeps the backoff gate, so a burst of resets still
   // costs one reconnect instead of one each.
@@ -364,7 +367,6 @@ function respawnSleepMonitor(): void {
 export {
   backoffDelay,
   installRejectionGuard,
-  listenAbort,
   markPushAlive,
   onPushLog,
   reconnectPush,
