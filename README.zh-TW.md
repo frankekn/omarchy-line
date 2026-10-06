@@ -434,7 +434,7 @@ VIDEO，其餘 `file`。所以手機那種 `.jpg` 其實是 mp4 的檔案照樣�
 
 長度是加在訊息 contentMetadata 的 `DURATION`（毫秒）：那份 metadata 是
 `uploadMediaByE2EE` 自己組的，所以 fork 給它多開了一個 `durationMs` 參數（pin
-`fc0651d`），daemon 量到長度就一起交下去、量不到就整個不帶。走 E2EE 的時候 obs 只
+`4d6aa18`），daemon 量到長度就一起交下去、量不到就整個不帶。走 E2EE 的時候 obs 只
 看得到加密後的 blob，容器裡的長度它自己讀不出來（一般的 `uploadObjTalk` 是自己讀的），
 所以非得由呼叫端給不可。
 
@@ -1054,54 +1054,85 @@ daemon 原本是另一個 repo，現在收進來（改寫成單檔 Deno），並
 
 ### linejs 用自己的 fork
 
-daemon 不吃 `jsr:@evex/linejs`，吃 `daemon/vendor/linejs` 這個 submodule。
-來源是公開 fork `frankekn/linejs`，實際版本由 submodule pin 固定。理由是這幾個修的都是**上游有、我們天天踩**的 bug，而且都在協定層，
-在 daemon 這邊繞不過去：
+daemon 不匯入 `jsr:@evex/linejs`，而是匯入 `daemon/vendor/linejs` 這個 submodule，
+它指向公開 fork `frankekn/linejs` 的 `omarchy-vendor` 分支。daemon 需要的修正都在
+LINE 的協定層，daemon 這邊繞不過去，所以放在 fork 裡。
 
-| commit | 修了什麼 |
+pin 住的 commit 是 `4d6aa18`，在上游之上疊了三個 commit：
+
+| commit | 是什麼 |
 |---|---|
-| `82d317d` | `LegyEncryptedTransport.fetch` 重組請求時漏了 `AbortSignal`，加密過的呼叫等於沒有 timeout —— 睡醒後死掉的 keep-alive 連線會一直掛著 |
-| `15c4142` | `Conn.new` 裡那個沒人 await 的 async IIFE，fetch 失敗時變成 unhandled rejection，在 Deno 上直接把整隻 daemon 打死 |
-| `0febc75` | 群組換人就換一把 shared key，訊息信封上的 `groupKeyId` 指的是加密當下那一代；舊碼一律去要「最新那把」，於是整段歷史都解不開（AES-GCM tag 對不起來）。改成照 `keyId` 要，快取也照代數分開 |
-| `52c2f36` | 上面那條的邊界：非數字的 key id 被 `Number()` 變成 `NaN`，快取永遠 miss，還把 `groupKeyId: NaN` 送上線 |
-| `e9079ab` | 把上游 v3.3.3 合進來：我們的五個修正都已被上游接受（PR #231–#235），另外拿到上游自己修的登入 keychain 依 id 選 key（issue #229）與連線 timeout |
-| `0e38be5` | 上面 `15c4142` 那個 catch handler 自己也可能丟：使用者掛的 `log` listener 一丟例外，unhandled rejection 就回來了。改成先 `resolve()`，log 包在 try/catch 裡（上游 PR #232 審查提出，先進 fork） |
-| `e72bd12` | obs 用一般 HTTP 錯誤碼回答死掉的物件，三條下載路徑卻照樣讀 body，於是過期檔案的錯誤長成「HMAC verification failed」。改成先看 `response.ok`，非 2xx 丟 `ObsError` —— daemon 的「檔案已過期或已被刪除」就是接這個 |
-| `f785547` | 把上游 v3.4.1 合進來：F9 的三個修正（listen 迴圈不再讓整隻 daemon 死掉、E2EE 重試檢查不再對沒有 code 的錯誤丟 TypeError、`react` 送真的 reqSeq）已被上游接受（PR #239），維護者順手加了四樣我們沒有的：pusher 起不來時把兩條 stream 用原始錯誤收掉、listen 迴圈裡每一則事件各自 try/catch、`getReqseq` 序列化（同時的第一次反應不會全拿 0）、`islisten` 在 `finally` 清掉 |
-| `a041d4a` | `uploadMediaByE2EE` 多一個 `durationMs` 參數：那條路 obs 只看得到加密後的 blob，讀不出容器裡的長度（一般的 `uploadObjTalk` 會自己讀、還會送 obs 的 `duration`），所以值得由呼叫端給，加進它自己組的 contentMetadata 當 `DURATION` —— 沒有這個，E2EE 影片在對方那邊一律是 0:00。只認 video，聲音的鍵沒在 thrift 型別裡確認過；非正數或非有限的值直接丟掉 |
-| `fc0651d` | 把上游 v3.4.2 合進來：`durationMs` 已被上游接受（PR #240），維護者把檢查改成先四捨五入成整數毫秒再驗 `Number.isSafeInteger`，所以極大或帶小數的值不會再被靜靜丟掉。順帶拿到上游這版自己修的東西 |
-| `b32a9bb` | `uploadMediaByE2EE` 接受額外的 `contentMetadata`，並與它自己管理的 OBS 欄位合併。面板的穩定請求識別因此能隨圖片、影片與檔案送出，再由歷史精確確認斷線前的傳送結果 |
-| `01efb30` | caller metadata 不能覆寫受管理的影片長度，也不能注入 `DOWNLOAD_URL`／`PREVIEW_URL` 讓接收端繞過 E2EE object；穩定請求識別等其他 metadata 仍會保留 |
-| `af30075` | 媒體下載接上呼叫端的 `AbortSignal`：面板斷線或登出時，daemon 取消中的圖片／縮圖／原檔下載可以真的中止，而不是把頻寬和佇列名額耗在沒人等的回應上（`bcc9ff3` 是合併兩條修復線的 merge pin） |
+| `802f4c7` | 上游 `evex-dev/linejs` 的「fix: E2EE key registration and client message handling (#226)」，是 `omarchy-vendor` 的基底 |
+| `a677741` | 「vendor: omarchy patch set」。一個 squash commit，內容是 omarchy 對 `packages/linejs` 與 `packages/types` 的補丁 |
+| `4d6aa18` | 把 fork 根目錄的 `README.md` 從 symlink 改成真檔案，`omarchy plugin validate` 才會過（見[開發](#開發)） |
 
-另外 `7df1464` 不修 bug：把 fork 根目錄的 `README.md` 從 symlink
-改成真檔案，`omarchy plugin validate` 才會過（見[開發](#開發)）。
+`a677741` 改了這些部分：
 
-補丁自帶的測試跟著 fork 走：`base/` 底下 `request`、`push`、`e2ee`、`obs` 這四個
-資料夾裡的 `*.test.ts` 共 14 個，在 fork 那邊 `deno test -A` 跑（目前全套
-352 個測試）。本 repo 的 `deno task test` 把 `vendor/` 排除掉，只跑自己的測試。
+- **型別。** `@evex/loose-types` 的 `LooseType` 只留在 Thrift 讀寫程式碼、
+  `base/push/connManager.ts` 與 `types/thrift.ts`，其他地方都換成具體型別。型別
+  套件以 `@frankekn/linejs-types` 的名稱發佈。
+- **請求與 LEGY。** 預設的加密端點是 `legy.line-apps.com`，不再是
+  `gf.line.naver.jp`。`x-lal` header 跟著 client 的 locale，不再固定為 `ja_JP`。
+  呼叫端的 `AbortSignal` 會傳到加密請求上，所以請求 timeout 對加密呼叫也有效。
+  以前睡眠時斷掉的 keep-alive 連線可能永遠掛著。
+- **E2EE。** 群組訊息用它的 `groupKeyId` 指定的那一代 shared key 解密，金鑰也照
+  代數分開快取。以前群組換過金鑰之後，較舊的訊息全部解不開。
+- **媒體。** OBS 下載收到非 2xx 回應時丟出 `ObsError`，不再拖到後面變成「HMAC
+  verification failed」。`uploadMediaByE2EE` 接受 `durationMs`，E2EE 影片在對方那邊
+  不再顯示 0:00。它也接受額外的 `contentMetadata`，但呼叫端不能覆寫 `DURATION`、
+  `DOWNLOAD_URL` 或 `PREVIEW_URL`。媒體下載接受 `AbortSignal`。
+- **Push 與 polling。** push 連線失敗或 listen 迴圈失敗時，錯誤會回報給呼叫端，
+  不再變成 unhandled rejection 把整個 process 打死。
+- **其他。** 新的相簿（`moa`）service、通話功能的修改、帶連線 timeout 的 Node
+  fetch（`base/core/node_fetch.ts`），以及大量新測試。workspace 只剩
+  `packages/linejs` 與 `packages/types`。
 
-要跟上游同步的時候：
+上游在 `802f4c7` 之後繼續前進，合併的 PR 包括來自本 fork 分支的 #239 與 #240。
+
+fork 的測試在 fork 裡跑：在它的根目錄執行 `deno test -A`（在 `4d6aa18` 上 382 個
+測試通過）。這一跑會在 fork 裡產生 `node_modules/` 與 `deno.lock`，跑
+`omarchy plugin validate` 之前要把兩個都刪掉，因為它拒絕 `node_modules/` 裡的
+symlink。本 repo 的 `deno task test` 把 `vendor/` 排除掉，只跑自己的測試。
+
+要改 linejs，就在 `omarchy-vendor` 上改，再移動本 repo 的 pin：
 
 ```bash
 git submodule sync -- daemon/vendor/linejs
 git submodule update --init daemon/vendor/linejs
 cd daemon/vendor/linejs
-git remote add upstream https://github.com/evex-dev/linejs.git   # 只需一次
-git fetch upstream
-git rebase upstream/main main         # fork 的維護分支
-deno test -A                          # 先在 fork 裡確認補丁還成立
-git push --force-with-lease origin main
+git switch omarchy-vendor             # 追蹤 origin/omarchy-vendor
+git pull --ff-only
+# 在這裡 commit 你的改動
+deno test -A                          # 確認 fork 還站得住
+git push origin omarchy-vendor
 cd ../../..
 git add daemon/vendor/linejs          # 主 repo 的 pin 要跟著動，這步漏了等於沒升級
 cd daemon && deno task check && deno task test
 ```
 
+要拿上游的改動，把它 merge 進 `omarchy-vendor`，不要 rebase：
+
+```bash
+cd daemon/vendor/linejs
+git remote add upstream https://github.com/evex-dev/linejs.git   # 只需一次
+git fetch upstream
+git merge upstream/main
+```
+
+接著照上面的步驟測試、push、移動 pin。不要 rebase 或 force-push
+`omarchy-vendor`。本 repo 過去的每一個 commit 都 pin 住那個分支上的某個 commit，
+分支被改寫之後，那些 commit 就不在任何分支上，舊 checkout 重新
+`git submodule update` 時可能抓不到。
+
+`.gitmodules` 寫了分支名稱，所以 `git submodule update --remote daemon/vendor/linejs`
+會把 submodule 移到 `origin/omarchy-vendor` 的最新 commit。用同樣的方式 stage 並
+測試這個 pin。
+
 哪天這些都進了上游，就把 submodule 拿掉、import map 換回 `jsr:@evex/linejs`。
 
 ## 已知限制
 
-- 非官方 client，有帳號風險（見上）
+- 非官方 client，有帳號風險（見[免責聲明](#免責聲明)）
 - 多人聊天室（`r…` 開頭）不能傳檔案 —— linejs 的 `uploadMediaByE2EE` 只收 `u`／`c`
 - E2EE 影片顯示 📎 而不是縮圖：縮圖也是加密的，要抓整支影片才拿得到
 - 送出的影片要有預覽圖得裝 `ffmpegthumbnailer` 或 `ffmpeg`；兩個都沒有就是送出去

@@ -571,7 +571,7 @@ get two extra steps:
 
 The duration rides in the message's contentMetadata `DURATION` (ms): that
 metadata is assembled by `uploadMediaByE2EE` itself, so the fork gained a
-`durationMs` parameter (pin `fc0651d`) — the daemon hands a measured duration
+`durationMs` parameter (pin `4d6aa18`) — the daemon hands a measured duration
 down and omits the field otherwise. Over E2EE, obs only sees the encrypted
 blob and cannot read a container duration itself (plain `uploadObjTalk` does
 it on its own), so the caller has to provide it.
@@ -1318,58 +1318,99 @@ single Deno file) — with these additions:
 
 ### linejs is our own fork
 
-The daemon doesn't eat `jsr:@evex/linejs` — it eats the `daemon/vendor/linejs`
-submodule. The source is the public fork `frankekn/linejs`, pinned by the
-submodule. Reason: these fixes are all **upstream bugs we hit daily**, in the
-protocol layer where the daemon can't route around them:
+The daemon does not import `jsr:@evex/linejs`. It imports the
+`daemon/vendor/linejs` submodule, which points at branch `omarchy-vendor` of
+the public fork `frankekn/linejs`. The fixes the daemon needs are in LINE's
+protocol layer, where the daemon cannot route around them, so they live in
+the fork.
 
-| commit | what it fixes |
+The pinned commit is `4d6aa18`. It sits three commits above upstream:
+
+| commit | what it is |
 |---|---|
-| `82d317d` | `LegyEncryptedTransport.fetch` dropped `AbortSignal` while rebuilding requests — encrypted calls effectively had no timeout; a keep-alive connection dead since sleep would hang forever |
-| `15c4142` | the un-awaited async IIFE in `Conn.new` turned a failed fetch into an unhandled rejection, killing the whole daemon on Deno |
-| `0febc75` | groups rotate a shared key on member change and the envelope's `groupKeyId` names the generation at encryption time; old code always asked for "the latest key", so whole history was undecryptable (AES-GCM tag mismatch). Ask by `keyId`, cache per generation |
-| `52c2f36` | edge of the above: a non-numeric key id `Number()`s to `NaN`, making the cache miss forever and pushing `groupKeyId: NaN` onto the wire |
-| `e9079ab` | merged upstream v3.3.3: all five of our fixes accepted upstream (PR #231–#235), plus upstream's own login keychain pick-key-by-id (issue #229) and a connection timeout |
-| `0e38be5` | `15c4142`'s catch handler itself could throw: a user's `log` listener throwing brings the unhandled rejection back. `resolve()` first, log inside try/catch (from upstream PR #232 review, landed in the fork first) |
-| `e72bd12` | obs answers dead objects with normal HTTP error codes, but three download paths read the body anyway — so an expired file's error grew "HMAC verification failed". Check `response.ok` first, non-2xx throws `ObsError` — the daemon's "檔案已過期或已被刪除" maps from it |
-| `f785547` | merged upstream v3.4.1: F9's three fixes accepted upstream (PR #239) — the listen loop no longer kills the daemon, the E2EE retry check no longer throws TypeError on codeless errors, `react` sends a real reqSeq — and the maintainer added four things we lacked: erroring both streams with the original error when the pusher can't start, per-event try/catch in the loop, `getReqseq` serialization (concurrent first reactions no longer all get 0), and `islisten` cleared in `finally` |
-| `a041d4a` | `uploadMediaByE2EE` takes a `durationMs` param: on that path obs only sees the encrypted blob and can't read the container duration itself (plain `uploadObjTalk` reads it and sends obs's `duration`), so it's worth the caller providing it — folded into the contentMetadata it builds as `DURATION`. Without it, E2EE videos all show 0:00 on the other side. Video only — audio keys weren't confirmed in the thrift types; non-positive or non-finite values are dropped |
-| `fc0651d` | merged upstream v3.4.2: `durationMs` was accepted upstream (PR #240); the maintainer changed validation to round to integer ms first and check `Number.isSafeInteger`, so huge or fractional values no longer silently drop. Also picks up this version's own upstream fixes |
-| `b32a9bb` | `uploadMediaByE2EE` accepts extra `contentMetadata`, merged with the OBS fields it manages. The panel's stable request id can now ride image, video and file sends — precisely confirming pre-disconnect outcomes via history |
-| `01efb30` | caller metadata can't override the managed video duration or inject `DOWNLOAD_URL`/`PREVIEW_URL` to let a receiver bypass E2EE objects; the stable request id and other metadata still pass through |
-| `af30075` | media downloads take the caller's `AbortSignal`: on panel disconnect or logout, in-flight image/thumbnail/original downloads truly abort instead of burning bandwidth and queue slots on answers nobody waits for (`bcc9ff3` is the merge pin joining both fix lines) |
+| `802f4c7` | upstream `evex-dev/linejs` "fix: E2EE key registration and client message handling (#226)", the base of `omarchy-vendor` |
+| `a677741` | "vendor: omarchy patch set". One squash commit with the omarchy patches to `packages/linejs` and `packages/types` |
+| `4d6aa18` | turns the fork's root `README.md` from a symlink into a real file, so `omarchy plugin validate` passes (see [Development](#development)) |
 
-Separately, `7df1464` fixes no bug: it turned the fork's root `README.md`
-from a symlink into a real file so `omarchy plugin validate` passes (see
-[Development](#development)).
+`a677741` changes these areas:
 
-The patches' own tests live in the fork: the 14 `*.test.ts` files under
-`base/`'s `request`, `push`, `e2ee` and `obs` dirs run there with
-`deno test -A` (352 tests total now). This repo's `deno task test` excludes
-`vendor/` and only runs its own.
+- **Types.** `LooseType` from `@evex/loose-types` remains only in the Thrift
+  read and write code, `base/push/connManager.ts`, and `types/thrift.ts`.
+  Concrete types replace it everywhere else. The types package is published
+  as `@frankekn/linejs-types`.
+- **Requests and LEGY.** The default encrypted endpoint is
+  `legy.line-apps.com` instead of `gf.line.naver.jp`. The `x-lal` header
+  follows the client's locale instead of a fixed `ja_JP`. A caller's
+  `AbortSignal` reaches the encrypted request, so a request timeout also
+  applies to encrypted calls. Before, a keep-alive connection that died
+  during suspend could hang forever.
+- **E2EE.** A group message is decrypted with the shared-key generation that
+  its `groupKeyId` names, and keys are cached per generation. Before, every
+  older message in a group whose key had rotated failed to decrypt.
+- **Media.** An OBS download that gets a non-2xx answer throws an
+  `ObsError` instead of failing later with "HMAC verification failed".
+  `uploadMediaByE2EE` takes a `durationMs`, so E2EE videos do not show 0:00
+  on the other side. It also takes extra `contentMetadata`, but a caller
+  cannot override `DURATION`, `DOWNLOAD_URL`, or `PREVIEW_URL`. Media
+  downloads take an `AbortSignal`.
+- **Push and polling.** A failed push connection or a failed listen loop is
+  reported to the caller instead of becoming an unhandled rejection that
+  kills the process.
+- **Other.** A new Album (`moa`) service, changes to the call feature, a
+  Node fetch with a connect timeout (`base/core/node_fetch.ts`), and many new
+  tests. The workspace holds only `packages/linejs` and `packages/types`.
 
-To sync with upstream:
+Upstream has moved on since `802f4c7`. It has merged, among others, PR #239
+and PR #240, which came from this fork's branches.
+
+The fork's tests run in the fork: `deno test -A` at its root (382 tests pass
+at `4d6aa18`). That run creates `node_modules/` and `deno.lock` inside the
+fork. Delete both before `omarchy plugin validate`, which refuses the
+symlinks in `node_modules/`. This repo's `deno task test` excludes `vendor/`
+and runs only its own tests.
+
+To change linejs, work on `omarchy-vendor` and then move the pin in this
+repo:
 
 ```bash
 git submodule sync -- daemon/vendor/linejs
 git submodule update --init daemon/vendor/linejs
 cd daemon/vendor/linejs
-git remote add upstream https://github.com/evex-dev/linejs.git   # once
-git fetch upstream
-git rebase upstream/main main         # the fork's maintenance branch
-deno test -A                          # prove the patches still hold, in the fork
-git push --force-with-lease origin main
+git switch omarchy-vendor             # tracks origin/omarchy-vendor
+git pull --ff-only
+# commit the change here
+deno test -A                          # prove the fork still holds
+git push origin omarchy-vendor
 cd ../../..
-git add daemon/vendor/linejs          # move the pin — skip this and the bump never happened
+git add daemon/vendor/linejs          # move the pin; skip this and the bump never happened
 cd daemon && deno task check && deno task test
 ```
+
+To take upstream changes, merge them into `omarchy-vendor` instead of
+rebasing:
+
+```bash
+cd daemon/vendor/linejs
+git remote add upstream https://github.com/evex-dev/linejs.git   # once
+git fetch upstream
+git merge upstream/main
+```
+
+Then test, push, and move the pin as above. Do not rebase or force-push
+`omarchy-vendor`. Every past commit of this repo pins a commit on that
+branch, and a rewritten branch leaves those commits on no branch, so a fresh
+`git submodule update` of an older checkout may fail to fetch them.
+
+`.gitmodules` names the branch, so
+`git submodule update --remote daemon/vendor/linejs` moves the submodule to
+the tip of `origin/omarchy-vendor`. Stage and test that pin the same way.
 
 The day all of this lands upstream, drop the submodule and point the import
 map back at `jsr:@evex/linejs`.
 
 ## Known limits
 
-- Unofficial client — account risk (see above)
+- Unofficial client, with account risk (see [Disclaimer](#disclaimer))
 - Panel UI is Traditional Chinese or English; message content is untranslated
 - Multi-person rooms (`r…` mids) can't take files — linejs's
   `uploadMediaByE2EE` only accepts `u`/`c`
