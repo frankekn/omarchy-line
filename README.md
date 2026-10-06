@@ -30,9 +30,34 @@ This repo has two halves:
 When the daemon is down, the panel shows `DAEMON OFFLINE` (the rule:
 `state.json`'s `updatedAt` hasn't moved in 3 minutes).
 
-> This is an unofficial client (built on `@evex/linejs`). LINE does not offer a
-> personal-account API; using this carries a risk of account restriction.
-> Decide for yourself.
+## Disclaimer
+
+This project is not affiliated with, endorsed by, or sponsored by LY
+Corporation or LINE Corporation. "LINE" is a trademark of LY Corporation.
+This project uses the name only to say which service the plugin works with.
+
+- **Unofficial client, at your own risk.** LINE offers no API for personal
+  accounts. The daemon logs in through `linejs`, an unofficial client for
+  LINE's private protocol. Using an unofficial client may violate LINE's
+  terms of use, and LINE can restrict or ban the account. The software comes
+  with no warranty (see [LICENSE](LICENSE)).
+- **It takes a device slot.** You log in by scanning a QR code with your
+  phone. The daemon registers as a secondary device of type
+  `ANDROIDSECONDARY` (the `ENIL_DEVICE` environment variable overrides it), so
+  it shows up in your phone's list of logged-in devices. It never uses the
+  account-transfer flow, so your phone stays the main device.
+- **It keeps your session and your messages on disk.** Everything lives in
+  `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`), mode `0700`.
+  `storage.json` (mode `0600`) holds the login token and the E2EE keys.
+  `messages/` keeps every message the daemon has seen, and `media/` keeps
+  downloaded images and thumbnails. The plugin does not encrypt these files.
+- **You can remove all of it.** Log out in the panel to end the session and
+  delete the login token. To remove everything else too, stop the daemon and
+  delete `~/.local/state/enil/` (see [Uninstall](#uninstall)).
+
+[SAFETY.md](SAFETY.md) lists every file, what the plugin never does, and the
+network requests it makes. To report a security problem, follow
+[SECURITY.md](SECURITY.md).
 
 ## Install
 
@@ -1475,7 +1500,11 @@ omarchy restart shell                 # after QML changes
 systemctl --user restart enil         # after daemon changes
 ```
 
-## Safety red lines
+## Safety and security
 
-See [SAFETY.md](SAFETY.md) — EasyMigration/account transfer is permanently
-forbidden, along with the other operations that must never be touched.
+- [SAFETY.md](SAFETY.md) says what the plugin does with your account and the
+  data on your disk.
+- [SECURITY.md](SECURITY.md) says how to report a vulnerability privately.
+- [docs/MAINTAINERS-SAFETY.md](docs/MAINTAINERS-SAFETY.md) lists the red lines
+  every change to this repository must respect. EasyMigration and account
+  transfer are permanently forbidden.

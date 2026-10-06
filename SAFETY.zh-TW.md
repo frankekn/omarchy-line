@@ -1,61 +1,65 @@
-# SAFETY — 本專案永不實作的操作
+# 安全：你的帳號與你的資料
 
 [English](SAFETY.md)
 
-任何在本 repo 上工作的 agent、session 或腳本，永久禁止下列行為：
+這一頁列出外掛怎麼對待你的 LINE 帳號，以及它留在你電腦上的資料。使用非官方
+client 本身的風險，請先看 [免責聲明](README.zh-TW.md#免責聲明)。要回報安全問題，
+請照 [SECURITY.zh-TW.md](SECURITY.zh-TW.md) 的步驟。
 
-## 1. EasyMigration／帳號轉移 —— 絕對禁止
+貢獻者與維護者另外遵守 [docs/MAINTAINERS-SAFETY.zh-TW.md](docs/MAINTAINERS-SAFETY.zh-TW.md)
+裡的紅線。
 
-LINE 的帳號轉移流程（EasyMigration／「搬移帳號」，舊裝置顯示轉移 QR、
-新裝置接手帳號）**永不研究、實作或呼叫**。
+## 外掛永遠不做的事
 
-**原因**：轉移語意會改變主要裝置狀態，可能讓使用者現有的主要裝置
-被降級或登出。這是刻意的政策決定，不是技術限制。
+- **永遠不轉移你的帳號。** daemon 以次要裝置的身分掃 QR 碼登入。它永遠不啟動
+  LINE 的帳號轉移流程（EasyMigration、「搬移帳號」，或「要使用這個裝置做為主要
+  裝置嗎？」那個選項），因為那個流程可能讓你的手機被登出。你的手機一直是主要裝置。
+- **永遠不自己送東西。** 訊息、檔案、貼圖、表情回應或收回，只有你在面板上操作
+  時才會送到 LINE。已讀回條只會送給你在面板裡打開的那個聊天室。
+- **除了 LINE，永遠不把你的資料送到別的地方。** daemon 只拿你的登入 token 跟
+  LINE 的伺服器溝通，你的訊息和檔案也只送到 LINE。不共享、不同步，也不上傳到
+  任何其他地方。
+- **永遠不把憑證放進 repo。** session token 與金鑰只放在
+  `~/.local/state/enil/storage.json`。
 
-## 1a.「主要裝置」提示**本身就是**轉移 —— 2026-09-22 驗證
+daemon 另外還會發出一些不帶任何你的資料的網路請求：
 
-憑證驗證之後，LINE 的新裝置登入（Android 26.14.0）會跳出
-「要使用這個裝置做為主要裝置嗎？」對話框：
+- 貼圖、大頭貼和媒體來自 LINE 的主機，或 LINE 交給 daemon 的網址。
+- FLEX 訊息可以指向任何公開 HTTPS 主機上的圖片，daemon 會把它們下載下來給面板
+  顯示。那台主機看得到你的 IP 位址。這個請求是單純的 `GET`，不帶 cookie，也不帶
+  LINE token。daemon 拒絕 `http:` 網址，也拒絕解析到私有位址的主機。
+- 第一次 `deno run` 會從 JSR 與 npm 下載 daemon 的相依套件。`git submodule update`
+  會從 GitHub 下載 linejs fork。
 
-- **主要裝置**：「這會開始帳號轉移流程。你將在其他所有裝置上登出
-  LINE。」← 這*就是*轉移語意（等同 EasyMigration）。永遠不可選。
-- **次要裝置**：「你將保持主要裝置的登入狀態…」← 唯一允許的路。
+## 落在磁碟上的東西
 
-**結論**：「mint 一個主要 token 又不影響現有裝置的手機 OTP 登入」
-*在結構上不可能*。PAIS `migratePrimaryUsingPhoneWithTokenV3` 同樣是
-「migrate」語意。`/PBK4` 全量歷史備份權限也綁在主要裝置上，自動化
-永遠拿不到；個人帳號備份因此是滾動的近期歷史視窗，不是完整封存。
+全部都在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）。daemon 以 `0700`
+建立這個目錄，每次啟動時都把它設回 `0700`，並把 `storage.json` 設回 `0600`。這台
+電腦上除了 root 之外，沒有其他使用者能打開裡面的任何東西。
 
-## 2. 其他紅線
+- `storage.json` 存你的登入 token 與 E2EE 金鑰。**這個檔案就是你的 LINE 帳號。
+  永遠不要備份或複製到任何地方。**
+- `messages/<你的 mid>/<聊天室 mid>.jsonl` 保存 daemon 看過的每一則訊息，一間
+  聊天室一個檔案，直到你刪掉為止。每一行是 LINE 送來的原樣訊息，另外還有收回與
+  表情回應的紀錄。
+- `state.json` 與 `events.json` 以可讀形式存聊天室清單、訊息預覽與最近的訊息。
+- `media/` 存下載的圖片、影片縮圖、大頭貼、貼圖與 FLEX 圖片。
+- `panel-drafts.json` 存你打了但還沒送出的文字。
 
-- **不寫入未經批准的對象**：個人帳號的傳送只發往使用者明確批准的
-  收件人；OA bot 的寫入測試只發往指定的測試 OA 帳號。
-- **不偽造硬體 attestation**：FCM push token 與 Strongbox／裝置完整性
-  attestation 永不偽造。
-- **憑證不進 repo**：session、token、密碼只放在 `~/.local/state/`
-  與環境變數。
-- **風控錯誤碼要退**：遇到 ABUSE_BLOCK／BANNED／EXCESSIVE_ACCESS／
-  NOT_AUTHORIZED_DEVICE，立即停止相關操作並回報使用者。
+外掛不加密這些檔案。letter-sealed（E2EE）聊天室存的是 LINE 送來的密文，但解開
+它們的金鑰就在同一個目錄的 `storage.json` 裡。LINE 不 letter-seal 的聊天室存的是
+可讀文字。任何能以你的身分讀這個目錄的人，都讀得到你的訊息。
 
-## 3. 本地訊息持久化 —— 落在磁碟上的東西
+本地歷史是刻意的取捨。面板因此像桌面 client 一樣運作：歷史撐得過重啟，預覽媒體
+不必再問一次 LINE。代價是訊息內容放在同一顆磁碟上，而這顆磁碟本來就存著能抓取
+這些訊息的 session 金鑰。
 
-daemon 會把看過的訊息留一份本地永久副本，讓重開聊天室或預覽媒體
-不必為使用者已收到的資料再問一次 LINE：
+## 移除你的資料
 
-- **位置**：`~/.local/state/enil/messages/<你的 mid>/<聊天室 mid>.jsonl`
-  —— 一間聊天室一個 append-only JSONL，按帳號 mid 命名空間。與 CLI
-  備份的 `archiveLine` 紀錄同版式。
-- **內容**：原始線上訊息（文字、metadata、媒體參照），加上收回墓碑
-  與表情覆層。`storage.json`、媒體檔與大頭貼本來就放在同一目錄下。
-- **靜態加密**：letter-sealed（E2EE）聊天室存的是*密文*——原始線上
-  形式，LINE 伺服器看到的也是它。LINE 不 letter-seal 的聊天室存明文，
-  與 `state.json` 快照、`media/` 縮圖在這顆磁碟上留的是同一批資料。
-- **存取**：全部在 `~/.local/state/enil`（`0700`）底下——其他本機帳號
-  無法穿越。不共享、不同步、不上傳。
-- **刪除**：`rm -rf ~/.local/state/enil/messages` 丟掉全部快取訊息；
-  daemon 只是退回向 LINE 抓並重新快取。已有的移除 state 目錄的解除
-  安裝流程會一併移除它。
-
-這是刻意的取捨：plugin 以「在同一顆已存有可取訊息的 session key 的
-磁碟上保留訊息內容」為代價，換取桌面客戶端的行為（歷史撐過重啟、
-媒體 metadata 在本地）。
+- 在面板按 **登出** 結束 session。daemon 會請 LINE 結束這個 session，並從
+  `storage.json` 刪掉登入 token。E2EE 金鑰、訊息歷史與媒體快取會留在磁碟上。
+- 要全部移除，先登出、停掉 daemon，再刪掉 state 目錄。指令在
+  [解除安裝](README.zh-TW.md#解除安裝) 一節。接著打開手機上的登入中裝置清單，
+  如果這台裝置還在，就把它移除。
+- 只想丟掉訊息歷史，執行 `rm -rf ~/.local/state/enil/messages`。daemon 會重新向
+  LINE 抓歷史，並開始新的本地副本。

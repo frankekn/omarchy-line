@@ -23,8 +23,29 @@ Bar 上的 LINE 未讀數，點開可以搜尋聊天室、讀訊息、回訊息�
 daemon 沒在跑的時候，面板顯示 `DAEMON OFFLINE`（判準是 `state.json` 的 `updatedAt`
 超過 3 分鐘沒更新）。
 
-> 這是非官方 client（走 `@evex/linejs`）。LINE 沒有開放個人帳號的 API，用它有帳號
-> 被限制的風險，自己斟酌。
+## 免責聲明
+
+本專案與 LY Corporation、LINE Corporation 沒有任何關係，也未受其認可或贊助。
+「LINE」是 LY Corporation 的商標。本專案使用這個名稱，只是為了說明外掛搭配的是
+哪一個服務。
+
+- **非官方 client，風險自負。** LINE 沒有開放個人帳號的 API。daemon 透過
+  `linejs` 登入，那是 LINE 私有協定的非官方 client。使用非官方 client 可能違反
+  LINE 的使用條款，LINE 可以限制或停用這個帳號。本軟體不附任何保證（見
+  [LICENSE](LICENSE)）。
+- **它會佔一個裝置名額。** 你用手機掃 QR 碼登入。daemon 註冊成
+  `ANDROIDSECONDARY` 類型的次要裝置（可用環境變數 `ENIL_DEVICE` 覆寫），所以它會
+  出現在手機的登入中裝置清單裡。它永遠不走帳號轉移流程，所以你的手機一直是主要
+  裝置。
+- **它把你的 session 和訊息存在磁碟上。** 全部都在 `~/.local/state/enil/`（或
+  `$XDG_STATE_HOME/enil/`），權限 `0700`。`storage.json`（權限 `0600`）存登入
+  token 與 E2EE 金鑰。`messages/` 保存 daemon 看過的每一則訊息，`media/` 保存下載
+  的圖片與縮圖。外掛不加密這些檔案。
+- **這些都可以移除。** 在面板登出會結束 session 並刪掉登入 token。要連其他東西
+  一起移除，停掉 daemon 並刪掉 `~/.local/state/enil/`（見[解除安裝](#解除安裝)）。
+
+[SAFETY.zh-TW.md](SAFETY.zh-TW.md) 列出每一個檔案、外掛永遠不做的事，以及它會發出
+的網路請求。要回報安全問題，請照 [SECURITY.zh-TW.md](SECURITY.zh-TW.md) 的步驟。
 
 ## 安裝
 
@@ -1184,6 +1205,9 @@ omarchy restart shell                 # 改 QML 之後
 systemctl --user restart enil         # 改 daemon 之後
 ```
 
-## 安全紅線
+## 安全與資安
 
-見 [SAFETY.zh-TW.md](SAFETY.zh-TW.md) — EasyMigration/帳號轉移永久禁止,以及其他不可碰的操作。
+- [SAFETY.zh-TW.md](SAFETY.zh-TW.md) 說明外掛怎麼對待你的帳號與磁碟上的資料。
+- [SECURITY.zh-TW.md](SECURITY.zh-TW.md) 說明怎麼私下回報漏洞。
+- [docs/MAINTAINERS-SAFETY.zh-TW.md](docs/MAINTAINERS-SAFETY.zh-TW.md) 列出本 repo
+  每一個改動都必須遵守的紅線。EasyMigration 與帳號轉移永久禁止。

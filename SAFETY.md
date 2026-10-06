@@ -1,76 +1,80 @@
-# SAFETY — operations this project will never implement
+# Safety: your account and your data
 
 [繁體中文](SAFETY.zh-TW.md)
 
-Any agent, session, or script working on this repository is permanently
-forbidden from the following:
+This page lists what the plugin does with your LINE account and with the data
+it keeps on your machine. For the risk of using an unofficial client at all,
+read the [Disclaimer](README.md#disclaimer) first. To report a security
+problem, follow [SECURITY.md](SECURITY.md).
 
-## 1. EasyMigration / account transfer — absolutely forbidden
+Contributors and maintainers also follow the red lines in
+[docs/MAINTAINERS-SAFETY.md](docs/MAINTAINERS-SAFETY.md).
 
-LINE's account-transfer flow (EasyMigration / "Carry over", where the old
-device shows a transfer QR and a new device takes over the account) is
-**never researched, implemented, or invoked**.
+## What the plugin never does
 
-**Why**: transfer semantics change the primary-device state and can demote
-or log out the user's existing primary device. This is a deliberate
-policy decision, not a technical limitation.
+- **It never transfers your account.** The daemon logs in by QR code as a
+  secondary device. It never starts LINE's account-transfer flow
+  (EasyMigration, "Carry over", or the "Use this as your main device?"
+  choice), because that flow can log your phone out. Your phone stays the
+  main device.
+- **It never sends on its own.** A message, a file, a sticker, a reaction, or
+  an unsend reaches LINE only when you do it in the panel. Read receipts go
+  to LINE for the chat you open in the panel.
+- **It never sends your data anywhere except LINE.** The daemon uses your
+  login token only with LINE's servers, and sends your messages and files
+  only to LINE. Nothing is shared, synced, or uploaded to any other place.
+- **It never puts your credentials in the repository.** The session token
+  and keys live only in `~/.local/state/enil/storage.json`.
 
-## 1a. The "Main device" prompt *is* the transfer — verified 2026-09-22
+The daemon makes some other network requests that carry none of your data:
 
-After credential verification, LINE's new-device login (Android 26.14.0)
-shows a "Use this as your main device?" dialog:
+- Stickers, profile pictures, and media come from LINE's hosts or from
+  addresses that LINE gives the daemon.
+- A FLEX message can name images on any public HTTPS host, and the daemon
+  downloads them so the panel can show them. That host sees your IP address.
+  The request is a plain `GET` with no cookies and no LINE token. The daemon
+  refuses `http:` addresses and hosts that resolve to private addresses.
+- The first run of `deno run` downloads the daemon's dependencies from JSR
+  and npm. `git submodule update` downloads the linejs fork from GitHub.
 
-- **Main device**: "This will start the account transfer process.
-  You'll be logged out of LINE on all other devices."
-  ← This *is* transfer semantics (equivalent to EasyMigration). Never select it.
-- **Sub device**: "You'll remain logged in on your main device…"
-  ← The only permitted path.
+## What lands on disk
 
-**Consequence**: a "phone-OTP login that mints a primary token without
-affecting existing devices" is *structurally impossible*. PAIS
-`migratePrimaryUsingPhoneWithTokenV3` shares the same "migrate" semantics.
-The `/PBK4` full-history backup entitlement is also bound to the main
-device, so automation can never obtain it; personal-account backup is
-therefore a rolling recent-history window, not a full archive.
+Everything lives in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`). The
+daemon creates this directory with mode `0700` and sets it back to `0700` and
+`storage.json` back to `0600` each time it starts. No other user on the
+machine, except root, can open anything inside it.
 
-## 2. Other red lines
+- `storage.json` holds your login token and your E2EE keys. **This file is
+  your LINE account. Never back it up or copy it anywhere.**
+- `messages/<your-mid>/<chat-mid>.jsonl` keeps every message the daemon has
+  seen, one file per chat, until you delete it. Each line is the message as
+  LINE sent it, plus unsend and reaction records.
+- `state.json` and `events.json` hold the chat list, message previews, and
+  recent messages in readable form.
+- `media/` holds downloaded images, video thumbnails, profile pictures,
+  stickers, and FLEX images.
+- `panel-drafts.json` holds the text you typed but did not send.
 
-- **No writes to unapproved targets**: personal-account sends only go to
-  recipients the user has explicitly approved; OA bot write tests only go
-  to a designated test OA account.
-- **No forged hardware attestation**: FCM push tokens and
-  Strongbox/device-integrity attestation are never faked.
-- **No credentials in the repo**: sessions, tokens, and passwords live only
-  under `~/.local/state/` and environment variables.
-- **Back off on risk-control error codes**: on ABUSE_BLOCK / BANNED /
-  EXCESSIVE_ACCESS / NOT_AUTHORIZED_DEVICE, stop the related operation
-  immediately and report to the user.
+The plugin does not encrypt these files. Letter-sealed (E2EE) chats are
+stored as the ciphertext LINE sent, but the keys that decrypt them are in
+`storage.json` in the same directory. Chats that LINE does not letter-seal
+are stored as readable text. Anyone who can read this directory as you can
+read your messages.
 
-## 3. Local message persistence — what lands on disk
+The local history is a deliberate trade. The panel behaves like a desktop
+client: history survives restarts, and media previews do not ask LINE again.
+In exchange, message content sits on the same disk that already holds the
+session keys able to fetch it.
 
-The daemon keeps a permanent local copy of messages it has seen, so that
-reopening a chat or previewing media never re-asks LINE for data the user
-already received:
+## Remove your data
 
-- **Where**: `~/.local/state/enil/messages/<your-mid>/<chatMid>.jsonl` —
-  one append-only JSONL per chat, namespaced by account mid. Same layout as
-  the CLI backup's `archiveLine` records.
-- **What**: raw wire messages (text, metadata, media references), plus
-  unsend tombstones and reaction overlays. `storage.json`, media files and
-  avatars already lived under the same directory.
-- **Encryption at rest**: letter-sealed (E2EE) chats store *ciphertext* —
-  the raw wire form, which LINE's servers see too. Chats LINE does not
-  letter-seal store readable text, the same data `state.json` snapshots and
-  `media/` thumbnails already keep on this disk.
-- **Access**: everything sits under `~/.local/state/enil`, which is `0700`
-  — no other local account can traverse it. Nothing is shared, synced or
-  uploaded.
-- **Deleting**: `rm -rf ~/.local/state/enil/messages` drops every cached
-  message; the daemon simply falls back to fetching from LINE and starts
-  caching anew. Uninstall flows that already remove the state directory
-  remove it too.
-
-This is a deliberate trade: the plugin behaves like a desktop client
-(history survives restarts, media metadata is local), in exchange for
-keeping message content on the same disk that already holds the session
-keys able to fetch it.
+- **Log out** in the panel to end the session. The daemon asks LINE to end
+  the session and deletes the login token from `storage.json`. It keeps the
+  E2EE keys, the message history, and the media cache on disk.
+- To remove everything, log out, stop the daemon, and delete the state
+  directory. The [Uninstall](README.md#uninstall) section has the commands.
+  Then open the list of logged-in devices on your phone and remove this
+  device if it is still there.
+- To drop only the message history, run
+  `rm -rf ~/.local/state/enil/messages`. The daemon fetches history from LINE
+  again and starts a new local copy.
