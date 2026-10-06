@@ -9322,6 +9322,40 @@ ok(e.sent.filter(r => r.cmd === "markRead").length === 1
    "one receipt for the batch, whatever else was in it, up to the new message");
 ok(e.root.messages.every(m => typeof m.day === "string"),
    "every appended message carries the section key, or its date separator goes missing");
+// A receipt means a person saw the message. In two-pane the right pane keeps
+// the conversation after Esc, so an event landing there is not seen yet: same
+// rule as the loadHistory callers, one predicate for both.
+group("(rr) no receipt for a retained two-pane chat the user backed out of");
+e = makeEnv({ activeChat: { mid: "C1" }, twoPane: true, view: "list" });
+e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
+e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
+e.applyEvents([EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })]);
+ok(e.root.messages.length === 2, "the message still lands in the retained pane");
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 0,
+   "but no receipt goes out while the user is on the list: " + JSON.stringify(e.sent));
+// Coming back is a click on the row (or Return on it): openChat marks it read
+// once, through the history page, because the list now says it is unread.
+e.root.chats = [{ mid: "C1", unread: 1, lastTime: 600 }];
+e.openChat({ mid: "C1", unread: 1 });
+ok(e.sent.filter((r) => r.cmd === "history").length === 1 &&
+     e.sent.filter((r) => r.cmd === "history")[0].markRead === true,
+   "returning to the chat marks it read, once, with the page it refetches");
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 0,
+   "and no second receipt rides along with that page");
+e.applyEvents([EV(2, "message", "C1", { message: MSG("m3", "THEM", "c") })]);
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 1 &&
+     e.sent.filter((r) => r.cmd === "markRead")[0].upTo === "m3",
+   "viewing the two-pane chat again, the next message gets its receipt");
+e = makeEnv({ activeChat: { mid: "C1" }, twoPane: false, view: "chat" });
+e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
+e.applyEvents([EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })]);
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 1,
+   "single pane, chat open: the receipt still goes out");
+ok(/root\.viewingChat\(\)/.test(B.applyEvents) &&
+     !/root\.view === "chat"/.test(B.applyEvents) &&
+     (src.match(/root\.loadHistory\([^)]*root\.viewingChat\(\)\)/g) || []).length === 3 &&
+     !/loadHistory\([^)]*!root\.twoPane \|\| root\.view === "chat"\)/.test(src),
+   "applyEvents and every gated loadHistory caller ask the one viewingChat() predicate");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.messages = e.withDay([MSG("m1", "ME", "a")]);
 const same = e.root.messages;
