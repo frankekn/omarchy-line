@@ -2,55 +2,39 @@ name: ci
 on:
   push:
     branches: [main]
-  pull_request_target:
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
-  statuses: write
 
 jobs:
   checks:
-    runs-on: x64-ci
-    container: ubuntu:24.04
+    runs-on: ubuntu-24.04
     steps:
-      - name: Require a trusted CI source
-        env:
-          CI_EVENT_NAME: ${{ github.event_name }}
-          CI_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          CI_REPO: ${{ github.repository }}
-        run: |
-          if [ "$CI_EVENT_NAME" = push ] || [ "$CI_EVENT_NAME" = workflow_dispatch ] || { [ "$CI_EVENT_NAME" = pull_request_target ] && [ "$CI_HEAD_REPO" = "$CI_REPO" ]; }; then
-            exit 0
-          fi
-          echo "::error::AWS CI only accepts trusted repository branches. Fork pull requests require a trusted branch before checks can run."
-          exit 1
       - name: Install check dependencies
         run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl git unzip python3 util-linux qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
-          useradd --create-home ci
-      - uses: actions/checkout@v4
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq qt6-declarative-dev qt6-declarative-dev-tools qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtqml-workerscript
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
-          submodules: true
-      - uses: actions/setup-node@v4
+          submodules: recursive
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-      - uses: denoland/setup-deno@v2
+          package-manager-cache: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
       - name: daemon checks
         working-directory: daemon
-        # Permission-failure tests need a normal user; container root ignores chmod.
         run: |
-          runuser -u ci -- sh -c '
-            set -e
-            deno task check
-            deno task no-any
-            deno task lint
-            deno task fmt
-            deno task test
-          '
+          deno task check
+          deno task no-any
+          deno task lint
+          deno task fmt
+          deno task test
       - name: qml harness
         run: node tests/qml/run.js
       - name: review finalizer tests
@@ -61,25 +45,8 @@ jobs:
         run: PATH="/usr/lib/qt6/bin:$PATH" tests/qml/keytest/run.sh
       - name: stub tests
         working-directory: daemon
-        run: runuser -u ci -- python3 stub_test.py
+        run: python3 stub_test.py
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
         run: node -e 'const m = require("./manifest.json"); for (const k of ["id", "name", "version"]) if (!m[k]) throw new Error("manifest.json missing " + k)'
-      - name: Report PR CI result
-        if: always() && github.event_name == 'pull_request_target'
-        uses: actions/github-script@v8
-        env:
-          CI_RESULT: ${{ job.status }}
-        with:
-          script: |
-            const passed = process.env.CI_RESULT === 'success';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: context.payload.pull_request.head.sha,
-              context: 'ci / checks',
-              state: passed ? 'success' : 'failure',
-              description: passed ? 'AWS CI passed' : 'AWS CI failed; see the run for details',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            });
