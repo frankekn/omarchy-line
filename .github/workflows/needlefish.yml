@@ -15,7 +15,7 @@ on:
         type: number
     secrets:
       CODEX_PROXY_API_KEY:
-        description: CLIProxyAPI credential for the review lane
+        description: Credential for the review proxy
         required: true
 
 concurrency:
@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 75
     steps:
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           package-manager-cache: false

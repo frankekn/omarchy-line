@@ -26,7 +26,9 @@ permissions:
 
 jobs:
   finalize:
-    if: github.event_name != 'workflow_dispatch' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
     runs-on: x64-ci
     timeout-minutes: 5
     steps:
@@ -39,7 +41,7 @@ jobs:
       - name: Find review identity
         if: github.event_name == 'workflow_run'
         id: identity
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const run = context.payload.workflow_run;
@@ -56,7 +58,7 @@ jobs:
 
       - name: Download review identity
         if: steps.identity.outputs.artifact_id != ''
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ steps.identity.outputs.artifact_id }}
           merge-multiple: true
@@ -66,7 +68,7 @@ jobs:
 
       - name: Finalize interrupted review
         if: steps.identity.outputs.artifact_id != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const finalize = require('./.github/scripts/needlefish-finalize.cjs');
@@ -75,7 +77,7 @@ jobs:
 
       - name: Recover historical interrupted review
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const finalize = require('./.github/scripts/needlefish-finalize.cjs');
