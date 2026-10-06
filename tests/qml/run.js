@@ -387,6 +387,7 @@ const B = {
   avatarInitial: body("  function avatarInitial(text) {"),
   showAvatarAt: body("  function showAvatarAt(list, i) {"),
   takeWanted: body("  function takeWanted() {"),
+  viewingChat: body("  function viewingChat() {"),
   // U59: Ctrl+V. The panel cannot read the Wayland clipboard, so what the key
   // does is decided in two halves -- one frame out, one answer back -- and both
   // halves are root functions the harness can drive.
@@ -975,6 +976,9 @@ function makeEnv(opts) {
     },
     takeWanted() {
       return api.takeWanted();
+    },
+    viewingChat() {
+      return api.viewingChat();
     },
     // U59. onReply compares the daemon's refusal against this, so it is the
     // panel's own literal here too rather than a second copy.
@@ -1764,6 +1768,7 @@ function makeEnv(opts) {
   const fAvatarInitial = mk("avatarInitial", ["text"]);
   const fShowAvatarAt = mk("showAvatarAt", ["list", "i"]);
   const fTakeWanted = mk("takeWanted");
+  const fViewingChat = mk("viewingChat");
   const fPasteClipboard = mk("pasteClipboard");
   const fClipboardBusy = mk("clipboardBusy");
   // `text` inside submit() is the TextArea's own property; `with` makes the
@@ -2040,6 +2045,7 @@ function makeEnv(opts) {
     avatarInitial: (t) => q((...a) => fAvatarInitial(...a, t)),
     showAvatarAt: (l, i) => q((...a) => fShowAvatarAt(...a, l, i)),
     takeWanted: () => q(fTakeWanted),
+    viewingChat: () => q(fViewingChat),
     pasteClipboard: () => q(fPasteClipboard),
     clipboardBusy: () => q(fClipboardBusy),
     submit: (draft) => {

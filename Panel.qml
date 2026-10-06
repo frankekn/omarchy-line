@@ -646,7 +646,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (!root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
+          root.loadHistory(root.activeChat.mid, root.viewingChat())
         }
       }
     }
@@ -850,7 +850,7 @@ Panel {
         root.historyReloadChat = String(root.activeChat.mid || "")
         if (root.sockConnected && !root.loading) {
           root.reconciliationAttemptedEpoch = root.reconciliationEpoch
-          root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
+          root.loadHistory(root.activeChat.mid, root.viewingChat())
         }
       }
     }
@@ -2230,7 +2230,7 @@ Panel {
     root.reconciliationAttemptedEpoch = root.reconciliationEpoch
     // twoPane 右欄跟著面板重開、view 還在 list 時不能順便標已讀；
     // 使用者已點開對話、view 是 chat 時，斷線補抓也要送已讀。
-    root.loadHistory(root.activeChat.mid, !root.twoPane || root.view === "chat")
+    root.loadHistory(root.activeChat.mid, root.viewingChat())
     return true
   }
 
@@ -3885,7 +3885,9 @@ Panel {
     // 那裡的（重複的請求、自己已讀的回音）就不再打 LINE。不拿 messages 的最後一則：
     // 那裡可能是還沒有真 id 的樂觀泡泡。
     // 一批事件只送一次，相簿一次進來十則不必標十次。
-    if (incoming) root.request("markRead", { chat: mid, upTo: incoming })
+    // 只有人正在看這間才標：twoPane 按 Esc 回清單後右欄還留著對話，進來的訊息
+    // 沒人看到，標了對方就會以為已讀。回到聊天室走 openChat，那一趟自己會補標。
+    if (incoming && root.viewingChat()) root.request("markRead", { chat: mid, upTo: incoming })
   }
 
   // 改過的那一則要換成新物件：純 JS 物件就地改內容不會發變更訊號（QML 比的是參考，
@@ -4033,6 +4035,13 @@ Panel {
 
   function mergeFailedMessages(chat, list) {
     return EventLog.mergeFailedMessages(root.failedMessagesByChat[String(chat || "")], list)
+  }
+
+  // 「人正在看這間」。單欄時開著的對話就是在看；twoPane 右欄一直都在，所以要看
+  // view 是不是 chat —— Esc 回清單後對話留著但沒人在看。面板關起來的情況不用問：
+  // opened 一掉 socket 就跟著拆了，什麼事件都不會進來。
+  function viewingChat() {
+    return !!root.activeChat && (!root.twoPane || root.view === "chat")
   }
 
   // atBottom 不在這裡設：這支只是把請求送出去，回來要停在哪由 setMessages
