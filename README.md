@@ -246,10 +246,10 @@ Push-driven refreshes no longer refetch the whole list either: the push itself
 says which chats moved, the daemon debounces them, then issues one
 "recent messages" request per affected chat and updates the rows in place —
 no sweeping 122+ boxes for a few rows. It falls back to the full
-`getMessageBoxes` only on login, reconnect, manual sync, a read receipt, a
-rename, a burst (more than 8 chats), or a failed incremental round — the only
-server-side source of unread counts lives there, and the full pass is always
-the corrector. Disable the whole path with `ENIL_INCREMENTAL=0` (on by
+`getMessageBoxes` only on login, reconnect, manual sync, a read on another
+device, a rename, a burst (more than 8 chats), or a failed incremental round —
+the only server-side source of unread counts lives there, and the full pass is
+always the corrector. Disable the whole path with `ENIL_INCREMENTAL=0` (on by
 default); with it off every round is the original full refetch.
 
 While push is alive none of this waiting applies: new messages, reads,

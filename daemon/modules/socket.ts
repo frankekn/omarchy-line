@@ -69,11 +69,14 @@ import { cacheMedia, toPluginMessage } from "./messages.ts";
 import {
   bumpChatsRevision,
   chats,
+  chatSummaryStore,
   dirtyMids,
   login,
   me,
   pushEvent,
   saveHidden,
+  scheduleStateWrite,
+  setChats,
   setChatSink,
   setEventSink,
   setHidden,
@@ -189,12 +192,20 @@ function markReadArgs(
  *    message in dirtyMids instead, so `unread` alone would read a fresh
  *    message as already read. A chat with no row proves nothing either way.
  *
- * After a send, the server's unread count moved and no per-box source can say
- * by how much: only the full round's box.unreadCount knows, hence the forced
- * full round. It goes through the debouncer, not refreshChats(), so it shares
- * a window with the op 40 echo LINE sends back for this very check (and with
- * the next message's ask) instead of paying a round of its own. A refused
- * send moved nothing: no cursor, no round.
+ * After a send, the row is settled here instead of by a forced full round
+ * (which cost one getMessageBoxes sweep per chat opened and one or two per
+ * message read in an open chat). Everything the row counts is at or before
+ * its summary message: the server count a full round installed covers up to
+ * that round's summary, and the debt a push booked is for messages it moved
+ * the summary onto. So when the summary is at or before `upTo`, the whole
+ * row is read -- unread 0, debt 0. When a push moved the summary past `upTo`
+ * between the panel's page and this ask, the row's own count is still read
+ * but the booked debt is kept: that push already scheduled the incremental
+ * round that pays it, and the panel asks again for the newer message as soon
+ * as it lands. The 5-minute full round stays the backstop for the drift
+ * neither source can see. A chat with no row has nothing to settle and still
+ * needs the full round to build one. A refused send moved nothing: no cursor,
+ * no row change.
  */
 async function markChatRead(
   owner: Client,
@@ -232,8 +243,31 @@ async function markChatRead(
     const prev = ranges.get(myMid);
     if (prev === undefined || prev < id) ranges.set(myMid, id);
   }
-  setForceFullRefresh(true);
-  scheduleRefresh();
+  const at = chats.findIndex((c) => c.mid === chat);
+  if (at < 0) {
+    setForceFullRefresh(true);
+    scheduleRefresh();
+    return true;
+  }
+  const summary = asMessageId(
+    chatSummaryStore.chatSummaryMessageIds.get(chat) ?? "",
+  );
+  const debt = dirtyMids.get(chat);
+  if (
+    debt && debt.pending > 0 && id !== null && summary !== null &&
+    summary <= id
+  ) {
+    dirtyMids.set(chat, { ...debt, pending: 0 });
+  }
+  if (chats[at].unread !== 0) {
+    const rows = chats.slice();
+    rows[at] = { ...rows[at], unread: 0 };
+    setChats(rows);
+    bumpChatsRevision(rows[at]);
+    // A row patch reaches open panels through the revision sink; the file
+    // has no round coming to flush it, so it is queued here.
+    scheduleStateWrite();
+  }
   return true;
 }
 // enil:markread-end
