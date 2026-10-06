@@ -16,6 +16,7 @@ import {
   capCursors,
   capMap,
   cursors,
+  goneMedia,
   isMe,
   REACTION_CACHE_MAX,
   reactionsBeforePublication,
@@ -72,7 +73,12 @@ async function toPluginMessage(
   const meta = (raw.contentMetadata ?? {}) as Json;
   const contentType = String(raw.contentType ?? "NONE");
   const hasContents = MEDIA_TYPES.includes(contentType);
-  const mediaState = mediaStateOf(meta, hasContents, Date.now());
+  // A gone object outranks a metadata "ok": the panel then draws the
+  // attachment as expired and never asks for its thumbnail again.
+  const metaState = mediaStateOf(meta, hasContents, Date.now());
+  const mediaState = metaState === "ok" && goneMedia.has(String(raw.id))
+    ? "expired"
+    : metaState;
   const out: PluginMessage = {
     id: String(raw.id),
     chat: chatMid,

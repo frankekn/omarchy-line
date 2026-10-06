@@ -56,11 +56,13 @@ import {
 import {
   cursors,
   isMe,
+  mediaStateFor,
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
   rawsById,
   readRanges,
+  rememberGoneMedia,
   rememberPaginationCursor,
   rememberRaw,
   unsentBeforePublication,
@@ -738,7 +740,8 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     if (cursor.chat !== String(req.chat ?? "")) {
       return { ok: false, error: "訊息不在這個聊天室" };
     }
-    const state = mediaStateFrom(
+    const state = mediaStateFor(
+      id,
       !!cursor.unsent || unsentBeforePublication.has(id),
       cursor.expiresAt,
       Date.now(),
@@ -763,6 +766,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     if (!sessionIsCurrent(c, generation)) {
       return { ok: false, error: "尚未登入" };
     }
+    // The same 404 came back on every open of a chat whose thumbnail LINE
+    // had deleted; remembered, the next ask stops at the check above.
+    if ("error" in cached) rememberGoneMedia(id, cached.error);
     const current = cursors.get(id) ?? cursor;
     if (
       mediaStateFrom(

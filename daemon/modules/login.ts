@@ -83,6 +83,7 @@ import { avatarPending, avatars, avatarTokens, noteAvatar } from "./avatars.ts";
 import {
   capMap,
   cursors,
+  goneMedia,
   memberCache,
   NAME_CACHE_MAX,
   nameCache,
@@ -654,6 +655,7 @@ async function logoutClaimed(
   // Wire structs carry this account's ciphertext and metadata; same LINE-global
   // id collision reasoning as cursors above.
   rawsById.clear();
+  goneMedia.clear();
   // Same reason, and one more: the list is filtered against `me`, so keeping
   // it would offer the new account a picker with itself in it.
   memberCache.clear();

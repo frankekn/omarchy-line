@@ -13,6 +13,7 @@
  */
 import { MEDIA_DIR } from "./env.ts";
 import { readIndexOf } from "./protocol.ts";
+import { isGoneError, type MediaState, mediaStateFrom } from "./text.ts";
 import { me } from "./state.ts";
 import { sessionIsCurrent } from "./session.ts";
 import type { Client, TalkMessage } from "@evex/linejs";
@@ -131,6 +132,44 @@ function capMap<V>(map: Map<string, V>, max: number): void {
     map.delete(oldest);
   }
 }
+
+// The block between the enil:gonemedia markers is sliced out verbatim by
+// daemon/gonemedia_test.ts on top of a stub capMap, behind the real
+// mediastate block.
+// enil:gonemedia-begin
+/**
+ * Message ids whose bytes OBS answered were gone (404/410, or the empty body
+ * upstream linejs fails to decrypt). LINE's expiry stamp can outlive the
+ * object, so a message that still reads "ok" from its metadata fetched the
+ * same 404 on every chat open; remembering the answer for the session makes
+ * the next history page carry mediaState "expired" (the panel then offers
+ * neither thumbnail nor download) and refuses the next preview ask before any
+ * request. A transient failure (5xx, timeout, busy) is not remembered: the
+ * next ask may succeed.
+ */
+const GONE_MEDIA_MAX = 1000;
+const goneMedia = new Map<string, true>();
+
+/** Records a gone object; answers whether the failure was that kind. */
+function rememberGoneMedia(id: string, error: Error): boolean {
+  if (!isGoneError(error)) return false;
+  goneMedia.delete(id);
+  goneMedia.set(id, true);
+  capMap(goneMedia, GONE_MEDIA_MAX);
+  return true;
+}
+
+/** mediaStateFrom() with the remembered answer; a recall still wins. */
+function mediaStateFor(
+  id: string,
+  unsent: boolean,
+  expiresAt: number | undefined,
+  now: number,
+): MediaState {
+  const state = mediaStateFrom(unsent, expiresAt, now);
+  return state === "ok" && goneMedia.has(id) ? "expired" : state;
+}
+// enil:gonemedia-end
 
 // enil:cursorcap-begin
 const PAGINATION_CURSOR_MAX = Math.max(1, Math.floor(CURSOR_CACHE_MAX / 2));
@@ -289,11 +328,13 @@ export {
   CURSOR_CACHE_MAX,
   cursors,
   finishIncomingMessage,
+  goneMedia,
   isMe,
   limiter,
   MEDIA_MAX_AGE_MS,
   MEDIA_MAX_BYTES,
   MEDIA_SWEEP_MS,
+  mediaStateFor,
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
@@ -311,6 +352,7 @@ export {
   readIndexFor,
   readRanges,
   rememberBoxCursor,
+  rememberGoneMedia,
   rememberPaginationCursor,
   rememberRaw,
   REPLY_SOURCE_MAX,
