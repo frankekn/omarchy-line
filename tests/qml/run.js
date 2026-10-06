@@ -8034,7 +8034,7 @@ ok(
   "the width binding calls listPaneWidth -- the rule is not copied inline as well",
 );
 ok(
-  /readonly property bool stackedTools: root\.toolsStacked\(width, scaleRow\.implicitWidth\)/
+  /readonly property bool stackedTools: root\.toolsStacked\(width, scaleRow\.naturalWidth\)/
     .test(listPaneBlock),
   "and stackedTools calls toolsStacked",
 );
@@ -8060,7 +8060,7 @@ ok(
   "and the offline hero carries an actual clickable start button",
 );
 const toolsRowBlock = listPaneBlock.slice(
-  listPaneBlock.indexOf("        Row {\n          id: scaleRow"),
+  listPaneBlock.indexOf("        Flow {\n          id: scaleRow"),
   listPaneBlock.indexOf("          id: searchField"),
 );
 ok(toolsRowBlock.length > 0, "the scaleRow block was found");
@@ -12285,7 +12285,7 @@ ok(
   "which is also told where the next press lands",
 );
 const toolsRow64 = src.slice(
-  src.indexOf("        Row {\n          id: scaleRow"),
+  src.indexOf("        Flow {\n          id: scaleRow"),
   src.indexOf("        // 搜尋在標題下方"),
 );
 ok(
@@ -12746,7 +12746,7 @@ ok(
   "which is also told where the next press lands",
 );
 const toolsRow69 = src.slice(
-  src.indexOf("        Row {\n          id: scaleRow"),
+  src.indexOf("        Flow {\n          id: scaleRow"),
   src.indexOf("        // 搜尋在標題下方"),
 );
 ok(

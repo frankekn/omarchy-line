@@ -5278,7 +5278,7 @@ Panel {
         anchors.left: parent.left
         // 寬度規則寫在 listPaneWidth()：對話那半邊才是主角，清單不能為了字級把它擠掉。
         width: root.twoPane ? root.listPaneWidth(parent.width, root.fontScale) : parent.width
-        readonly property bool stackedTools: root.toolsStacked(width, scaleRow.implicitWidth)
+        readonly property bool stackedTools: root.toolsStacked(width, scaleRow.naturalWidth)
         visible: !root.needsLogin && (root.twoPane || root.view === "list")
 
         // 標題固定在最上面，不隨清單捲走。
@@ -5403,11 +5403,27 @@ Panel {
         }
 
         // 字級調整：放在搜尋框右側，不另外佔一列；清單窄到並排會互相擠的時候
-        // （toolsStacked）才改成搜尋框在上、這一排在下。
+        // （toolsStacked）才改成搜尋框在上、這一排在下。疊下去之後吃滿清單寬度，
+        // 這一排比清單還寬時就折成兩行 —— 靠右的 Row 塞不下只會從左邊伸出去被切掉
+        // （en 在 base-size 16 時 408px 對 339px 的清單，只剩「croll 2× Read 100…」）。
         // （不要放 hero 右上角 —— PanelHero 的 meta 徽章在那裡。）
-        Row {
+        Flow {
           id: scaleRow
-          anchors.right: parent.right
+          // 自然寬度自己加：Flow 的 implicitWidth 是給了寬度、折完行之後的寬，
+          // 拿它決定要不要疊會跟自己的 width 綁成一圈。Repeater 本身也是子項，
+          // 寬度 0，跳過。
+          readonly property real naturalWidth: {
+            var w = 0, n = 0
+            for (var i = 0; i < children.length; i++) {
+              var c = children[i]
+              if (!c.visible || c.implicitWidth === 0) continue
+              w += c.implicitWidth
+              n++
+            }
+            return w + spacing * Math.max(0, n - 1)
+          }
+          x: listPane.stackedTools ? 0 : parent.width - width
+          width: listPane.stackedTools ? parent.width : naturalWidth
           y: listPane.stackedTools ? searchField.y + searchField.height + Style.space(10)
             : searchField.y + (searchField.height - height) / 2
           spacing: Style.space(8)

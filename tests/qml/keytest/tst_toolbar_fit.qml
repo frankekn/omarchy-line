@@ -5,6 +5,9 @@
 // pane clips it: with the shell at base-size 16 the en row read
 // "croll 2× Read 100 Sync Log out" in the two-pane window.
 //
+// The row is now a Flow that takes the pane's width once the tools stack, so
+// an over-wide row wraps onto a second line instead of leaving the pane.
+//
 // The shape below is a copy of Panel.qml's scaleRow with the shell-only bits
 // (Style/Color/MouseArea/Accessible) stripped; the labels come from the real
 // Strings.js. Pane widths are the panel's own formulas evaluated by hand:
@@ -44,9 +47,24 @@ Item {
     height: 200
     clip: true
 
-    Row {
+    // toolsStacked(): the search box moves above the row once the pane is
+    // narrower than the row plus space(160).
+    readonly property bool stackedTools: width < scaleRow.naturalWidth + harness.space(160)
+
+    Flow {
       id: scaleRow
-      anchors.right: parent.right
+      readonly property real naturalWidth: {
+        var w = 0, n = 0
+        for (var i = 0; i < children.length; i++) {
+          var c = children[i]
+          if (!c.visible || c.implicitWidth === 0) continue
+          w += c.implicitWidth
+          n++
+        }
+        return w + spacing * Math.max(0, n - 1)
+      }
+      x: listPane.stackedTools ? 0 : parent.width - width
+      width: listPane.stackedTools ? parent.width : naturalWidth
       y: 40
       spacing: harness.space(8)
 
