@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Offscreen QML cases: key dispatch for the list view (Esc leaves the search
 # box, L focuses 登出, Return/Space activate it) and the linkNotice
-# binding-loop regression (U74). Needs qmltestrunner from qt6-declarative;
+# binding-loop regression (U74), and the list-pane tool row staying inside
+# its pane in both languages. Needs qmltestrunner from qt6-declarative;
 # skips cleanly when it is absent so the suite stays runnable on a machine
 # without the Qt test tooling.
 #
@@ -30,7 +31,7 @@ fi
 # and the exit code -- the warning in the transcript is the only place the
 # regression shows. No coreutils here either, same as the dirname note above.
 status=0
-for t in tst_logout_key.qml tst_link_notice.qml; do
+for t in tst_logout_key.qml tst_link_notice.qml tst_toolbar_fit.qml; do
   out=$(QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software "$runner" -input "$t" 2>&1)
   rc=$?
   printf '%s\n' "$out"
