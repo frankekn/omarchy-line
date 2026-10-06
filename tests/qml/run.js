@@ -388,6 +388,7 @@ const B = {
   showAvatarAt: body("  function showAvatarAt(list, i) {"),
   takeWanted: body("  function takeWanted() {"),
   viewingChat: body("  function viewingChat() {"),
+  resumeViewing: body("  function resumeViewing() {"),
   // U59: Ctrl+V. The panel cannot read the Wayland clipboard, so what the key
   // does is decided in two halves -- one frame out, one answer back -- and both
   // halves are root functions the harness can drive.
@@ -979,6 +980,9 @@ function makeEnv(opts) {
     },
     viewingChat() {
       return api.viewingChat();
+    },
+    resumeViewing() {
+      return api.resumeViewing();
     },
     // U59. onReply compares the daemon's refusal against this, so it is the
     // panel's own literal here too rather than a second copy.
@@ -1769,6 +1773,7 @@ function makeEnv(opts) {
   const fShowAvatarAt = mk("showAvatarAt", ["list", "i"]);
   const fTakeWanted = mk("takeWanted");
   const fViewingChat = mk("viewingChat");
+  const fResumeViewing = mk("resumeViewing");
   const fPasteClipboard = mk("pasteClipboard");
   const fClipboardBusy = mk("clipboardBusy");
   // `text` inside submit() is the TextArea's own property; `with` makes the
@@ -2046,6 +2051,7 @@ function makeEnv(opts) {
     showAvatarAt: (l, i) => q((...a) => fShowAvatarAt(...a, l, i)),
     takeWanted: () => q(fTakeWanted),
     viewingChat: () => q(fViewingChat),
+    resumeViewing: () => q(fResumeViewing),
     pasteClipboard: () => q(fPasteClipboard),
     clipboardBusy: () => q(fClipboardBusy),
     submit: (draft) => {
@@ -9352,6 +9358,27 @@ e.applyEvents([EV(2, "message", "C1", { message: MSG("m3", "THEM", "c") })]);
 ok(e.sent.filter((r) => r.cmd === "markRead").length === 1 &&
      e.sent.filter((r) => r.cmd === "markRead")[0].upTo === "m3",
    "viewing the two-pane chat again, the next message gets its receipt");
+e = makeEnv({ activeChat: { mid: "C1" }, twoPane: true, view: "list" });
+e.root.chats = [{ mid: "C1", unread: 2, lastTime: 600 }];
+e.root.messages = e.withDay([MSG("m1", "THEM", "a"), MSG("m2", "THEM", "b"), MSG("m3", "ME", "c")]);
+e.resumeViewing();
+ok(e.root.view === "chat" && e.viewingChat(),
+   "focusing the composer of the retained chat counts as viewing it");
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 1 &&
+     e.sent.filter((r) => r.cmd === "markRead")[0].upTo === "m2",
+   "and the unread that piled up gets one receipt, up to the newest message from the other side: " +
+     JSON.stringify(e.sent));
+e.resumeViewing();
+ok(e.sent.filter((r) => r.cmd === "markRead").length === 1,
+   "focusing it again while already viewing sends nothing more");
+e = makeEnv({ activeChat: { mid: "C1" }, twoPane: true, view: "list" });
+e.root.chats = [{ mid: "C1", unread: 0, lastTime: 600 }];
+e.root.messages = e.withDay([MSG("m1", "THEM", "a")]);
+e.resumeViewing();
+ok(e.root.view === "chat" && e.sent.filter((r) => r.cmd === "markRead").length === 0,
+   "with nothing unread, focusing the composer only switches the view");
+ok(/onActiveFocusChanged: if \(activeFocus\) root\.resumeViewing\(\)/.test(src),
+   "the composer calls resumeViewing when it takes focus");
 e = makeEnv({ activeChat: { mid: "C1" }, twoPane: false, view: "chat" });
 e.root.chats = [{ mid: "C1", unread: 0, lastTime: 500 }];
 e.applyEvents([EV(1, "message", "C1", { message: MSG("m2", "THEM", "b") })]);

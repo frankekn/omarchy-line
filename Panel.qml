@@ -4044,6 +4044,24 @@ Panel {
     return !!root.activeChat && (!root.twoPane || root.view === "chat")
   }
 
+  // 雙欄時直接點右邊的輸入框也是「在看這間」：不然人正在回訊息，進來的新訊息卻一則
+  // 都不標已讀，要再點一次清單那一列才算數。回到 chat 那一刻，這段期間累積的未讀
+  // 照即時那一列補一次已讀，upTo 取畫面上最新一則對方的訊息。
+  function resumeViewing() {
+    if (!root.activeChat || !root.twoPane || root.view === "chat") return
+    root.view = "chat"
+    var mid = String(root.activeChat.mid || "")
+    var live = root.chatById(mid)
+    if (!live || Number(live.unread || 0) <= 0) return
+    for (var i = root.messages.length - 1; i >= 0; i--) {
+      var m = root.messages[i]
+      if (m && m.id !== undefined && String(m.id).length > 0 && String(m.from || "") !== root.myMid) {
+        root.request("markRead", { chat: mid, upTo: String(m.id) })
+        return
+      }
+    }
+  }
+
   // atBottom 不在這裡設：這支只是把請求送出去，回來要停在哪由 setMessages
   // 在真的換清單的那一刻決定，中間使用者還捲得動。
   // markRead 沒帶就照舊准標已讀：openChat 開聊天室是「人在看」，標是合理語意。
@@ -6424,6 +6442,7 @@ Panel {
             TextArea.flickable: TextArea {
               id: replyField
               enabled: !!root.activeChat
+              onActiveFocusChanged: if (activeFocus) root.resumeViewing()
               // 「貼圖」在這個面板裡是 sticker，所以剪貼簿那條寫「剪貼簿的圖」。
               placeholderText: tr("send.placeholder")
                 + tr("send.placeholder2")
