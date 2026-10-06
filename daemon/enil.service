@@ -3,6 +3,8 @@ Description=enil LINE daemon for omarchy-line
 After=graphical-session.target
 # Plugin uninstalled: skip the unit instead of restart-looping on a missing daemon.ts.
 ConditionPathExists=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/daemon.ts
+# The plugin needs the daemon whenever it runs: never stop retrying.
+StartLimitIntervalSec=0
 
 [Service]
 # The installed plugin dir, not a dev checkout: `omarchy plugin update` then
@@ -12,7 +14,9 @@ WorkingDirectory=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon
 # enil-run.sh execs the compiled ./enil when its stamp matches this checkout,
 # /usr/bin/deno otherwise -- plugin updates can never strand a stale binary.
 ExecStart=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/enil-run.sh
-Restart=on-failure
+# Any exit, a clean one included, brings it back; only `systemctl stop` does not
+# (the panel's guard covers that and a hung daemon).
+Restart=always
 # Everything the daemon writes under the state dir is the user's alone: the
 # session token, decrypted media, the event ring.
 UMask=0077

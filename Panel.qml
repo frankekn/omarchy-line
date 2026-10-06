@@ -5019,6 +5019,26 @@ Panel {
 
   onStateChanged: root.armOnlineDeadline()
 
+  // plugin 在跑，daemon 就要活著 —— 不管面板開沒開。systemd 的 Restart=always 管
+  // daemon 自己退出的情況；這裡管它退不出來或被停掉的那兩種：卡住（心跳停了但程序
+  // 還在，systemd 看不出來）和 systemctl stop（systemd 照指示不重啟）。兩種都表現成
+  // state 超過 online 的時窗沒更新，或根本沒有 state。不在線時每 15 秒看一次，
+  // kickDaemon 自己有 45 秒冷卻，重啟中的 daemon 不會被連環重啟；回到在線就停。
+  // 不用 triggeredOnStart：shell 剛起來 state 還沒讀到也算不在線，第一拍等 15 秒，
+  // state 早就讀進來了，正常的 daemon 不會因為 shell 重開而被重啟。
+  Timer {
+    id: daemonGuard
+    interval: 15000
+    repeat: true
+    running: !root.online
+    onTriggered: root.guardDaemon()
+  }
+
+  function guardDaemon() {
+    root.nowMs = Date.now()
+    if (!root.online) root.kickDaemon(false)
+  }
+
   function armOnlineDeadline() {
     if (!root.state) { onlineDeadline.stop(); return }
     // 多等 1 秒：剛好在邊界上響的話 nowMs - updatedAt 還等於 180000 以內，翻不過去。

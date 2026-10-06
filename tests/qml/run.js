@@ -247,6 +247,7 @@ const B = {
   ),
   loadHistory: body("  function loadHistory(mid, markRead) {"),
   armOnlineDeadline: body("  function armOnlineDeadline() {"),
+  guardDaemon: body("  function guardDaemon() {"),
   // The prefetch trigger itself, sliced against its own closing brace like
   // submit(). contentY/originY/contentHeight/height are the ListView's own
   // properties, so it is driven under `with (msgList)` -- the way QML resolves
@@ -8633,6 +8634,55 @@ ok(
     /id: onlineDeadline\n\s*repeat: false\n\s*onTriggered: root\.nowMs = Date\.now\(\)$/m
       .test(src),
     "and when it fires it moves nowMs, which flips online for the bar icon",
+  );
+}
+
+group("(t2e) the daemon is kept alive while the plugin runs, panel open or not");
+{
+  const guard = new Function("root", "Date", B.guardDaemon);
+  const FakeDate = { now: () => 5000000 };
+  const kicks = [];
+  const mkRoot = (updatedAt) => {
+    const r = {
+      nowMs: 0,
+      state: updatedAt === null ? null : { updatedAt },
+      kickDaemon: (force) => kicks.push(force),
+    };
+    Object.defineProperty(r, "online", {
+      get: () => !!r.state && (r.nowMs - Number(r.state.updatedAt || 0)) < 180000,
+    });
+    return r;
+  };
+  let r = mkRoot(5000000 - 10000);
+  guard(r, FakeDate);
+  ok(
+    kicks.length === 0 && r.nowMs === 5000000,
+    "a daemon that wrote state 10s ago is left alone, and the guard moves the clock: " +
+      JSON.stringify(kicks),
+  );
+  r = mkRoot(5000000 - 200000);
+  guard(r, FakeDate);
+  ok(
+    kicks.length === 1 && kicks[0] === false,
+    "state silent past the online window brings the daemon back with the throttled kick: " +
+      JSON.stringify(kicks),
+  );
+  r = mkRoot(null);
+  guard(r, FakeDate);
+  ok(
+    kicks.length === 2,
+    "no state file at all (never started, or deleted) also brings it up: " +
+      JSON.stringify(kicks),
+  );
+  ok(
+    /id: daemonGuard\n\s*interval: 15000\n\s*repeat: true\n\s*running: !root\.online\n\s*onTriggered: root\.guardDaemon\(\)$/m
+      .test(src),
+    "the guard runs whenever the daemon is not online, whether or not the panel is open",
+  );
+  const unit = fs.readFileSync(path.join(REPO, "daemon", "enil.service"), "utf8");
+  ok(
+    /^Restart=always$/m.test(unit) && /^StartLimitIntervalSec=0$/m.test(unit),
+    "systemd restarts the daemon after any exit and never gives up on it",
   );
 }
 
