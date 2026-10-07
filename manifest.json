@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "io.github.frankekn.line",
-  "name": "LINE",
-  "version": "2.15.0",
+  "name": "omarchy-line",
+  "version": "2.16.0",
   "author": "Frank Yang",
   "license": "MIT",
   "description": "Unread LINE messages in the bar, read from a local daemon's state file.",
@@ -14,7 +14,7 @@
     "barWidget": "Panel.qml"
   },
   "barWidget": {
-    "displayName": "LINE",
+    "displayName": "LINE (unofficial)",
     "description": "One bar icon with the unread count, and a panel listing the chats waiting on you.",
     "category": "Communication",
     "aliases": [

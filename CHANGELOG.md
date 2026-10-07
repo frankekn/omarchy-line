@@ -4,7 +4,7 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers continue from the original omarchy-line plugin by Unayung
 Chen, so this project starts at 2.x.
 
-## [2.16.0] - Unreleased
+## [2.16.0] - 2026-10-07
 
 ### Added
 
@@ -96,4 +96,4 @@ Releases 2.13.0 through 2.15.0 are tagged in git. See the
 [tags](https://github.com/frankekn/omarchy-line/tags) and the commit history
 for what changed before 2.16.0.
 
-[2.16.0]: https://github.com/frankekn/omarchy-line/compare/v2.15.0...HEAD
+[2.16.0]: https://github.com/frankekn/omarchy-line/compare/v2.15.0...v2.16.0
