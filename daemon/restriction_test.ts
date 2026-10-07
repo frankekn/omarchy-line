@@ -16,13 +16,22 @@ interface Restriction {
 }
 interface FakeClient {
   base: {
-    push: { conns: Array<{ close(): void } | null> };
+    push: {
+      conns: Array<{ close(): void } | null>;
+      initializeConn(): Promise<unknown>;
+    };
     poll: { islisten: boolean };
   };
   listen(options?: { signal?: AbortSignal }): void;
 }
 interface Module {
-  calls: { listen: number; close: number; refresh: number; write: number };
+  calls: {
+    listen: number;
+    close: number;
+    connect: number;
+    refresh: number;
+    write: number;
+  };
   logs: { error: string[]; log: string[] };
   restriction: Restriction | null;
   link: { push: string; since: number; reason?: string; code?: string } | null;
@@ -44,10 +53,14 @@ type LoginState = { status: string; reason?: string };
 type LinkState = { push: string; since: number; reason?: string; code?: string };
 type FakeConn = { close(): void };
 type FakeClient = {
-  base: { push: { conns: Array<FakeConn | null> }; poll: { islisten: boolean } };
+  base: {
+    push: { conns: Array<FakeConn | null>; initializeConn(): Promise<unknown> };
+    poll: { islisten: boolean };
+  };
   listen(options?: { signal?: AbortSignal }): void;
 };
-export const calls = { listen: 0, close: 0, refresh: 0, write: 0 };
+type Client = FakeClient;
+export const calls = { listen: 0, close: 0, connect: 0, refresh: 0, write: 0 };
 export const logs = { error: [] as string[], log: [] as string[] };
 const console = {
   error(...a: unknown[]) { logs.error.push(a.join(" ")); },
@@ -77,7 +90,10 @@ export function setLastPushAt(t: number) { lastPushAt = t; }
 export function makeClient(): FakeClient {
   return {
     base: {
-      push: { conns: [{ close() { calls.close++; } }] },
+      push: {
+        conns: [{ close() { calls.close++; } }],
+        initializeConn() { calls.connect++; return Promise.resolve(); },
+      },
       poll: { islisten: true },
     },
     listen() { calls.listen++; },
@@ -135,7 +151,8 @@ Deno.test("while halted the watchdog, the reconnect and the ping all stand down"
     await m.reconnectPush("manual");
     await new Promise((r) => setTimeout(r, 20));
     assertEquals(m.calls.listen, 0, code);
-    assertEquals(m.calls.close, 0, code);
+    // The one close is the halt's own: it drops the open push connection.
+    assertEquals(m.calls.close, 1, code);
     assertEquals(m.calls.refresh, 0, code);
     // A ping on the idle connection must not write "up" over the reason.
     m.markPushAlive();
@@ -164,6 +181,52 @@ Deno.test("lifting the halt hands the next stale tick back to the watchdog", asy
   // Lifting twice is as free as halting twice.
   m.liftRestriction();
   assertEquals(resumed(), 1);
+});
+
+Deno.test("the halt takes the pusher's connect step and the lift hands it back", async () => {
+  const m = await loadModule();
+  const c = m.makeClient();
+  m.setClient(c);
+  const original = c.base.push.initializeConn;
+  const refusal = refused("BANNED");
+  m.haltForRestriction(refusal);
+  // The vendor loop's next turn must fail without reaching the network, and
+  // fail with the refusal so onPushLog reads it as the same restriction.
+  const rejected = await c.base.push.initializeConn().then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assertEquals(rejected, refusal);
+  assertEquals(m.calls.connect, 0);
+  m.liftRestriction();
+  assertEquals(c.base.push.initializeConn, original);
+  await c.base.push.initializeConn();
+  assertEquals(m.calls.connect, 1);
+});
+
+Deno.test("a client that logged out while halted keeps nothing of the halt", async () => {
+  const m = await loadModule();
+  const old = m.makeClient();
+  m.setClient(old);
+  m.haltForRestriction(refused("EXCESSIVE_ACCESS"));
+  // logoutClaimed nulls the client before it lifts; the next login's client
+  // is a different object and never lost its connect step.
+  m.setClient(null);
+  m.liftRestriction();
+  const fresh = m.makeClient();
+  m.setClient(fresh);
+  await fresh.base.push.initializeConn();
+  assertEquals(m.calls.connect, 1);
+  // The retired client stays as the halt left it: no restore onto a session
+  // that is gone.
+  const rejected = await old.base.push.initializeConn().then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assertEquals(
+    (rejected as { data: { code: string } }).data.code,
+    "EXCESSIVE_ACCESS",
+  );
 });
 
 Deno.test("the halt log line carries the code and the class, never a mid", async () => {
