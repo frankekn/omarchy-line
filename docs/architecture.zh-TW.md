@@ -48,23 +48,82 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 `systemctl --user restart enil`，最多每 45 秒一次。面板上的「啟動 daemon」按鈕做同樣
 的事，防連點間隔 3 秒。
 
-`daemon/enil-run.sh` 是 unit 的 `ExecStart`。只有在編譯好的 `enil` 執行檔是從目前
-這份 checkout 建出來的時候，它才會執行那個檔案，否則就用 Deno 跑 `daemon.ts`。它透過
-`PATH` 找 `deno`，而且 linejs submodule 跟這份 checkout 釘住的 commit 不一致時，它會
-拒絕啟動。
-<!-- verify after merge: enil-run.sh resolves deno via PATH and refuses to start on an out-of-date submodule -->
+`daemon/enil-run.sh` 是 unit 的 `ExecStart`。它依序做這些事：
 
-Deno 以明確列出的權限執行 daemon，不再用 `-A`。網路權限仍然很寬，因為 FLEX 訊息
-可以指向任何公開 HTTPS 主機上的圖片。
-<!-- verify after merge: explicit Deno permissions replace -A in enil-run.sh and deno.json tasks -->
+1. 用 `git submodule status` 檢查 linejs submodule。submodule 從沒 checkout 過，或
+   checkout 在這份 checkout 釘住的 commit 以外，腳本就印出能修好它的兩行
+   `git submodule` 指令，並以結束碼 78 結束。不是 git checkout 的話，改成檢查
+   `daemon/vendor/linejs` 裡有沒有檔案，空的就以結束碼 78 結束。
+2. `enil.rev` 跟這份 checkout 的 `HEAD` 一致，而且 `daemon.ts` 沒有比執行檔新時，執行
+   編譯好的 `enil`。
+3. 否則先在 `PATH` 上找 `deno`，再找 `~/.deno/bin/deno`。user unit 拿到的是 systemd
+   的 `PATH`，不是你登入 shell 的 `PATH`，所以第二個位置是給 Deno 官方安裝程式裝的
+   版本用的。兩個都找不到就以結束碼 127 結束。
+4. 用 `deno run` 和 `daemon/enil-flags.sh` 裡的權限執行 `daemon.ts`。
+
+啟動失敗不會讓 unit 停下來。`Restart=always` 每 5 秒會再啟動一次，所以在你修好原因
+之前，journal 會一直重複同一段訊息。這些檢查是為了避免另一種結果：在一個指向
+`vendor/` 裡某個檔案的 import 錯誤上無限重啟。
+
+## Deno 權限
+
+`daemon/enil-flags.sh` 把 daemon 的 Deno 權限集中在一個地方。`enil-run.sh` 用它跑
+`deno run`，`deno task build` 用它跑 `deno compile`，所以原始碼執行和執行檔不會
+對不上。`permissions_test.ts` 會用一模一樣的這組權限啟動 `daemon.ts`。只有開發用的
+`deno task test`、`deno task no-any` 和效能測試還在用 `-A`。
+
+- `--allow-net` 沒有限定主機。talk 和 push 只要 LINE 的主機就夠，但 FLEX 訊息和
+  連結預覽會從訊息帶的任何 HTTPS 網址抓圖片（`imagecache.ts`），事先不知道會是哪些
+  主機。
+- `--allow-read` 沒有限定路徑。「傳送檔案」接受你在面板上選的任何路徑，縮圖程式也
+  直接在原位置讀檔。
+- `--allow-write` 只涵蓋 state 目錄：`state.json`、socket、lock、session 存檔、解密
+  後的媒體和大頭貼。daemon 產生的暫存檔也都在這裡，所以沒有 `/tmp` 這一項。
+- `--allow-run` 列出 daemon 會啟動的六個程式：`dbus-monitor`（睡眠與喚醒，
+  `watchdog.ts`）、`wl-paste`（`clipboard.ts`）、`ffmpegthumbnailer` 和 `ffmpeg`
+  （`video.ts`），以及 `omarchy-shell` 和 `notify-send`（`notify.ts`）。
+- `--allow-env` 列出 `modules/env.ts` 會讀的變數：`HOME`、`XDG_STATE_HOME`、
+  `ENIL_DEVICE`、`ENIL_INCREMENTAL`、`ENIL_CHAT_LIMIT`、`ENIL_PUSH_STALE_MS` 和
+  `ENIL_REQUEST_TIMEOUT_MS`。另外還有 `Q_DEBUG` 和 `NODE_DEBUG`：兩個 npm 相依套件
+  透過 Node 的 `process.env` 讀它們，沒列出的名稱會直接丟錯誤，而少了 `Q_DEBUG`
+  daemon 根本啟動不了。
+- 沒有 `--allow-sys`。哪天某個相依套件需要系統 API，`permissions_test.ts` 會失敗並
+  指出是哪一個。
+
+`enil-flags.sh` 用跟 `modules/env.ts` 一樣的方式，從 `XDG_STATE_HOME` 算出 state
+目錄。編譯好的執行檔會記住跑 `deno task build` 那個環境的目錄。建好之後才搬動
+`XDG_STATE_HOME` 的話，執行檔寫不進新目錄，要重新編譯。`enil-run.sh` 只在
+`enil.rev` 過期時才退回 `deno run`，目錄搬了它不會發現。
 
 ## LINE 限制帳號的時候
 
-LINE 回 `ABUSE_BLOCK`、`BANNED`、`EXCESSIVE_ACCESS`，或帳號層級的
-`NOT_AVAILABLE_USER`、`ACCOUNT_NOT_MATCHED` 時，daemon 會停掉所有自動發出的 LINE
-流量：不重連、不輪詢、不在背景重新整理。面板會告訴你 LINE 回報了什麼。daemon 不會
-想辦法繞過限制再試。
-<!-- verify after merge: restriction stop for ABUSE_BLOCK/BANNED/EXCESSIVE_ACCESS/NOT_AVAILABLE_USER/ACCOUNT_NOT_MATCHED, and the panel message -->
+`ABUSE_BLOCK`、`BANNED` 和 `EXCESSIVE_ACCESS` 代表 LINE 拒絕的是整個帳號，不是某一個
+請求。daemon 自己再怎麼重試都改變不了這個答案，而重試正是把一次流量限制變成停權的
+原因。任何一個 LINE 呼叫以這些代碼失敗時，`daemon/modules/restriction.ts` 裡的
+`haltForRestriction` 會停掉每一條自動路徑：輪詢、重新整理的重試、watchdog 重連、
+睡醒後的重連，以及 push stream。它在 journal 寫一行，並把 `state.json` 裡的 link
+寫成 `push: "down"`，帶上 `reason: "restricted"` 和代碼（見
+[protocol.zh-TW.md](protocol.zh-TW.md)）。
+
+面板把 link 顯示成提示列，這一行可以點：
+
+- 英文：`LINE restricted this account (EXCESSIVE_ACCESS); connection paused — tap to retry`
+- 繁體中文：`LINE 限制了這個帳號（EXCESSIVE_ACCESS），已暫停連線，點此重試`
+
+登入時碰到這些代碼，登入畫面會顯示 `LINE 限制了這個帳號，稍後再登入`，daemon 保留
+已存的憑證並等待。
+
+只有你能解除暫停。點提示列會執行一次手動同步，登入也會解除。等待期間 daemon 保留
+session：不撤銷 token，聊天列表和草稿都還在。結束 session 的話，可能只是一小時的
+流量限制，卻要你重新掃一次 QR 碼。
+
+會留著一條閒置連線。只要 client 還有 token，linejs 的 push 迴圈就會一直跑，daemon
+不清掉 token 就停不了它。暫停時 push stream 已經中止，不會再有事件送到 daemon，但
+那條連線和它每 30 秒一次的 ping 在暫停期間會繼續。
+
+其他代碼不會讓 daemon 暫停。`MAINTENANCE_ERROR` 會自己解除，所以 daemon 照平常的
+退避繼續重試。`NOT_AVAILABLE_USER` 可能來自某一個請求的對象，例如傳訊息給已刪除的
+帳號。`ACCOUNT_NOT_MATCHED` 屬於登入流程。這兩個都只讓收到它的那個請求失敗。
 
 ## 睡醒與斷線
 

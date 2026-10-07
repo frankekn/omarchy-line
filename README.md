@@ -10,12 +10,11 @@ messages, reply, and send files without leaving the desktop.
 Built on [linejs](https://github.com/evex-dev/linejs) by
 [Evex Developers](https://github.com/evex-dev).
 
-<!-- verify after merge: docs/images/panel-en.png, docs/images/panel-zh.png and docs/images/bar-icon.png exist -->
 | ![The panel in English: chat list and an open conversation](docs/images/panel-en.png) | ![The panel in Traditional Chinese](docs/images/panel-zh.png) |
 | :-: | :-: |
 | English | 繁體中文 |
 
-![The bar icon with an unread count](docs/images/bar-icon.png)
+![The bar icon with an unread count](docs/images/bar-badge.png)
 
 ## Disclaimer
 
@@ -62,9 +61,9 @@ network requests it makes.
   panel in that chat.
 - Hide chats on this computer only.
 - Three placements: below the bar, in the center of the screen, or as a
-  normal app window. The toolbar wraps onto a second line when the panel is
-  narrow.
-  <!-- verify after merge: toolbar wraps instead of clipping -->
+  normal app window.
+- When the chat list is narrow, the display controls next to the search box
+  move below it and wrap onto a second line instead of being cut off.
 - A Traditional Chinese or English interface.
 - History stays on disk, so chats open without waiting for LINE after a
   restart.
@@ -104,15 +103,34 @@ missing:
    ~/.config/omarchy/plugins/io.github.frankekn.line/daemon/install.sh
    ```
 
-`install.sh` does these steps, and you can run it again at any time:
+`install.sh` does these steps. Each step checks the current state before it
+changes anything, so you can run it again at any time:
 
-- It fetches the linejs submodule at the commit this checkout pins.
-  `omarchy plugin add` does a plain `git clone`, which skips submodules.
-- It runs `deno check`, which downloads the daemon's dependencies.
-- It installs or refreshes the systemd user unit `enil.service`.
-- It enables the unit and restarts the daemon.
+- It runs `git submodule sync` and `git submodule update --init` to put the
+  linejs submodule at the commit this checkout pins. `omarchy plugin add`
+  does a plain `git clone`, which skips submodules.
+- It looks for Deno on `PATH`, then at `~/.deno/bin/deno`. It stops with an
+  error if it finds no Deno or finds a version older than 2.
+- It copies `daemon/enil.service` to `~/.config/systemd/user/` and runs
+  `systemctl --user daemon-reload`, but only when the installed unit differs.
+- It enables `enil.service` and restarts it.
 
-<!-- verify after merge: daemon/install.sh exists and does submodule sync/update, deno check, unit install/refresh, enable/restart -->
+`install.sh` never touches the state directory `~/.local/state/enil/`. The
+unit always runs the plugin in `~/.config/omarchy/plugins/io.github.frankekn.line`.
+If you run `install.sh` from a different checkout, it prints a note, and the
+service still runs the installed plugin, not that checkout.
+
+To install the daemon without the script, run the same steps by hand:
+
+```bash
+cd ~/.config/omarchy/plugins/io.github.frankekn.line
+git submodule sync --recursive
+git submodule update --init --recursive
+mkdir -p ~/.config/systemd/user
+cp daemon/enil.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now enil
+```
 
 To read the daemon's log:
 
@@ -169,10 +187,21 @@ Deleting it removes them from this computer.
 **Can LINE ban my account for this?** It can. LINE does not offer this kind
 of access, and it decides what it allows. The daemon logs in as a secondary
 device, and it sends no message, reaction, or read receipt unless you act in
-the panel. If LINE reports
-that the account is restricted, the daemon stops all automatic LINE traffic
-and tells you.
-<!-- verify after merge: restriction stop and panel message -->
+the panel. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
+`EXCESSIVE_ACCESS`, the daemon stops all automatic LINE traffic, and the panel
+shows `LINE restricted this account (<code>); connection paused — tap to
+retry`. Nothing retries until you tap that line or log in again.
+[docs/architecture.md](docs/architecture.md#when-line-restricts-the-account)
+explains what stops and what stays.
+
+**The daemon does not start. What do I check?** Run
+`journalctl --user -u enil -n 20`. If the log says `daemon/vendor/linejs is
+missing or out of date`, the linejs submodule does not match the plugin. Run
+`install.sh` again, or the two `git submodule` commands that the log prints.
+If the log says `deno not found`, install Deno 2 with `sudo pacman -S deno`.
+`systemctl --user status enil` shows exit code 78 for the first case and 127
+for the second. systemd tries again every 5 seconds, so the daemon starts by
+itself once you fix the cause.
 
 **Does it log out my phone?** No. The daemon logs in as a secondary device by
 QR code. It never uses account transfer, which is the flow that moves the

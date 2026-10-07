@@ -66,11 +66,11 @@ XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # 未登入，可以�
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
-`--fixture` 有四個：`default`（`u`／`c`／`r` 各一個以上的聊天室，訊息涵蓋純文字、
+`--fixture` 有六個：`default`（`u`／`c`／`r` 各一個以上的聊天室，訊息涵蓋純文字、
 多行、E2EE 解密失敗、圖片、影片、檔案、貼圖、FLEX、系統事件、自己發的、收回的、
 過期的檔案）、`empty`（空清單）、`busy`（200 個聊天室，看清單捲動與搜尋）、
 `notify`（就是 `default`，但開起來就已經有一筆 `wanted`，直接看「從通知點進來」
-長什麼樣）。`history`
+長什麼樣），以及 `demo-en` 和 `demo-zh`（README 的截圖，見[截圖](#截圖)）。`history`
 會照 `before` 翻頁，`markRead` 會清未讀，`send` 會回一則 echo（`mentions` 照 daemon
 那套驗過再掛回去），`sendFile` 對 `r…` 回跟 daemon 一樣的中文錯誤，`download` 對收回／
 過期的訊息也是。`members` 對群組回假名單、對 1:1 和 room 回跟 daemon 一樣的中文拒絕；
@@ -122,14 +122,60 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 ## 截圖
 
 文件用的截圖一律對著 stub 拍，不要用真的帳號。真實截圖會拍到沒同意公開的人的名字、
-大頭貼和訊息。用某個 fixture 啟動 stub，讓 shell 指向同一個 `XDG_STATE_HOME`，再把
-圖存到 `docs/images/`。
+大頭貼和訊息。
+
+README 的截圖來自 `demo-en` 和 `demo-zh` 這兩個 fixture。每一個都是六個看起來像真實
+帳號的聊天室，涵蓋面板會畫的東西：未讀徽章、提及、表情回應、已讀人數、引用回覆、
+貼圖、FLEX 卡片、照片、檔案、收回的訊息和過期的檔案。`daemon/stub.py` 裡同一個函式
+從兩張表建出這兩個 fixture，所以一種語言不會少掉另一種語言有的功能。要自己看其中
+一個：
+
+```bash
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture demo-en
+```
+
+`tools/demo_assets.py` 把這些 fixture 用到的圖畫到 `docs/images/demo/`：`DEMO_PEOPLE`
+裡每個人和每個聊天室的縮寫大頭貼、三張像照片的風景、一組兩張卡片的 FLEX 輪播，以及
+一張貼圖。它用 ImageMagick（`magick`）和 Noto Sans CJK TC 字型，從形狀和漸層畫出這些
+圖，所以沒有授權問題。每次跑出來的結果都一樣。改了 `DEMO_PEOPLE` 之後要再跑一次。
+
+`tools/demo-screenshots.sh` 會寫出 `docs/images/panel-en.png`、
+`docs/images/panel-zh.png` 和 `docs/images/bar-badge.png`：
+
+```bash
+tools/demo-screenshots.sh       # 兩種語言
+tools/demo-screenshots.sh zh    # 只拍一種語言
+```
+
+這個腳本需要一個正在跑的 Hyprland 0.56 或更新版本的 session，因為它用到 Lua
+dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`、`jq`、
+`magick` 和 `python3`。每一種語言，它都做這些步驟：
+
+1. 用 `--fixture demo-<語言>` 在一個暫時的 state 目錄裡啟動 stub。
+2. 在你的 shell 旁邊，用一個暫時的 `HOME` 啟動第二個暫時的 shell。那個 shell 的 bar
+   上只有這個外掛，從你的 checkout 連過去，設成 `App window`。它有自己的
+   `OMARCHY_PATH`，裡面沒有全域快捷鍵檔，所以不會搶你 shell 的 IPC socket 或快捷鍵。
+   一個什麼都不做的 `systemctl` 讓它不會去重啟你真正的 daemon。
+3. 只在第一種語言時，拍下帶未讀數的 bar 圖示。
+4. 把面板開成 1040×860 的浮動視窗，打開示範聊天室，等 4 秒讓圖片載入，再拍下視窗。
+5. 停掉 stub 和第二個 shell，刪掉暫時目錄。有步驟失敗的話，會留下目錄方便看 log。
+
+第二個 shell 的 bar 會在它執行的那幾秒出現在你的 bar 下方。你的設定、state 和 daemon
+都不會被動到。超過 400 KB 的截圖會改存成 256 色。`DEMO_OUT`、`DEMO_WIDTH`、
+`DEMO_HEIGHT` 和 `DEMO_SETTLE` 可以改輸出目錄、視窗大小和等待時間。
 
 ## CI
 
-CI 在 GitHub 提供的 runner 上跑同一套檢查，對象是推到 `main` 的 commit，以及
-pull request（包括從 fork 來的 pull request）。
-<!-- verify after merge: CI on GitHub-hosted runners, fork PRs included -->
+`.github/workflows/ci.yml` 在 GitHub 提供的 `ubuntu-24.04` runner 上跑，對象是推到
+`main` 的 commit，以及每一個 pull request（包括從 fork 來的 pull request）。它不用任何
+secret，對 repo 只有唯讀權限。它跑上面那些檢查，但不跑需要 Omarchy shell 的
+`omarchy plugin validate` 和 `qmllint`。另外還跑 review finalizer 的測試
+（`node --test .github/scripts/needlefish-finalize.test.cjs`）、
+`sh -n daemon/enil-run.sh`，以及檢查 `manifest.json` 有沒有 `id`、`name` 和
+`version`。
+
+自動 review（`.github/workflows/needlefish.yml`）需要一個 secret，所以只對這個 repo
+裡的分支發的 pull request 跑，從 fork 來的 pull request 一律不跑。
 
 ## 調校用的環境變數
 

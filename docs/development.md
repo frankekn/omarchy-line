@@ -74,12 +74,13 @@ XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # logged out, QR flow 
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
-Four `--fixture`s: `default` (one each of `u`/`c`/`r` chats; messages cover
+Six `--fixture`s: `default` (one each of `u`/`c`/`r` chats; messages cover
 plain text, multiline, failed E2EE, image, video, file, sticker, FLEX, system
 events, your own sends, unsent and expired), `empty` (an empty list), `busy`
 (200 chats, for list scrolling and search), and `notify` (same as `default`
 but opens with one `wanted` already set, so you can see the notification-click flow at
-once). `history` pages by `before`, `markRead` (the flag and the command) clears unread, `send` echoes a
+once), and `demo-en` and `demo-zh` (the README screenshots, see
+[Take screenshots](#take-screenshots)). `history` pages by `before`, `markRead` (the flag and the command) clears unread, `send` echoes a
 message back (`mentions` validated like the daemon then re-attached),
 `sendFile` answers `r…` with the same refusal as the daemon, `download` does
 the same for unsent/expired. `members` returns a fake list for groups and the
@@ -145,14 +146,73 @@ notification, and a person to click it, none of which development can drive.
 
 Take screenshots for the docs against the stub, never against a real
 account. Real screenshots show names, avatars, and messages of people who did
-not agree to be published. Start the stub with a fixture, point the shell at
-the same `XDG_STATE_HOME`, and save the images under `docs/images/`.
+not agree to be published.
+
+The README screenshots come from the `demo-en` and `demo-zh` fixtures. Each
+one is six chats that read like a real account and cover what the panel
+draws: unread badges, mentions, reactions, read counts, a quote reply, a
+sticker, a FLEX card, a photo, a file, an unsent message, and an expired
+file. One function in `daemon/stub.py` builds both from two tables, so one
+language cannot drop a feature that the other shows. To look at one by hand:
+
+```bash
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture demo-en
+```
+
+`tools/demo_assets.py` draws the pictures that these fixtures serve into
+`docs/images/demo/`. It makes an initials avatar for every person and chat in
+`DEMO_PEOPLE`, three photo-like scenes, a two-card FLEX carousel, and one
+sticker. It draws them from shapes and gradients with ImageMagick (`magick`)
+and the Noto Sans CJK TC font, so there is nothing to license. The output is
+the same on every run. Run it again after you change `DEMO_PEOPLE`.
+
+`tools/demo-screenshots.sh` writes `docs/images/panel-en.png`,
+`docs/images/panel-zh.png`, and `docs/images/bar-badge.png`:
+
+```bash
+tools/demo-screenshots.sh       # both languages
+tools/demo-screenshots.sh zh    # one language
+```
+
+The script needs a running Hyprland session, version 0.56 or later, because
+it uses the Lua dispatchers. It also needs `omarchy-shell`, `quickshell`,
+`grim`, `hyprctl`, `jq`, `magick`, and `python3`. For each language, it does
+these steps:
+
+1. It starts the stub with `--fixture demo-<language>` in a temporary state
+   directory.
+2. It starts a second, temporary shell next to yours, in a scratch `HOME`.
+   That shell's bar holds only this plugin, linked from your checkout and set
+   to `App window`. The shell gets its own `OMARCHY_PATH` without the global
+   shortcuts file, so it does not take your shell's IPC socket or your key
+   bindings. A `systemctl` that does nothing keeps it from restarting your
+   real daemon.
+3. For the first language only, it captures the bar icon with its unread
+   count.
+4. It opens the panel as a floating 1040×860 window, opens the demo chat,
+   waits 4 seconds for the images to load, and captures the window.
+5. It stops the stub and the second shell, and deletes the temporary
+   directory. If a step failed, it keeps the directory for its logs.
+
+The second shell's bar shows up under yours for the few seconds it runs. Your
+config, your state, and your daemon are not touched. A capture larger than
+400 KB is saved with 256 colors. `DEMO_OUT`, `DEMO_WIDTH`, `DEMO_HEIGHT`, and
+`DEMO_SETTLE` override the output directory, the window size, and the wait.
 
 ## CI
 
-CI runs the same checks on GitHub-hosted runners for pushes to `main` and for
-pull requests, including pull requests from forks.
-<!-- verify after merge: CI on GitHub-hosted runners, fork PRs included -->
+`.github/workflows/ci.yml` runs on a GitHub-hosted `ubuntu-24.04` runner for
+pushes to `main` and for every pull request, including pull requests from
+forks. It uses no secrets and has read-only access to the repository. It
+runs the checks above except `omarchy plugin validate` and `qmllint`, which
+need the Omarchy shell. It also runs the review finalizer tests
+(`node --test .github/scripts/needlefish-finalize.test.cjs`),
+`sh -n daemon/enil-run.sh`, and a check that `manifest.json` has `id`,
+`name`, and `version`.
+
+The automated review (`.github/workflows/needlefish.yml`) needs a secret. It
+runs only for pull requests from branches in this repository, never for pull
+requests from forks.
 
 ## Tuning variables
 

@@ -14,16 +14,33 @@
 - **不轉移你的帳號。** daemon 以次要裝置的身分用 QR 碼登入。它從不啟動 LINE 的帳號
   轉移流程，因為那個流程可能讓你的手機被登出。你的手機一直是主要裝置。
 - **不自己送東西。** 訊息、檔案、貼圖、表情回應或收回，只有你在面板上操作時才會送到
-  LINE。已讀只會送給你正在面板裡看的那個聊天室。
-  <!-- verify after merge: read receipts only for the chat being viewed -->
-- **不繞過限制重試。** LINE 回報帳號或裝置受到限制時，daemon 會停掉所有自動發出的
-  LINE 流量，並在面板上告訴你。
-  <!-- verify after merge: restriction stop for ABUSE_BLOCK/BANNED/EXCESSIVE_ACCESS/NOT_AVAILABLE_USER/ACCOUNT_NOT_MATCHED -->
+  LINE。已讀只會送給你正在面板裡看的那個聊天室。在 `Center of screen` 和
+  `App window` 位置，按 Esc 回到清單後，聊天室還會留在右欄，但在你再次看它之前，
+  它不會送出已讀。點進它的回覆框就算在看，並會為這段期間進來的訊息送出一次已讀。
+- **不繞過限制重試。** LINE 對任何請求回 `ABUSE_BLOCK`、`BANNED` 或
+  `EXCESSIVE_ACCESS` 時，daemon 會停掉所有自動發出的 LINE 流量。面板會顯示
+  `LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。只有你點那一行或重新登入，
+  流量才會恢復。其他錯誤，例如 `MAINTENANCE_ERROR`，不會讓 daemon 停下來。細節見
+  [LINE 限制帳號的時候](docs/architecture.zh-TW.md#line-限制帳號的時候)。
 - **除了 LINE 的伺服器，不把你的資料送到其他伺服器。** daemon 只拿你的登入 token
   跟 LINE 的伺服器溝通，你的訊息和檔案也只送到 LINE。在你自己的電腦上，桌面通知會把
   聊天室名稱、傳送者和訊息預覽交給你的通知程式，通知程式可能會把它們留在通知紀錄裡。
 - **不把憑證放進 repo。** session token 與金鑰只存在
   `~/.local/state/enil/storage.json`。
+
+## daemon 被允許做的事
+
+Deno 用 `daemon/enil-flags.sh` 裡一份固定的權限清單執行 daemon，清單以外的事一律
+拒絕。`deno run` 和編譯好的執行檔用的是同一份清單。
+
+| 權限 | 允許的範圍 | 原因 |
+|---|---|---|
+| 網路 | 任何主機 | FLEX 訊息和連結預覽可以指向任何 HTTPS 主機上的圖片，事先不知道會是哪些主機。 |
+| 讀檔 | 任何路徑 | 你可以傳送任何你選的檔案，縮圖程式直接在原位置讀它。 |
+| 寫檔 | 只有 state 目錄 | daemon 寫的所有東西，包括暫存檔，都在 `~/.local/state/enil/` 裡。 |
+| 執行程式 | `dbus-monitor`、`wl-paste`、`ffmpegthumbnailer`、`ffmpeg`、`omarchy-shell` 和 `notify-send` | 偵測睡醒、剪貼簿圖片、影片縮圖和通知。 |
+| 環境變數 | `HOME`、`XDG_STATE_HOME`、`ENIL_*` 變數、`Q_DEBUG` 和 `NODE_DEBUG` | daemon 的設定，加上兩個相依套件啟動時會讀的名稱。 |
+| 系統資訊 | 無 | |
 
 ## 不帶任何你的資料的網路請求
 

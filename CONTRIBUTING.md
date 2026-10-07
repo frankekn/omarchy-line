@@ -55,9 +55,10 @@ the user.
 ## Pull requests
 
 - Keep one change per pull request.
-- CI runs the same checks on GitHub-hosted runners, including for pull
-  requests from forks.
-  <!-- verify after merge: CI on GitHub-hosted runners, fork PRs included -->
+- CI runs the checks above, except `omarchy plugin validate`, on a
+  GitHub-hosted runner for every pull request, including pull requests from
+  forks. It uses no secrets. The automated review runs only for pull requests
+  from branches in this repository.
 - Update the English and the Traditional Chinese docs together. Each `.md`
   file has a `.zh-TW.md` twin.
 - For UI changes, add a screenshot taken against the stub.

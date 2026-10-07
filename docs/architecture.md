@@ -56,25 +56,103 @@ looks dead, the panel runs `systemctl --user restart enil` itself, at most
 once every 45 seconds. A manual **start daemon** button in the panel does the
 same with a 3-second guard.
 
-`daemon/enil-run.sh` is the unit's `ExecStart`. It runs the compiled `enil`
-binary only when that binary was built from the current checkout. Otherwise
-it runs `daemon.ts` with Deno. It finds `deno` through `PATH` and refuses to
-start when the linejs submodule does not match the commit this checkout pins.
-<!-- verify after merge: enil-run.sh resolves deno via PATH and refuses to start on an out-of-date submodule -->
+`daemon/enil-run.sh` is the unit's `ExecStart`. It does these steps in
+order:
 
-Deno runs the daemon with an explicit permission list instead of `-A`.
-Network access stays broad because FLEX messages can name images on any
-public HTTPS host.
-<!-- verify after merge: explicit Deno permissions replace -A in enil-run.sh and deno.json tasks -->
+1. It checks the linejs submodule with `git submodule status`. If the
+   submodule was never checked out, or is checked out at a commit other than
+   the one this checkout pins, the script prints the two `git submodule`
+   commands that fix it and exits with code 78. Outside a git checkout, it
+   checks that `daemon/vendor/linejs` has files, and exits with code 78 if it
+   is empty.
+2. It runs the compiled `enil` binary if `enil.rev` matches the checkout's
+   `HEAD` and `daemon.ts` is not newer than the binary.
+3. Otherwise it looks for `deno` on `PATH`, then at `~/.deno/bin/deno`. A user
+   unit gets systemd's `PATH`, not your login shell's, so the second location
+   covers the upstream Deno installer. If it finds neither, it exits with code
+   127.
+4. It runs `daemon.ts` with `deno run` and the permissions from
+   `daemon/enil-flags.sh`.
+
+A failed start does not stop the unit. `Restart=always` starts it again every
+5 seconds, so the same message repeats in the journal until you fix the cause.
+The checks exist because the alternative is a restart loop on an import error
+that names a file inside `vendor/`.
+
+## Deno permissions
+
+`daemon/enil-flags.sh` defines the daemon's Deno permissions in one place.
+`enil-run.sh` uses it for `deno run`, and `deno task build` uses it for
+`deno compile`, so the source run and the binary cannot drift apart.
+`permissions_test.ts` boots `daemon.ts` with exactly this set. Only the
+development tasks `deno task test`, `deno task no-any`, and the benchmarks
+still use `-A`.
+
+- `--allow-net` has no host list. LINE's hosts would be enough for talk and
+  push, but FLEX messages and link previews fetch images from whatever HTTPS
+  URL the message carries (`imagecache.ts`). That set is not known in
+  advance.
+- `--allow-read` has no path list. **Send file** accepts any path you pick in
+  the panel, and the thumbnailer reads the file where it is.
+- `--allow-write` covers only the state directory: `state.json`, the socket,
+  the lock, the session store, decrypted media, and avatars. Every temporary
+  file the daemon makes is there too, so there is no `/tmp` entry.
+- `--allow-run` names the six programs the daemon starts: `dbus-monitor`
+  (sleep and wake, `watchdog.ts`), `wl-paste` (`clipboard.ts`),
+  `ffmpegthumbnailer` and `ffmpeg` (`video.ts`), and `omarchy-shell` and
+  `notify-send` (`notify.ts`).
+- `--allow-env` names the variables that `modules/env.ts` reads: `HOME`,
+  `XDG_STATE_HOME`, `ENIL_DEVICE`, `ENIL_INCREMENTAL`, `ENIL_CHAT_LIMIT`,
+  `ENIL_PUSH_STALE_MS`, and `ENIL_REQUEST_TIMEOUT_MS`. It also names
+  `Q_DEBUG` and `NODE_DEBUG`. Two npm dependencies read them through Node's
+  `process.env`, which throws for an unlisted name, and the daemon does not
+  boot without `Q_DEBUG`.
+- There is no `--allow-sys`. If a dependency ever needs a system API,
+  `permissions_test.ts` fails and names it.
+
+`enil-flags.sh` computes the state directory from `XDG_STATE_HOME` the same
+way `modules/env.ts` does. A compiled binary keeps the directory of the
+environment where `deno task build` ran. If you move `XDG_STATE_HOME` after
+the build, the binary cannot write to the new directory, so rebuild it.
+`enil-run.sh` falls back to `deno run` only when `enil.rev` is stale, not when
+the directory moved.
 
 ## When LINE restricts the account
 
-If LINE answers with `ABUSE_BLOCK`, `BANNED`, or `EXCESSIVE_ACCESS`, or with
-the account-level errors `NOT_AVAILABLE_USER` or `ACCOUNT_NOT_MATCHED`, the
-daemon stops all automatic LINE traffic: no reconnects, no polling, and no
-background refreshes. The panel tells you what LINE reported. The daemon does
-not retry around the restriction.
-<!-- verify after merge: restriction stop for ABUSE_BLOCK/BANNED/EXCESSIVE_ACCESS/NOT_AVAILABLE_USER/ACCOUNT_NOT_MATCHED, and the panel message -->
+`ABUSE_BLOCK`, `BANNED`, and `EXCESSIVE_ACCESS` mean that LINE refused the
+account, not one request. Nothing the daemon retries on its own can change
+that answer, and retrying is what turns a rate limit into a ban. When any LINE
+call fails with one of these codes, `haltForRestriction` in
+`daemon/modules/restriction.ts` stops every automatic path: the poll, the
+refresh retry, the watchdog reconnect, the reconnect after wake, and the push
+streams. It writes one journal line and publishes the link in `state.json` as
+`push: "down"` with `reason: "restricted"` and the code (see
+[protocol.md](protocol.md)).
+
+The panel shows the link as its notice line, which you can tap:
+
+- English: `LINE restricted this account (EXCESSIVE_ACCESS); connection paused — tap to retry`
+- Traditional Chinese: `LINE 限制了這個帳號（EXCESSIVE_ACCESS），已暫停連線，點此重試`
+
+If a login attempt fails with one of these codes, the login screen shows
+`LINE restricted this account — log in later`, and the daemon keeps the
+stored credentials and waits.
+
+Only you can lift the halt. Tapping the notice line runs a manual sync, and a
+login lifts it too. The daemon keeps the session while it waits: it does not
+revoke the token, and the chat list and your drafts stay. Ending the session
+would force a new QR scan over what may be a one-hour rate limit.
+
+One idle connection stays open. linejs runs its push loop for as long as the
+client holds a token, and the daemon cannot end that loop without clearing the
+token. The halt aborts the push streams, so no events reach the daemon, but
+the connection and its 30-second pings continue while the halt lasts.
+
+Other codes do not halt the daemon. `MAINTENANCE_ERROR` clears by itself, so
+the daemon keeps retrying with its normal backoff. `NOT_AVAILABLE_USER` can
+come from the target of one request, such as a send to a deleted account.
+`ACCOUNT_NOT_MATCHED` belongs to the login flow. Both fail only the request
+that got them.
 
 ## Sleep and disconnects
 

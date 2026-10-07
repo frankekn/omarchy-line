@@ -63,7 +63,8 @@
     "p50": 251190, "p95": 258871, "max": 260112,
     "chats": 80                        // 這份檔案序列化時的 chats 列數
   },
-  "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態
+  "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態；
+                                                     //   reason 和 code 只在因限制暫停時才有
   "refresh": { "at": 1735000000000, "failures": 0,   // 選用，聊天室清單的新鮮度
                "reason": "network" },                //   reason 只在 failures > 0 才有
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // 選用，見下
@@ -72,7 +73,11 @@
 
 `login.reason`、`login.attempt`、`login.settled`、`link`、`refresh` 和 `wanted` 都是選用的：舊的 daemon 不會寫，面板
 缺了它們也要照樣畫得出來（`link.push` 是 `"up"` 或 `"down"`，`since` 是這個狀態
-從哪一刻開始的毫秒時間戳）。`login.settled: true` 只在登入或登出的 teardown 已完成時
+從哪一刻開始的毫秒時間戳）。daemon 因為 LINE 拒絕帳號而停掉自動流量的期間，`link` 是
+`{ "push": "down", "since": <暫停的時間>, "reason": "restricted", "code": "BANNED" }`。
+`code` 是造成暫停的 LINE 代碼（`ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS`；錯誤裡
+沒有代碼名稱時是 `RESTRICTED`）。面板把它畫成限制提示，沒有 `code` 時顯示 `?`。見
+[architecture.zh-TW.md](architecture.zh-TW.md#line-限制帳號的時候)。`login.settled: true` 只在登入或登出的 teardown 已完成時
 出現；啟動／resume 中途的暫態不帶它，consumer 不可把暫態當成 session 已結束。
 `login.attempt` 是 `logout`（使用者按登出後的收尾）、`resume`（開機從 storage 恢復
 失敗）或 `manual`（按「登入 LINE」的 QR 嘗試失敗）。凡是 `settled: true` 的終局
@@ -85,7 +90,7 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 兩者可以一好一壞，所以不併進 `link`，不然又看不出來。`at` 是最後一次
 `getMessageBoxes` 成功、`chats` 寫進檔案的毫秒時間戳；`failures` 是從那之後連續
 失敗的次數，成功就歸 0；`reason` 只在 `failures > 0` 時存在，分類跟 `login.reason`
-同一套（`network`／`token_expired`／`unknown`）。失敗只在進入連錯的那一刻寫進檔案一次
+同一套（`network`／`token_expired`／`restricted`／`unknown`）。失敗只在進入連錯的那一刻寫進檔案一次
 （跟 `link` 的邊寫同一個形狀），之後的計數靠 30 秒心跳帶上去；面板在
 `failures >= 2` 時把「清單可能過期」印在清單標題下那一行（一次 30 秒的 timeout
 手機熱點下就會發生，單次不跳字），未讀徽章不受影響。登入前沒有這個欄位，登出

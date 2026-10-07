@@ -8,15 +8,21 @@ Chen, so this project starts at 2.x.
 
 ### Added
 
-- `daemon/install.sh` installs or repairs the daemon in one command. It syncs
-  and updates the linejs submodule, runs `deno check`, installs or refreshes
-  the systemd user unit, and enables and restarts it. Running it again is
+- `daemon/install.sh` installs or refreshes the daemon in one command. It
+  syncs and updates the linejs submodule, checks for Deno 2, copies the
+  systemd user unit only when it changed, and enables and restarts
+  `enil.service`. It never touches the state directory. Running it again is
   safe.
-  <!-- verify after merge: daemon/install.sh -->
-- When LINE reports `ABUSE_BLOCK`, `BANNED`, or `EXCESSIVE_ACCESS`, or the
-  account-level `NOT_AVAILABLE_USER` or `ACCOUNT_NOT_MATCHED`, the daemon stops
-  all automatic LINE traffic and the panel tells you.
-  <!-- verify after merge: restriction stop -->
+- When LINE refuses the account with `ABUSE_BLOCK`, `BANNED`, or
+  `EXCESSIVE_ACCESS`, the daemon stops all automatic LINE traffic and keeps
+  the session. The panel shows `LINE restricted this account (<code>);
+  connection paused — tap to retry`. Tapping that line or logging in resumes
+  traffic. `MAINTENANCE_ERROR` keeps retrying, and per-request errors such as
+  `NOT_AVAILABLE_USER` do not stop the daemon.
+  `state.json`'s `link` gains `reason` and `code` for this state.
+- `demo-en` and `demo-zh` fixtures for the stub daemon, and
+  `tools/demo-screenshots.sh`, which captures the README screenshots from
+  them.
 - A `markRead` socket command that sends only the read receipt, without
   fetching a history page.
 - A disclaimer, [SAFETY.md](SAFETY.md), [SECURITY.md](SECURITY.md),
@@ -27,17 +33,20 @@ Chen, so this project starts at 2.x.
 ### Changed
 
 - Read receipts go to LINE only for the chat you are viewing. In the
-  two-pane layouts, a chat in the right pane no longer gets marked read while
-  you look elsewhere. Focusing the reply box counts as viewing the chat.
-  <!-- verify after merge: read receipts only for the viewed chat -->
-- The panel's toolbar wraps onto a second line instead of clipping when the
-  panel is narrow.
-  <!-- verify after merge: toolbar wraps -->
-- Deno runs the daemon with an explicit permission list instead of `-A`.
-  <!-- verify after merge: explicit Deno permissions -->
-- `enil-run.sh` finds `deno` through `PATH` and refuses to start when the
-  linejs submodule is out of date.
-  <!-- verify after merge: enil-run.sh PATH lookup and submodule check -->
+  `Center of screen` and `App window` placements, the chat that stays in the
+  right pane after you press Esc no longer gets marked read. Clicking into
+  its reply box counts as viewing it again and marks the waiting messages
+  read.
+- The display controls next to the search box (placement, `A−` `A+`, and
+  scroll speed) move below the search box when the chat list is narrow, and
+  wrap onto a second line instead of clipping.
+- Deno runs the daemon with the explicit permission list in
+  `daemon/enil-flags.sh` instead of `-A`, for both `deno run` and the
+  compiled binary. Writes are limited to the state directory, and
+  subprocesses to six named programs.
+- `enil-run.sh` looks for `deno` on `PATH`, then at `~/.deno/bin/deno`. It
+  prints the fix and exits with code 78 when the linejs submodule is missing
+  or out of date, and exits with code 127 when it finds no `deno`.
 - The systemd unit restarts the daemon after any exit (`Restart=always`), and
   the panel starts the daemon again when it finds it stopped or hung.
 - Reading an open chat costs one request instead of two full chat-list
@@ -48,8 +57,10 @@ Chen, so this project starts at 2.x.
   list.
 - The panel does no idle work while it is closed.
 - The daemon stops asking again for thumbnails that LINE answered with 404.
-- CI runs the QML key tests, a shell syntax check of `enil-run.sh`, and a
-  `manifest.json` check, in addition to the daemon and panel tests.
+- CI runs on GitHub-hosted `ubuntu-24.04` runners for pushes to `main` and
+  for every pull request, including pull requests from forks, with no
+  secrets. It runs the QML key tests, a shell syntax check of `enil-run.sh`,
+  and a `manifest.json` check, in addition to the daemon and panel tests.
 
 ### Fixed
 

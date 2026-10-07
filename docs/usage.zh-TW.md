@@ -10,9 +10,10 @@
 點 bar 上的圖示打開面板。聊天列表會把有未讀的排在前面。直接打字就能搜尋聊天室名稱
 和訊息預覽。
 
-daemon 只對你正在看的聊天室送出已讀。在雙欄版面裡，右欄的聊天室只有在你真的看著它
-的時候才算在看。游標停在回覆框裡也算在看這個聊天室。
-<!-- verify after merge: read receipts only for the chat being viewed; two-pane fix; composer focus counts as viewing -->
+daemon 只對你正在看的聊天室送出已讀。`Center of screen` 和 `App window` 位置會把
+清單和聊天室並排顯示。按 Esc 回到清單後，聊天室還留在右欄，但裡面的新訊息不會被標成
+已讀。要再看這個聊天室，點清單裡的那一列，或點進它的回覆框。點回覆框會為這段期間
+進來的訊息送出一次已讀。
 
 捲到最上面會載入更舊的訊息。打開聊天室時，第一則未讀訊息上方會有一條**未讀訊息**
 分隔線。

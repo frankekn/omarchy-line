@@ -65,7 +65,8 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
     "p50": 251190, "p95": 258871, "max": 260112,
     "chats": 80                        // chats count when this file was serialized
   },
-  "link": { "push": "up", "since": 1735000000000 },  // optional, push link state
+  "link": { "push": "up", "since": 1735000000000 },  // optional, push link state;
+                                                     //   reason and code only during a restriction halt
   "refresh": { "at": 1735000000000, "failures": 0,   // optional, chat-list freshness
                "reason": "network" },                //   reason only exists when failures > 0
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // optional, see below
@@ -75,7 +76,13 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 `login.reason`, `login.attempt`, `login.settled`, `link`, `refresh` and
 `wanted` are all optional: older daemons don't write them and the panel must
 still render without them (`link.push` is `"up"` or `"down"`; `since` is the
-ms timestamp this state began). `login.settled: true` only appears once a
+ms timestamp this state began). While the daemon has stopped automatic
+traffic because LINE refused the account, `link` is
+`{ "push": "down", "since": <halt time>, "reason": "restricted", "code": "BANNED" }`.
+`code` is the LINE code that caused the halt (`ABUSE_BLOCK`, `BANNED`, or
+`EXCESSIVE_ACCESS`, or `RESTRICTED` when the error carried no code name).
+The panel renders this as its restriction notice and shows `?` when `code` is
+missing. See [architecture.md](architecture.md#when-line-restricts-the-account). `login.settled: true` only appears once a
 login or logout teardown finished. Transient states mid-startup/resume don't
 carry it and consumers must not read them as a settled session.
 `login.attempt` is `logout` (teardown after the user pressed logout),
@@ -92,7 +99,7 @@ from `link` (the push connection). One can be fine while the other fails, so
 it isn't merged into `link`. `at` is the ms timestamp of the last successful
 `getMessageBoxes` that wrote `chats`. `failures` counts consecutive failures
 since, reset by a success. `reason` exists only when `failures > 0` and shares
-`login.reason`'s classes (`network`/`token_expired`/`unknown`). A failure only
+`login.reason`'s classes (`network`/`token_expired`/`restricted`/`unknown`). A failure only
 lands in the file at the moment the streak begins (same edge-write shape as
 `link`). Later counting rides the 30 s heartbeat. At `failures >= 2` the panel
 prints "清單可能過期" under the list title line (a single 30 s timeout happens

@@ -10,12 +10,11 @@
 以 [Evex Developers](https://github.com/evex-dev) 的
 [linejs](https://github.com/evex-dev/linejs) 為基礎打造。
 
-<!-- verify after merge: docs/images/panel-en.png, docs/images/panel-zh.png and docs/images/bar-icon.png exist -->
 | ![英文介面：聊天列表與開著的對話](docs/images/panel-en.png) | ![繁體中文介面](docs/images/panel-zh.png) |
 | :-: | :-: |
 | English | 繁體中文 |
 
-![bar 上顯示未讀數的圖示](docs/images/bar-icon.png)
+![bar 上顯示未讀數的圖示](docs/images/bar-badge.png)
 
 ## 免責聲明
 
@@ -50,9 +49,8 @@
   圖片。可以收回自己的訊息。
 - 面板關著時會發桌面通知，點通知會打開面板並進到那個聊天室。
 - 只在這台電腦上隱藏聊天室。
-- 三種位置：bar 下方、螢幕中央，或一般的應用程式視窗。面板太窄時，工具列會換到第二
-  行。
-  <!-- verify after merge: toolbar wraps instead of clipping -->
+- 三種位置：bar 下方、螢幕中央，或一般的應用程式視窗。
+- 聊天列表太窄時，搜尋框旁邊那排顯示設定會移到搜尋框下方，並折成兩行，不會被切掉。
 - 繁體中文或英文介面。
 - 歷史紀錄存在磁碟上，重開之後打開聊天室不必等 LINE。
 
@@ -88,15 +86,33 @@
    ~/.config/omarchy/plugins/io.github.frankekn.line/daemon/install.sh
    ```
 
-`install.sh` 會做下面這些事，隨時都可以再跑一次：
+`install.sh` 會做下面這些事。每一步都先看目前的狀態再決定要不要改，所以隨時都可以
+再跑一次：
 
-- 把 linejs submodule 抓到這份 checkout 釘住的 commit。`omarchy plugin add` 只做
-  一般的 `git clone`，不會抓 submodule。
-- 執行 `deno check`，順便下載 daemon 的相依套件。
-- 安裝或更新 systemd user unit `enil.service`。
-- 啟用這個 unit 並重新啟動 daemon。
+- 執行 `git submodule sync` 和 `git submodule update --init`，把 linejs submodule
+  放到這份 checkout 釘住的 commit。`omarchy plugin add` 只做一般的 `git clone`，
+  不會抓 submodule。
+- 先在 `PATH` 上找 Deno，再找 `~/.deno/bin/deno`。找不到 Deno，或找到的版本比 2
+  舊，就報錯停下。
+- 只有在已安裝的 unit 跟 `daemon/enil.service` 不一樣時，才把它複製到
+  `~/.config/systemd/user/` 並執行 `systemctl --user daemon-reload`。
+- 啟用 `enil.service` 並重新啟動它。
 
-<!-- verify after merge: daemon/install.sh exists and does submodule sync/update, deno check, unit install/refresh, enable/restart -->
+`install.sh` 從不碰 state 目錄 `~/.local/state/enil/`。unit 永遠執行
+`~/.config/omarchy/plugins/io.github.frankekn.line` 裡的外掛。從別的 checkout 執行
+`install.sh` 的話，它會印一行提醒，而服務跑的仍然是已安裝的外掛，不是那份 checkout。
+
+不用腳本安裝 daemon 的話，手動做同樣的步驟：
+
+```bash
+cd ~/.config/omarchy/plugins/io.github.frankekn.line
+git submodule sync --recursive
+git submodule update --init --recursive
+mkdir -p ~/.config/systemd/user
+cp daemon/enil.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now enil
+```
 
 看 daemon 的 log：
 
@@ -148,8 +164,18 @@ omarchy restart shell
 
 **LINE 會因為這個停用我的帳號嗎？** 有可能。LINE 沒有提供這種存取方式，允不允許由
 LINE 決定。daemon 以次要裝置登入，除非你在面板上操作，它不會送出任何訊息、表情回應
-或已讀。LINE 回報帳號受到限制時，daemon 會停掉所有自動發出的 LINE 流量並告訴你。
-<!-- verify after merge: restriction stop and panel message -->
+或已讀。LINE 回 `ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS` 時，daemon 會停掉所有自動發出的
+LINE 流量，面板會顯示 `LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。在你點
+那一行或重新登入之前，什麼都不會重試。
+[docs/architecture.zh-TW.md](docs/architecture.zh-TW.md#line-限制帳號的時候) 說明
+哪些會停、哪些會留著。
+
+**daemon 起不來，要查什麼？** 執行 `journalctl --user -u enil -n 20`。log 寫著
+`daemon/vendor/linejs is missing or out of date` 的話，linejs submodule 跟外掛對不
+上，再跑一次 `install.sh`，或執行 log 印出來的那兩行 `git submodule` 指令。log 寫著
+`deno not found` 的話，用 `sudo pacman -S deno` 安裝 Deno 2。
+`systemctl --user status enil` 在第一種情況會顯示結束碼 78，第二種是 127。systemd
+每 5 秒會再試一次，所以原因修好之後 daemon 會自己起來。
 
 **會把我的手機登出嗎？** 不會。daemon 以次要裝置用 QR 碼登入，從不使用帳號轉移，而
 帳號轉移才是會更換主要裝置的流程。

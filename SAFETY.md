@@ -17,12 +17,19 @@ of them must update this page in the same commit.
   that flow can log your phone out. Your phone stays the main device.
 - **It does not send on its own.** A message, a file, a sticker, a reaction,
   or an unsend reaches LINE only when you do it in the panel. Read receipts go
-  to LINE only for the chat you are viewing in the panel.
-  <!-- verify after merge: read receipts only for the chat being viewed -->
-- **It does not retry around a restriction.** When LINE reports that the
-  account or the device is restricted, the daemon stops all automatic LINE
-  traffic and tells you in the panel.
-  <!-- verify after merge: restriction stop for ABUSE_BLOCK/BANNED/EXCESSIVE_ACCESS/NOT_AVAILABLE_USER/ACCOUNT_NOT_MATCHED -->
+  to LINE only for the chat you are viewing in the panel. In the
+  `Center of screen` and `App window` placements, a chat stays in the right
+  pane after you press Esc to go back to the list, but it gets no read
+  receipts until you view it again. Clicking into its reply box counts as viewing it, and sends one read
+  receipt for the messages that arrived in the meantime.
+- **It does not retry around a restriction.** When LINE answers any request
+  with `ABUSE_BLOCK`, `BANNED`, or `EXCESSIVE_ACCESS`, the daemon stops all
+  automatic LINE traffic. The panel shows `LINE restricted this account
+  (<code>); connection paused — tap to retry`. Traffic starts again only when
+  you tap that line or log in. Other errors, such as `MAINTENANCE_ERROR`, do
+  not stop the daemon. [When LINE restricts the
+  account](docs/architecture.md#when-line-restricts-the-account) has the
+  details.
 - **It does not send your data to any server except LINE's.** The daemon uses
   your login token only with LINE's servers, and sends your messages and
   files only to LINE. On your own computer, desktop notifications pass the
@@ -30,6 +37,21 @@ of them must update this page in the same commit.
   which may keep them in its history.
 - **It does not put credentials in the repository.** The session token and
   keys live only in `~/.local/state/enil/storage.json`.
+
+## What the daemon is allowed to do
+
+Deno runs the daemon with a fixed permission list from
+`daemon/enil-flags.sh`, and refuses anything outside it. The same list
+applies to `deno run` and to a compiled binary.
+
+| Permission | Allowed | Why |
+|---|---|---|
+| Network | Any host | FLEX messages and link previews name images on any HTTPS host, so the set of hosts is not known in advance. |
+| Read files | Any path | You can send any file you pick, and the thumbnailer reads it where it is. |
+| Write files | Only the state directory | Everything the daemon writes, temporary files included, lives in `~/.local/state/enil/`. |
+| Run programs | `dbus-monitor`, `wl-paste`, `ffmpegthumbnailer`, `ffmpeg`, `omarchy-shell`, and `notify-send` | Wake detection, clipboard images, video thumbnails, and notifications. |
+| Environment variables | `HOME`, `XDG_STATE_HOME`, the `ENIL_*` variables, `Q_DEBUG`, and `NODE_DEBUG` | The daemon's settings, plus two names that dependencies read at startup. |
+| System information | None | |
 
 ## Network requests that carry none of your data
 

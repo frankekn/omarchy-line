@@ -11,10 +11,13 @@ hidden chats, and the settings. Install and login are in the
 Click the bar icon to open the panel. The chat list shows
 unread chats first. Type to search chat names and message previews.
 
-The daemon sends read receipts only for the chat you are viewing. In the
-two-pane layouts, the chat in the right pane counts as viewed only while you
-look at it. Focusing the reply box also counts as viewing the chat.
-<!-- verify after merge: read receipts only for the chat being viewed; two-pane fix; composer focus counts as viewing -->
+The daemon sends read receipts only for the chat you are viewing. The
+`Center of screen` and `App window` placements show the list and the chat
+side by side. When you press Esc to go back to the list, the chat stays in
+the right pane, but new messages in it are not marked read. To view the chat
+again, click its row in the list or click into its reply box. Clicking the
+reply box sends one read receipt for the messages that arrived in the
+meantime.
 
 Scrolling to the top loads older messages. An **Unread** divider marks the
 first unread message when you open a chat.
