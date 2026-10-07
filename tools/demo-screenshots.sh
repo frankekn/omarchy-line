@@ -23,7 +23,9 @@ set -euo pipefail
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 OUT=${DEMO_OUT:-$REPO/docs/images}
 WIDTH=${DEMO_WIDTH:-1040}
-HEIGHT=${DEMO_HEIGHT:-860}
+# The zh family chat runs a little longer; at 860 its first date divider is cut
+# at the top edge.
+declare -A LOCALE_HEIGHT=([en]=860 [zh]=884)
 MAX_BYTES=$((400 * 1024))
 # Seconds for avatars, photos and the FLEX cards to load after the chat opens.
 SETTLE=${DEMO_SETTLE:-4}
@@ -253,6 +255,7 @@ shoot() {
 mkdir -p "$OUT"
 badge=1
 for loc in "${locales[@]}"; do
+  HEIGHT=${DEMO_HEIGHT:-${LOCALE_HEIGHT[$loc]}}
   shoot "$loc" "$badge"
   badge=0
 done

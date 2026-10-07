@@ -157,7 +157,7 @@ dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`
    `OMARCHY_PATH`，裡面沒有全域快捷鍵檔，所以不會搶你 shell 的 IPC socket 或快捷鍵。
    一個什麼都不做的 `systemctl` 讓它不會去重啟你真正的 daemon。
 3. 只在第一種語言時，拍下帶未讀數的 bar 圖示。
-4. 把面板開成 1040×860 的浮動視窗，打開示範聊天室，等 4 秒讓圖片載入，再拍下視窗。
+4. 把面板開成浮動視窗（en 是 1040×860，zh 是 1040×884），打開示範聊天室，等 4 秒讓圖片載入，再拍下視窗。
 5. 停掉 stub 和第二個 shell，刪掉暫時目錄。有步驟失敗的話，會留下目錄方便看 log。
 
 第二個 shell 的 bar 會在它執行的那幾秒出現在你的 bar 下方。你的設定、state 和 daemon

@@ -189,7 +189,7 @@ these steps:
    real daemon.
 3. For the first language only, it captures the bar icon with its unread
    count.
-4. It opens the panel as a floating 1040×860 window, opens the demo chat,
+4. It opens the panel as a floating window (1040×860 for en, 1040×884 for zh), opens the demo chat,
    waits 4 seconds for the images to load, and captures the window.
 5. It stops the stub and the second shell, and deletes the temporary
    directory. If a step failed, it keeps the directory for its logs.
