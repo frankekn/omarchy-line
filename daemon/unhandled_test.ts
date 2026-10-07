@@ -95,6 +95,8 @@ const realError = console.error;
 console.error = (...a: unknown[]) => { logs.push(a.join(" ")); };
 addEventListener("unload", () => { console.error = realError; });
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
+// The real errorLine (text.ts) answers "<class>: <redacted message>"; the stub keeps the shape.
+function errorLine(e: unknown) { const err = (e ?? {}) as { name?: string; message?: string }; return (err.name ?? "Refused") + ": " + (err.message ?? String(e)); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
 export { onUnhandledRejection };
 ` + (await sliceBlock("loginerror")) + "\n" + (await sliceBlock("watchdog"));

@@ -97,6 +97,8 @@ export function makeClient(): FakeClient {
   };
 }
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
+// The real errorLine (text.ts) answers "<class>: <redacted message>"; the stub keeps the shape.
+function errorLine(e: unknown) { const err = (e ?? {}) as { name?: string; message?: string }; return (err.name ?? "Refused") + ": " + (err.message ?? String(e)); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
 function classifyLoginError(e: unknown): string {
   const text = String((e as { message?: unknown } | null | undefined)?.message ?? "");
@@ -227,7 +229,7 @@ Deno.test("the journal line is the class and the message, never the frame", asyn
       frame: "u0123456789abcdef0123456789abcdef 午餐吃什麼",
     }, true);
   });
-  assertEquals(lines, ["[push] LegyPusherError: TypeError socket hang up"]);
+  assertEquals(lines, ["[push] LegyPusherError: TypeError: socket hang up"]);
 });
 
 Deno.test("an error without one is still one line, not a crash", async () => {
@@ -238,8 +240,8 @@ Deno.test("an error without one is still one line, not a crash", async () => {
     m.onPushLog("LegyPusherError", {}, true);
   });
   assertEquals(lines, [
-    "[push] LegyPusherError: ? ",
-    "[push] LegyPusherError: ? ",
+    "[push] LegyPusherError: ?",
+    "[push] LegyPusherError: ?",
   ]);
 });
 

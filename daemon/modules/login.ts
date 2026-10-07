@@ -258,7 +258,7 @@ async function onLoggedIn(c: Client): Promise<void> {
     capMap(nameCache, NAME_CACHE_MAX);
     noteAvatar(String(profile.mid), profile);
   } catch (e) {
-    console.error("[profile]", (e as Error).message);
+    console.error("[profile]", errorLine(e));
   }
   if (!sessionIsCurrent(c, generation)) return;
   // Store the token we just got BEFORE anything else can rotate it. The
@@ -268,7 +268,7 @@ async function onLoggedIn(c: Client): Promise<void> {
   try {
     if (c.authToken) await c.base.storage.set(".auth", c.authToken);
   } catch (e) {
-    console.error("[auth] could not persist token:", (e as Error).message);
+    console.error("[auth] could not persist token:", errorLine(e));
   }
   if (!sessionIsCurrent(c, generation)) return;
   // A fresh session starts healthy; the watchdog below owns every edge after
@@ -591,7 +591,7 @@ async function logoutClaimed(
       try {
         await c.base.auth.logoutZ();
       } catch (e) {
-        console.error("[logout] server logout failed:", (e as Error).message);
+        console.error("[logout] server logout failed:", errorLine(e));
       }
     }
     // Aborting listen() only closes the consumer streams (and those renew
@@ -604,7 +604,7 @@ async function logoutClaimed(
       c.base.authToken = undefined;
       c.base.push?.conns?.[0]?.close();
     } catch (e) {
-      console.error("[logout] push teardown:", (e as Error).message);
+      console.error("[logout] push teardown:", errorLine(e));
     }
   }
 

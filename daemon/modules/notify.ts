@@ -215,7 +215,7 @@ async function notify(
       notifySendMissing = true;
       console.error("[notify] notify-send not found; notifications disabled");
     } else {
-      console.error("[notify]", (e as Error).message);
+      console.error("[notify]", errorLine(e));
     }
   }
 }

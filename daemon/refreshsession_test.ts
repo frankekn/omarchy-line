@@ -117,6 +117,7 @@ let replacementResult = true;
 const cursors = new Map();
 function capCursors() {}
 const console = { log() {}, error() {} };
+function errorLine(e: unknown) { return String((e as { message?: unknown } | null)?.message ?? e); }
 let selfMid = "";
 function isMe(from: unknown) {
   return String(from ?? "") === selfMid;

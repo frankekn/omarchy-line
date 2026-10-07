@@ -15,7 +15,7 @@ import { link, login, setLink, writeState } from "./state.ts";
 import { refreshChats, setForceFullRefresh } from "./refresh.ts";
 import { abortListen, client, setListenAbort } from "./session.ts";
 import { haltForRestriction, restriction } from "./restriction.ts";
-import { classifyLoginError } from "./text.ts";
+import { classifyLoginError, errorLine } from "./text.ts";
 import {
   PUSH_REINIT_GRACE_MS,
   PUSH_STALE_MS,
@@ -124,7 +124,7 @@ async function reconnectPush(
     try {
       before?.close();
     } catch (e) {
-      console.error("[push] close failed:", (e as Error).message);
+      console.error("[push] close failed:", errorLine(e));
     }
     // Give linejs' own pusher loop the chance to reconnect first: two loops
     // would fight over conns[0] and deliver every event twice.
@@ -142,7 +142,7 @@ async function reconnectPush(
       try {
         c.base.poll.islisten = false;
       } catch (e) {
-        console.error("[push] islisten reset:", (e as Error).message);
+        console.error("[push] islisten reset:", errorLine(e));
       }
     }
     const abort = setListenAbort(new AbortController());
@@ -153,7 +153,7 @@ async function reconnectPush(
     setForceFullRefresh(true);
     void refreshChats();
   } catch (e) {
-    console.error("[push] reconnect failed:", (e as Error).message);
+    console.error("[push] reconnect failed:", errorLine(e));
   } finally {
     reconnecting = false;
   }
@@ -225,10 +225,7 @@ function onPushLog(
   if (!type.startsWith("LegyPusherError")) return;
   // Type and message only -- log data carries raw frames (order 8).
   const err = data?.error as Error | undefined;
-  console.error(
-    `[push] ${type}: ${err?.constructor?.name ?? "?"}`,
-    err?.message ?? "",
-  );
+  console.error(`[push] ${type}:`, err ? errorLine(err) : "?");
   // A refused account is the one push failure a reconnect must not answer.
   if (classifyLoginError(err) === "restricted") {
     haltForRestriction(err);
@@ -260,13 +257,11 @@ function onPushLog(
  * -- so it is logged and then left to Deno's fatal exit and the systemd
  * restart.
  *
- * Only the error's name and message are logged -- the linejs text is a
- * transport diagnostic, never message content.
+ * Only the error's class and redacted message are logged (errorLine) -- the
+ * linejs text is a transport diagnostic, never message content.
  */
 function onUnhandledRejection(reason: unknown): boolean {
-  const err = (reason ?? {}) as { name?: unknown; message?: unknown };
-  const name = String(err.name ?? typeof reason);
-  console.error(`[unhandled] ${name}: ${String(err.message ?? reason)}`);
+  console.error(`[unhandled] ${errorLine(reason)}`);
   const kind = classifyLoginError(reason);
   // linejs' unawaited push fetch is where a refusal of the account surfaces
   // when the push side is the one LINE turned away; it is handled, but by
@@ -322,7 +317,7 @@ function startSleepMonitor(): void {
   } catch (e) {
     console.error(
       "[push] no dbus-monitor, watchdog only:",
-      (e as Error).message,
+      errorLine(e),
     );
     return;
   }
@@ -346,7 +341,7 @@ function startSleepMonitor(): void {
     sleepMonitor = null;
     respawnSleepMonitor();
   })().catch((e) => {
-    console.error("[push] dbus-monitor:", (e as Error).message);
+    console.error("[push] dbus-monitor:", errorLine(e));
     sleepMonitor = null;
     respawnSleepMonitor();
   });

@@ -232,8 +232,8 @@ async function markChatRead(
     chatMid: chat,
     lastMessageId: upTo,
     seq,
-  }).then(() => true, (e: Error) => {
-    console.error("[read]", e.message);
+  }).then(() => true, (e: unknown) => {
+    console.error("[read]", errorLine(e));
     return false;
   });
   if (!sessionIsCurrent(owner, generation)) return null;
@@ -981,7 +981,7 @@ async function revalidateHistory(
     if (fresh === null || sameHistoryPage(served, fresh)) return;
     pushEvent({ kind: "history", chat: chatMid, messages: fresh });
   } catch (e) {
-    console.error(`[history] revalidate ${chatMid}:`, errorLine(e));
+    console.error("[history] revalidate:", errorLine(e));
   } finally {
     historyRevalidations.delete(chatMid);
   }

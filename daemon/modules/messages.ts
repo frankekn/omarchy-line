@@ -648,7 +648,7 @@ async function e2eeFilePayload(
     return fileName ? { fileName } : null;
   } catch (e) {
     // A file we cannot name still renders as [檔案]; never fatal.
-    console.error("[file] name:", (e as Error).message);
+    console.error("[file] name:", errorLine(e));
     return null;
   }
 }

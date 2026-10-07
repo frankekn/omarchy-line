@@ -100,6 +100,7 @@ function scheduleRefresh() { calls.scheduled++; }
 // Not called by the block: the immediate round it used to fire.
 export function refreshChats() { calls.immediate++; }
 const console = { error: (...args: unknown[]) => calls.errors.push(args.join(" ")) };
+function errorLine(e: unknown) { return String((e as { message?: unknown } | null)?.message ?? e); }
 export function forceFull() { return forceFullRefresh; }
 export function ownCursor(chat: string) {
   return readRanges.get(chat)?.get("${ME}");

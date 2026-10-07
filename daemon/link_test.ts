@@ -97,6 +97,7 @@ export function makeClient(): FakeClient {
   };
 }
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
+function errorLine(e: unknown) { return String((e as { message?: unknown } | null)?.message ?? e); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
 export { reconnectPush, watchdogTick, markPushAlive, pushIsStale, setLinkState };
 `;

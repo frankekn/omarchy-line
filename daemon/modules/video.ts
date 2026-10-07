@@ -8,6 +8,7 @@
  * Dependency direction: imports env (MEDIA_DIR) only. media-send.ts calls
  * videoLength/videoThumbnail; nothing reaches here from below.
  */
+import { errorLine } from "./text.ts";
 import { MEDIA_DIR } from "./env.ts";
 
 // The block between the enil:videoduration markers is sliced out verbatim by
@@ -427,7 +428,7 @@ async function videoLength(bytes: Uint8Array): Promise<number | null> {
   try {
     return await videoDurationMs(bytesReader(bytes), bytes.length);
   } catch (e) {
-    console.error(`[cmd] sendFile duration skipped: ${(e as Error).message}`);
+    console.error(`[cmd] sendFile duration skipped: ${errorLine(e)}`);
     return null;
   }
 }

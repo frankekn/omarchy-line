@@ -31,7 +31,7 @@ import {
   writeState,
 } from "./state.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
-import { classifyLoginError } from "./text.ts";
+import { classifyLoginError, errorLine } from "./text.ts";
 import { haltForRestriction, restriction } from "./restriction.ts";
 import type { Client } from "@evex/linejs";
 import type { PluginChat } from "./types.ts";
@@ -411,7 +411,7 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     return true;
   } catch (e) {
     if (!sessionIsCurrent(c, generation)) return false;
-    console.error("[chats] refresh failed:", (e as Error).message);
+    console.error("[chats] refresh failed:", errorLine(e));
     const kind = classifyLoginError(e);
     noteRefreshFailed(kind);
     if (kind === "restricted") haltForRestriction(e);
@@ -581,7 +581,7 @@ async function runIncrementalRefresh(
           // debt rides on the re-added entry -- it was not paid.
           console.error(
             "[chats] incremental fetch failed:",
-            (e as Error).message,
+            errorLine(e),
           );
           forceFullRefresh = true;
           perMidFailed = true;
@@ -772,7 +772,7 @@ async function runIncrementalRefresh(
   } catch (e) {
     if (!sessionIsCurrent(c, generation)) return false;
     const kind = classifyLoginError(e);
-    console.error("[chats] incremental refresh failed:", (e as Error).message);
+    console.error("[chats] incremental refresh failed:", errorLine(e));
     noteRefreshFailed(kind);
     if (kind === "restricted") haltForRestriction(e);
     // The retry that follows must answer the whole list, not re-read the

@@ -13,7 +13,12 @@
  */
 import { MEDIA_DIR } from "./env.ts";
 import { readIndexOf } from "./protocol.ts";
-import { isGoneError, type MediaState, mediaStateFrom } from "./text.ts";
+import {
+  errorLine,
+  isGoneError,
+  type MediaState,
+  mediaStateFrom,
+} from "./text.ts";
 import { me } from "./state.ts";
 import { sessionIsCurrent } from "./session.ts";
 import type { Client, TalkMessage } from "@evex/linejs";
@@ -291,7 +296,7 @@ export async function sweepMedia(
     // No cache directory yet is the normal state before the first download,
     // not an error worth logging on every sweep.
     if (!(e instanceof Deno.errors.NotFound)) {
-      console.error(`[media] ${label}:`, (e as Error).message);
+      console.error(`[media] ${label}:`, errorLine(e));
     }
     return { removed: 0, freed: 0, kept: 0, bytes: 0 };
   }

@@ -9,6 +9,7 @@
  * below names.ts imports it except upward (messages, push, notify, refresh,
  * socket), so the graph stays one-way.
  */
+import { errorLine } from "./text.ts";
 import {
   capMap,
   CONTACT_BATCH,
@@ -54,7 +55,7 @@ export async function resolveUserName(
       rawNames.targetProfileDetail?.profileName;
     if (name) return String(name);
   } catch (e) {
-    console.error(`[name] v3 ${mid}:`, (e as Error).message);
+    console.error("[name] v3:", errorLine(e));
   }
   if (!sessionIsCurrent(owner, generation)) return mid;
   try {
@@ -73,7 +74,7 @@ export async function resolveUserName(
       names?.contact?.displayName || names?.displayName;
     if (name) return String(name);
   } catch (e) {
-    console.error(`[name] v2 ${mid}:`, (e as Error).message);
+    console.error("[name] v2:", errorLine(e));
   }
   return mid;
 }
@@ -106,7 +107,7 @@ export async function resolveName(
       }
     } catch (e) {
       // A name we cannot resolve is cosmetic; never fail the whole refresh.
-      console.error(`[name] ${mid}:`, (e as Error).message);
+      console.error("[name]", errorLine(e));
     }
     if (!sessionIsCurrent(owner, generation)) return mid;
     // A rename/profile operation may have invalidated this mid while its
@@ -160,7 +161,7 @@ export async function warmNames(mids: string[]): Promise<void> {
       if (!sessionIsCurrent(owner, generation)) return;
       // Cosmetic: resolveName still answers for every mid this missed, just
       // one round trip at a time.
-      console.error("[name] bulk:", (e as Error).message);
+      console.error("[name] bulk:", errorLine(e));
     }
   }
 }
