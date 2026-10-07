@@ -9,10 +9,15 @@
  * session or state dir is touched and no LINE login is attempted (an empty
  * store resumes as "none", which publishes "idle").
  *
+ * The daemon runs under the permission set enil-run.sh uses, not -A, so a
+ * dependency that starts needing a permission the set lacks fails here with
+ * the NotCapable text instead of in the user's journal.
+ *
  *   deno test -A startup_smoke_test.ts
  */
 import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
+import { daemonPermissionFlags } from "./permissions_test.ts";
 
 function lineReader(stream: ReadableStream<Uint8Array>) {
   const reader = stream.pipeThrough(new TextDecoderStream()).pipeThrough(
@@ -40,10 +45,14 @@ function lineReader(stream: ReadableStream<Uint8Array>) {
 Deno.test("daemon boots to idle against an empty state dir and stops clean", async () => {
   const stateHome = await Deno.makeTempDir({ prefix: "enil-smoke-" });
   const cmd = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", new URL("./daemon.ts", import.meta.url).pathname],
+    args: [
+      "run",
+      ...await daemonPermissionFlags(stateHome),
+      new URL("./daemon.ts", import.meta.url).pathname,
+    ],
     stdin: "null",
     stdout: "piped",
-    stderr: "null",
+    stderr: "piped",
     env: {
       XDG_STATE_HOME: stateHome,
       // Pin every ENIL_* knob to its default so an operator's shell overrides
@@ -59,6 +68,8 @@ Deno.test("daemon boots to idle against an empty state dir and stops clean", asy
     },
   });
   const child = cmd.spawn();
+  // Drained in the background so a chatty boot cannot block on a full pipe.
+  const stderr = new Response(child.stderr).text();
   const out = lineReader(child.stdout);
   const lines: string[] = [];
 
@@ -88,6 +99,11 @@ Deno.test("daemon boots to idle against an empty state dir and stops clean", asy
   }
   child.kill("SIGTERM");
   const status = await child.status;
+  const errText = await stderr;
+  assert(
+    !/NotCapable|Requires .* access/.test(errText),
+    `the permission set is short of something:\n${errText}`,
+  );
   assertEquals(status.code, 0, "SIGTERM exits cleanly");
   assertEquals(
     await Deno.stat(`${stateHome}/enil/sock`).then(() => true).catch(() =>

@@ -6,10 +6,14 @@
 set -eu
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 bin="$dir/enil"
+# The permission set, shared with `deno task build` (which bakes it into the
+# binary); the flag-by-flag justification lives in enil-flags.sh.
+. "$dir/enil-flags.sh"
 head=$(git -C "$dir/.." rev-parse HEAD 2>/dev/null || echo "")
 if [ -n "$head" ] && [ -x "$bin" ] && [ -f "$bin.rev" ] \
     && [ "$(cat "$bin.rev")" = "$head" ] \
     && [ ! "$dir/daemon.ts" -nt "$bin" ]; then
   exec "$bin"
 fi
-exec /usr/bin/deno run -A "$dir/daemon.ts"
+# shellcheck disable=SC2086  # the flags are a word list on purpose
+exec /usr/bin/deno run $ENIL_DENO_FLAGS "$dir/daemon.ts"
