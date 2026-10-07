@@ -27,6 +27,7 @@ PALETTE = ("#D9735B", "#D69A3C", "#5E9E6E", "#3E9294", "#4A84C1",
 
 
 def load_stub():
+    sys.dont_write_bytecode = True
     spec = importlib.util.spec_from_file_location(
         "stub", os.path.join(ROOT, "daemon", "stub.py"))
     stub = importlib.util.module_from_spec(spec)
@@ -35,7 +36,7 @@ def load_stub():
 
 
 def magick(*args):
-    subprocess.run(["magick", *args], check=True)
+    subprocess.run(["magick", "-seed", "1", *args], check=True)
 
 
 def png(path, size=None):

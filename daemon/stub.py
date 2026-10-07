@@ -929,7 +929,6 @@ DEMO_TEXT = {
         "trip_zip": "kyoto-trip-photos.zip",
         "mom_dinner": "Are you coming home for dinner on Sunday?",
         "me_dinner": "Yes! I'll be there around 6\nShould I bring anything?",
-        "dad_pork": "Practicing the braised pork for Sunday 😄",
         "nina_at": ["🎉 ", "@All", " Grandma turns 80 on Sunday! ", "@Dad",
                     " did you pick up the cake?"],
         "mom_rain": "Rain all weekend, don't forget an umbrella ☔",
@@ -943,6 +942,7 @@ DEMO_TEXT = {
         "me_latency": "Nice, p95 latency is back under 120 ms 🎉",
         "loadtest": "load-test-results.csv",
         "daniel_at": ["@Jordan Lee", " can you look at the numbers before standup?"],
+        "mei_beta": "Rolling it out to the beta channel this afternoon 🚀",
         "emma_coast": "Made it to the coast! The view is unreal",
         "me_wow": "Wow, that's beautiful 😍 Enjoy the trip!",
         "emma_coffee": "Back on Monday. Coffee next week?",
@@ -955,7 +955,6 @@ DEMO_TEXT = {
         "trip_zip": "京都旅遊照片.zip",
         "mom_dinner": "禮拜天要回來吃飯嗎？",
         "me_dinner": "會啊！大概六點到\n要帶什麼回去嗎？",
-        "dad_pork": "先練習一下禮拜天的滷肉 😄",
         "nina_at": ["🎉 ", "@All", " 禮拜天阿嬤八十大壽！", "@爸爸",
                     " 蛋糕拿了沒？"],
         "mom_rain": "週末都會下雨，出門記得帶傘 ☔",
@@ -969,6 +968,7 @@ DEMO_TEXT = {
         "me_latency": "讚，p95 延遲回到 120 ms 以下了 🎉",
         "loadtest": "壓測結果.csv",
         "daniel_at": ["@林宥辰", " 站會前可以幫我看一下數字嗎？"],
+        "mei_beta": "下午先推到 beta 頻道 🚀",
         "emma_coast": "到花蓮了！這景色也太美",
         "me_wow": "哇也太漂亮 😍 玩得開心！",
         "emma_coffee": "禮拜一回台北，下週約咖啡？",
@@ -1065,18 +1065,15 @@ def fixture_demo(locale):
         by(family, 3, "me", t["me_dinner"], 296,
            reactions=[{"type": "LOVE", "count": 2, "mine": False}],
            readBy={"count": 2, "all": False}),
-        by(family, 4, "dad", t["dad_pork"], 181),
-        by(family, 5, "dad", "", 180, contentType="IMAGE", hasMedia=True,
+        by(family, 4, "dad", "", 180, contentType="IMAGE", hasMedia=True,
            reactions=[{"type": "LOVE", "count": 1, "mine": False},
                       {"type": "FUN", "count": 1, "mine": True}]),
-        by(family, 6, "nina", nina["text"], 62, mentions=nina["mentions"]),
-        by(family, 7, "dad", "", 58, contentType="STICKER",
-           stickerUrl=DEMO_STICKER_URL),
-        by(family, 8, "mom", UNSENT_TEXT, 9, contentType="NONE", unsent=True,
+        by(family, 5, "nina", nina["text"], 62, mentions=nina["mentions"]),
+        by(family, 6, "mom", UNSENT_TEXT, 9, contentType="NONE", unsent=True,
            mediaState="unsent"),
-        by(family, 9, "mom", t["mom_rain"], 6),
+        by(family, 7, "mom", t["mom_rain"], 6),
     ]
-    demo_photo("%s-m5" % family, "photo-dinner.jpg")
+    demo_photo("%s-m4" % family, "photo-dinner.jpg")
 
     messages[dinner] = [
         by(dinner, 1, "priya", t["priya_ask"], 210),
@@ -1084,11 +1081,13 @@ def fixture_demo(locale):
         by(dinner, 3, "priya", "", 209, contentType="IMAGE", hasMedia=True),
         by(dinner, 4, "marcus", t["marcus_in"], 150,
            reactions=[{"type": "NICE", "count": 2, "mine": False}]),
-        by(dinner, 5, "me", t["me_count"], 141,
+        by(dinner, 5, "marcus", "", 149, contentType="STICKER",
+           stickerUrl=DEMO_STICKER_URL),
+        by(dinner, 6, "me", t["me_count"], 141,
            replyTo={"id": "%s-m1" % dinner, "fromName": name["priya"],
                     "text": t["priya_ask"]},
            readBy={"count": 3, "all": True}),
-        by(dinner, 6, "sofia", t["sofia_booked"], 31),
+        by(dinner, 7, "sofia", t["sofia_booked"], 31),
     ]
     demo_photo("%s-m3" % dinner, "photo-skyline.jpg")
 
@@ -1106,8 +1105,7 @@ def fixture_demo(locale):
         by(work, 4, "daniel", "", 41, contentType="FILE", hasMedia=True,
            fileName=t["loadtest"], fileSize=48_210),
         by(work, 5, "daniel", daniel["text"], 40, mentions=daniel["mentions"]),
-        by(work, 6, "mei", "", 12, contentType="STICKER",
-           stickerUrl=DEMO_STICKER_URL),
+        by(work, 6, "mei", t["mei_beta"], 12),
     ]
 
     messages[emma] = [
