@@ -89,7 +89,7 @@ Deno.test("the permission set is explicit: no -A, writes confined to the state d
 Deno.test("the launcher and the build task both source enil-flags.sh", async () => {
   const run = await Deno.readTextFile(`${DAEMON_DIR}enil-run.sh`);
   assert(run.includes('. "$dir/enil-flags.sh"'));
-  assert(run.includes("deno run $ENIL_DENO_FLAGS"));
+  assert(run.includes('"$deno" run $ENIL_DENO_FLAGS'));
   assert(!/deno run -A/.test(run));
   const config = JSON.parse(await Deno.readTextFile(`${DAEMON_DIR}deno.json`));
   const build = String(config.tasks.build);
