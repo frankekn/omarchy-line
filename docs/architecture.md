@@ -81,13 +81,13 @@ not retry around the restriction.
 While a laptop sleeps, LINE's push connection half-opens: the kernel still
 sees ESTABLISHED, but the daemon stops receiving anything. So the daemon both
 listens for logind's `PrepareForSleep` (reconnects 3 s after wake) and checks
-once a minute whether the push has been quiet for over three minutes —
-rebuilding it on its own, retrying with a backoff that starts at 1 s and caps
+once a minute whether the push has been quiet for over three minutes,
+rebuilding it on its own and retrying with a backoff that starts at 1 s and caps
 at 60 s. A full chat-list refetch also runs every five minutes as a floor.
 Errors the push connection throws with nobody listening are journaled as
-`[unhandled]`: anything judged a network problem takes the reconnect path
-above and does not restart the daemon; anything else is journaled the same way
-but still lets the daemon exit for systemd to restart — that is the daemon's
+`[unhandled]`. Anything judged a network problem takes the reconnect path
+above and does not restart the daemon. Anything else is journaled the same way
+but still lets the daemon exit for systemd to restart. That case is the daemon's
 own bug, and running on would only serve stale state.
 
 **The linejs pusher loop dying outright is a different path**: when it cannot
@@ -98,7 +98,7 @@ this on the `log` channel via `LegyPusherError` and decides by `poll.islisten`:
 linejs clears it in `finally`, so only the pass where the loop truly ended
 reads false. A single message failing to decrypt, or an `InitAndRead` failure
 linejs itself sleeps 4 s and retries, reports the identical type while the
-loop is alive — reconnecting then would just fight over `conns[0]`, so those
+loop is alive. Reconnecting then would just fight over `conns[0]`, so those
 two are journaled and the connection left alone. A real death zeroes the push
 clock and hands back to the same watchdog above (no second backoff): one
 failure writes two `LegyPusherError` lines (one from the pusher, one from the
@@ -111,7 +111,7 @@ obs upload host (uploads answer headers only after the whole body is sent).
 The cap bounds headers, not bodies, so the push connection and media downloads
 with hours-long bodies are never cut. This layer is ours: linejs sets its own
 30 s timeout, but the encrypted transport rebuilt the request and dropped that
-signal — effectively no timeout at all. After a laptop woke, the keep-alive
+signal, which meant no timeout at all. After a laptop woke, the keep-alive
 connection was long dead while the kernel disagreed, and one chat-list request
 sat there for ten minutes blocking every refresh behind it. Now the worst case
 is a 30 s failure plus an automatic refetch 15 s later, without waiting for
@@ -124,15 +124,15 @@ enough to kill the daemon for a systemd restart.
 Both layers above are automatic but both make you wait: the watchdog checks
 once a minute, the floor poll every five. To skip the wait, press the **同步**
 button right of the list search box (keyboard `r`, or click the "LINE 連線中斷，
-重連中" line under the title) — it rebuilds the push connection and refetches
+重連中" line under the title). It rebuilds the push connection and refetches
 the chat list immediately, re-reading the open conversation too. The button
 reads "同步中…" while working, usually settling on "已同步 HH:MM" within
 seconds (if a refetch was already in flight it waits out that round and the
-button stays on "同步中…" meanwhile); a failure prints its reason
+button stays on "同步中…" meanwhile). A failure prints its reason
 (`同步失敗：連不上 LINE，稍後重試` and friends), never silence. The rebuild
 itself takes eight seconds (linejs's own pusher must get its recovery window
 first, or both loops fight over one connection) but the sync does not wait for
-it — the refetch needs no new connection, so the view comes back first and
+it. The refetch needs no new connection, so the view comes back first and
 the link heals behind it.
 
 Reconnect records live here:
@@ -145,21 +145,21 @@ A manual sync appears in the journal as `[sync] requested`.
 
 Push-driven refreshes no longer refetch the whole list either: the push itself
 says which chats moved, the daemon debounces them, then issues one
-"recent messages" request per affected chat and updates the rows in place —
-no sweeping every box for a few rows. It falls back to the full
+"recent messages" request per affected chat and updates the rows in place,
+with no sweep of every box for a few rows. It falls back to the full
 `getMessageBoxes` only on login, reconnect, manual sync, a read on another
-device, a rename, a burst (more than 8 chats), or a failed incremental round —
-the only server-side source of unread counts lives there, and the full pass is
+device, a rename, a burst (more than 8 chats), or a failed incremental round.
+The only server-side source of unread counts lives there, and the full pass is
 always the corrector. Disable the whole path with `ENIL_INCREMENTAL=0` (on by
-default); with it off every round is the original full refetch.
+default). With it off, every round is the original full refetch.
 
 While push is alive none of this waiting applies: new messages, reads,
 reactions and unsends reach the event ring within a second, and with the panel
 open the daemon pushes each event over the already-connected socket (see the
-push frames in [protocol.md](protocol.md#push-frames)) — not even the file throttle stands in the
+push frames in [protocol.md](protocol.md#push-frames)). Not even the file throttle stands in the
 way. When the socket drops, the panel still catches up through `events.json`.
 Things that happened while disconnected stay on LINE's side and come back via
-chat-list and history refetches — `events` only keeps the newest 200 entries,
+chat-list and history refetches. `events` only keeps the newest 200 entries,
 and a restarted daemon renumbers from scratch (`bootId` changes), so it is the
 fast path, not the only path.
 
@@ -179,9 +179,9 @@ token.
 
 ## Media pipeline
 
-`history` returns text and media fields first; the rows actually visible ask
+`history` returns text and media fields first. The rows actually visible ask
 the daemon for thumbnails separately. Videos only fetch thumbnails when LINE
-offers a real preview URL or the path isn't encrypted chunks — an encrypted
+offers a real preview URL or the path isn't encrypted chunks. An encrypted
 video never degrades into downloading the whole file for one preview and
 stays a 📎 attachment row.
 
@@ -189,30 +189,30 @@ stays a 📎 attachment row.
 `sha1(mid + that version's picture token)`. The token is included because a
 new photo must mean a new filename, or the old one would sit on screen
 forever. Fetches run **at most four at a time** (a cold start needs over a
-hundred — firing them all at the CDN is a fetch storm), the rest queue;
-failures simply leave the field absent and never block the chat list or
-messages — the avatar lands in `state.json` later. Which CDN host and whether
+hundred, and firing them all at the CDN is a fetch storm), and the rest queue.
+Failures leave the field absent and never block the chat list or
+messages. The avatar lands in `state.json` later. Which CDN host and whether
 to append `/preview` are probed once and recorded in `avatars.json`, never
 re-probed. This cache **ignores age** (the contact you haven't spoken to in a
 month is exactly the one whose face you need) with only a 20 MB cap, sweeping
 the oldest when full.
 
 **Clicking an image zooms inside the panel** (lightbox): it opens on the
-thumbnail instantly while the original is fetched and swapped in; a failed
+thumbnail instantly while the original is fetched and swapped in. A failed
 original keeps the thumbnail plus a hint line. Wheel zooms 1×–4× around the
-cursor, drag pans while zoomed, double-click toggles 1×/2×; ←/→ (or h/l)
-walks the same chat's images with a "n / N" title; `o` opens externally, Esc
-or a backdrop click closes. FLEX (carousel) images are public CDN URLs —
-clicking enters the lightbox without a `download` first; that path is for
+cursor, drag pans while zoomed, double-click toggles 1×/2×. ←/→ (or h/l)
+walks the same chat's images with a "n / N" title. `o` opens externally, Esc
+or a backdrop click closes. FLEX (carousel) images are public CDN URLs.
+Clicking enters the lightbox without a `download` first. That path is for
 LINE's encrypted media, while public URLs are fetched into cache by `image`.
 
 **Videos and file attachments (the 📎 row) close the panel first, then open
 externally**: the panel issues one `download`, the daemon returns the original
-path, the panel `close()`s and only then `xdg-open`s. The order cannot flip —
-the panel is a fullscreen `WlrLayer.Overlay` and a normal viewer window would
+path, the panel `close()`s and only then `xdg-open`s. The order cannot flip.
+The panel is a fullscreen `WlrLayer.Overlay` and a normal viewer window would
 hide underneath, looking like the click did nothing. Files open through
 `Quickshell.execDetached` (argv, no shell), so a second file still opens while
-the first viewer lives. Switching chats mid-download is fine — the file opens
+the first viewer lives. Switching chats mid-download is fine. The file opens
 anyway.
 
 `App window` mode (see [usage.md](usage.md#settings)) does not close: it is a normal window, not an
@@ -220,60 +220,60 @@ overlay, so viewers stack on top. Opening videos, files, or the lightbox `o`
 there leaves LINE where it was.
 
 Two ways to send files: `/file <path>` in the input, or `📎` for a system file
-picker. The picker uses **zenity**, which Omarchy does not preinstall —
-without it `📎` answers "找不到 zenity，請 sudo pacman -S zenity"; installing
-makes it work immediately, no shell restart needed. Picking a file then
-cancelling shows no message — deliberate.
+picker. The picker uses **zenity**, which Omarchy does not preinstall.
+Without it `📎` answers "找不到 zenity，請 sudo pacman -S zenity". Installing
+makes it work immediately, with no shell restart needed. Picking a file then
+cancelling shows no message, by design.
 
-Multi-person rooms (mids starting `r…`) cannot send files — refused before
-send with a message.
+Multi-person rooms (mids starting `r…`) cannot send files. The daemon refuses before
+sending, with a message.
 
-**An image goes out as an image, a video as a video** — not everything as an
+**An image goes out as an image, a video as a video**, not everything as an
 attachment. The daemon reads magic bytes first, falls back to the extension,
 then picks linejs's ObjType: `image`/`gif` is IMAGE, `video` is VIDEO, the
 rest `file`. So a `.jpg` that is really an mp4 still goes out as video (LINE
 only reads the contentType we send, never the name), `.gif` keeps `gif` (with
 `cat=original`, or the receiver gets a frozen frame), and HEIC vs mp4 are both
 ISO containers split by the `ftyp` brand. **Audio is always `file`**: a LINE
-voice message needs a duration and the daemon has no demuxer — sending as one
+voice message needs a duration and the daemon has no demuxer. Sending as one
 yields a 0:00 waveform.
 
 **Oversized files are refused before being read**: images (incl. gif) **20
 MB**, videos and files **1 GB**, refusing with "圖片太大（超過 20 MB）" /
-"影片太大（超過 1 GB）" / "檔案太大（超過 1 GB）" — the cap is spelled out
+"影片太大（超過 1 GB）" / "檔案太大（超過 1 GB）". The cap is spelled out
 because the user picked the file and only they can pick a smaller one. The
 caps are ours: LINE refuses only after the whole upload, which on home
 upstream means minutes wasted for an error nobody can act on. The image cap
 matches the clipboard's because that path is the memory-heaviest (read fully
 into memory, encrypt a copy, and linejs uploads the original again as
-`__ud-preview` when no thumbnail is given); video and files upload once, so
+`__ud-preview` when no thumbnail is given). Video and files upload once, so
 the cap sits where LINE itself wouldn't accept. Type detection needs the
 header, so the daemon `Deno.stat`s for size, reads only the first 16 bytes
 for ObjType, and only reads the whole file after the checks pass.
 **Sent videos carry a preview image and a duration.** Without a preview,
 linejs uploads the encrypted original again as `__ud-preview`
-(`base/obs/mod.ts:389`) — fine for an image (it is one), but for video the
+(`base/obs/mod.ts:389`). That is fine for an image (it is one), but for video the
 receiver gets a blank square: the client draws an mp4 as a JPEG. So videos
 get two extra steps:
 
 - **Duration** is read straight from the container header: ISO base media's
   `moov/mvhd` (version 0 is 32-bit, version 1 is 64-bit), Matroska's
   `Segment/Info/Duration` (times `TimestampScale`). Only the headers of the
-  boxes on the path are read — phones routinely write `moov` **after** a
+  boxes on the path are read. Phones routinely write `moov` **after** a
   multi-GB `mdat`, so it seeks by declared box size rather than scanning.
-  Unreadable (AVI, say) means no duration — sending is unaffected.
+  Unreadable (AVI, say) means no duration, and sending is unaffected.
 - **Preview** needs `ffmpegthumbnailer` or `ffmpeg` (first found on PATH, in
   that order; Omarchy ships neither): grab the frame at second 1, save as a
-  640-wide JPEG. Clips under two seconds grab the middle instead — seeking
+  640-wide JPEG. Clips under two seconds grab the middle instead, because seeking
   past the length produces no frame in either tool. **With neither installed
-  the send goes out as before, just without a preview**;
+  the send goes out as before, just without a preview**.
   `journalctl --user -u enil | grep 'preview skipped'` says which case it was
   (not installed, run failed, or output wasn't a complete JPEG). The whole
   thumbnail step is capped at 10 s and can never fail the send.
 
 The duration rides in the message's contentMetadata `DURATION` (ms): that
 metadata is assembled by `uploadMediaByE2EE` itself, so the fork gained a
-`durationMs` parameter (pin `4d6aa18`) — the daemon hands a measured duration
+`durationMs` parameter (pin `4d6aa18`). The daemon hands a measured duration
 down and omits the field otherwise. Over E2EE, obs only sees the encrypted
 blob and cannot read a container duration itself (plain `uploadObjTalk` does
 it on its own), so the caller has to provide it.
@@ -281,11 +281,11 @@ it on its own), so the caller has to provide it.
 **Clipboard images send directly**: on `probeClipboardImage {chat}` the daemon
 runs `wl-paste --list-types` looking for `image/png` / `image/jpeg` /
 `image/webp` / `image/gif` (picking the first in that order when several
-exist), then `wl-paste --no-newline --type <mime>` to read the bytes —
-`--no-newline` is mandatory: wl-paste appends a newline by default and one
+exist), then `wl-paste --no-newline --type <mime>` to read the bytes.
+`--no-newline` is mandatory because wl-paste appends a newline by default, and one
 extra byte after a PNG is a corrupt file. Cap **20 MB** (read into memory,
 encrypted once, uploaded twice by linejs). On success the snapshot is staged
-in `media/` and a restricted `stage` name returned; the panel then sends
+in `media/` and a restricted `stage` name returned. The panel then sends
 `sendClipboardImage {chat, stage, requestId}` and the daemon runs the same
 function as `sendFile`, deleting the stage on success or failure. Pasted
 screenshots and picked-file images share one type check, naming, and refusal.
@@ -294,51 +294,51 @@ Failures all say why, never a bare "send failed": no wl-clipboard →
 "找不到 wl-paste，請 sudo pacman -S wl-clipboard"; text in the clipboard →
 "剪貼簿裡沒有圖片"; an unsendable format names it ("剪貼簿的圖片格式不支援:
 image/tiff"); oversized → "剪貼簿的圖片太大（超過 20 MB）". The daemon is a
-systemd user unit — **if it starts before the compositor it has no
+systemd user unit. **If it starts before the compositor it has no
 `WAYLAND_DISPLAY`**, wl-paste can't reach the display, and the answer is
-"連不上 Wayland，請 systemctl --user restart enil" — different from an empty
+"連不上 Wayland，請 systemctl --user restart enil", which differs from an empty
 clipboard, hence different words. A stuck wl-paste gets 5 s at most, then
 "讀不到剪貼簿" with the reason journaled.
 
 **On the panel side this is `Ctrl+V` in the input box.** The clipboard lives
 on the daemon's side (`wl-paste` runs there) and the panel cannot read it, so
 the key sends a non-message `probeClipboardImage` first. The daemon reads and
-pins a staged snapshot in one shot; when the reply happens to be "剪貼簿裡沒有
+pins a staged snapshot in one shot. When the reply happens to be "剪貼簿裡沒有
 圖片", the panel knows it's text and lets the input paste normally. Only after
-a successful probe does it send `sendClipboardImage` carrying a `requestId` —
+a successful probe does it send `sendClipboardImage` carrying a `requestId`,
 so a failed probe or a drop never leaves a token with no history message to
 reconcile, and the clipboard can't change between the two phases. So Ctrl+V on
-text still pastes text, one socket round-trip slower; Ctrl+V on an image sends
+text still pastes text, one socket round-trip slower. Ctrl+V on an image sends
 it outright, leaving half-typed input untouched. The banner reads "傳送中…"
-during the upload, same as `📎`; no bubble is drawn first — at keypress time
+during the upload, same as `📎`. No bubble is drawn first. At keypress time
 nobody knows whether the clipboard holds an image, and drawing a bubble then
 withdrawing it for a text paste would flash one per paste. The real message
 arrives back via LINE's push (same path as `📎`). Every other refusal stays
-on the banner verbatim — never downgraded to a text paste: no wl-clipboard,
+on the banner verbatim and is never downgraded to a text paste. That covers no wl-clipboard,
 no Wayland, too big, unsendable format, rooms can't take files. If you switch
 chats before the probe answers, the image still goes to the chat captured at
-keypress; text won't paste into the other chat's input, and errors don't jump
+keypress. Text won't paste into the other chat's input, and errors don't jump
 over either. If the second-phase request can't be queued on the socket, the
 panel sends `discardClipboardImage` to release the stage. **A second press
 while waiting does nothing** (holding Ctrl+V auto-repeats and uploads take
 seconds): the press is swallowed, like pressing `📎` again while the picker
-is open — sending twice means two identical images, or the same text pasted
-twice. The moment the answer lands — sent or refused — Ctrl+V works again.
+is open. Sending twice means two identical images, or the same text pasted
+twice. The moment the answer lands (sent or refused), Ctrl+V works again.
 
 **Unopenable attachments say why instead of a bare "download failed".**
 Unsent messages still arrive from LINE with contentType `FILE`/`IMAGE` but no
-content — the daemon marks them `mediaState: "unsent"`, `hasMedia: false`,
+content. The daemon marks them `mediaState: "unsent"`, `hasMedia: false`,
 rewrites `text` to "已收回訊息" (the list preview too), and clicking answers
 "訊息已收回" without touching the network. Chat files expire after **7 days**
 (the metadata's `FILE_EXPIRE_TIMESTAMP`, stored in `expiresAt`) as
-`mediaState: "expired"`, answering "檔案已過期（LINE 只保留 7 天）" — again no
+`mediaState: "expired"`, answering "檔案已過期（LINE 只保留 7 天）", again with no
 network. Failures after an actual fetch split in two: the object being gone
 (HTTP 404/410, `ObsError`, or the `encrypted data too short` /
 `HMAC verification failed` upstream linejs throws earlier in decrypt) answers
-"檔案已過期或已被刪除"; everything else is "下載失敗". The panel draws from
+"檔案已過期或已被刪除". Everything else is "下載失敗". The panel draws from
 the two fields: an unsent message is one grey italic "已收回訊息" line with
-sticker/FLEX/thumbnail/📎 all hidden; an expired file's 📎 row appends
-"（已過期）"; neither is clickable and lightbox ←/→ skips them.
+sticker/FLEX/thumbnail/📎 all hidden. An expired file's 📎 row appends
+"（已過期）". Neither is clickable and lightbox ←/→ skips them.
 
 Every command answered `{ok:false}` also leaves one journal line
 `[cmd] <cmd> failed: <class>: <message>` (message truncated to 120 chars, mids

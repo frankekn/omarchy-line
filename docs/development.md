@@ -64,8 +64,8 @@ before you change either.
 ## Run the panel against the stub
 
 Anything that writes this contract's files and serves this socket can drive
-the plugin — it doesn't have to be this daemon. `daemon/stub.py` is exactly
-that: a fake daemon in pure stdlib feeding fake data to the panel, so UI work
+the plugin. It doesn't have to be this daemon. `daemon/stub.py` is exactly
+that, a fake daemon in pure stdlib feeding fake data to the panel, so UI work
 needs no real LINE session.
 
 ```bash
@@ -78,29 +78,29 @@ Four `--fixture`s: `default` (one each of `u`/`c`/`r` chats; messages cover
 plain text, multiline, failed E2EE, image, video, file, sticker, FLEX, system
 events, your own sends, unsent and expired), `empty` (an empty list), `busy`
 (200 chats, for list scrolling and search), and `notify` (same as `default`
-but opens with one `wanted` already set — see the notification-click flow at
+but opens with one `wanted` already set, so you can see the notification-click flow at
 once). `history` pages by `before`, `markRead` (the flag and the command) clears unread, `send` echoes a
 message back (`mentions` validated like the daemon then re-attached),
 `sendFile` answers `r…` with the same refusal as the daemon, `download` does
 the same for unsent/expired. `members` returns a fake list for groups and the
-same refusal for 1:1 and rooms; `default` includes a message with @All and
+same refusal for 1:1 and rooms. `default` includes a message with @All and
 @someone, preceded by an emoji so the offsets really exercise UTF-16 units.
 
 The two-phase clipboard commands are in too: the stub has no clipboard, so
 `probeClipboardImage` always returns a `stage` for a drawn fake PNG, which
-`sendClipboardImage` then sends (IMAGE, thumbnail via `preview`); adding
-`empty: true` to the probe — something the real daemon **doesn't** have —
-returns "剪貼簿裡沒有圖片", otherwise the panel's "nothing to paste" path is
+`sendClipboardImage` then sends (IMAGE, thumbnail via `preview`). Adding
+`empty: true` to the probe (something the real daemon **doesn't** have)
+returns "剪貼簿裡沒有圖片". Otherwise the panel's "nothing to paste" path is
 only reachable by emptying a real clipboard. `sendFile`'s `contentType` is
 judged by extension like the daemon (IMAGE/VIDEO/FILE), videos carry no
-`mediaPath`, and the three oversized refusals match word for word — the only
+`mediaPath`, and the three oversized refusals match word for word. The stub is the only
 place you can see that message without preparing a real 1 GB file (tests use
 sparse files).
 
 `reply`/`react`/`unsend` are in too and write `events` like the real thing:
 `send` and `reply` append a `message` event (the real daemon gets LINE's echo
 of your own send), then a `read` event two seconds later with `readBy`
-attached — without this "fake peer" the panel's read receipts have nothing to
+attached. Without this "fake peer" the panel's read receipts have nothing to
 test against. `react` swaps the whole `reactions` list (not a delta), and
 `unsend` only accepts messages `ME` sent. The fixture already includes
 messages with `replyTo` (one only carrying `id`, unquotable), `reactions` and
@@ -113,14 +113,14 @@ verbatim, and a send produces a `contentType: "STICKER"` message event with a
 
 `image` is in, necessarily: the panel only reads local files, so without it
 the sticker grid, picker, FLEX previews and lightbox are all broken images
-under the stub. The stub has no network so images are drawn — one file per
+under the stub. The stub has no network so images are drawn, one file per
 URL (sha256-named, same `media/public-images/` location as the daemon, no
 extension), the same path every ask, with the `#` tail dropped like the
 daemon. Non-`https://`, credentialed, or unparseable URLs get the daemon's
 verbatim `圖片下載失敗`.
 
 Avatars too: some chats and senders carry `avatarPath`/`fromAvatar` (drawn
-fake images under `media/avatars/`), some deliberately don't — a row without
+fake images under `media/avatars/`), some deliberately don't. A row without
 an avatar must still render.
 
 `hide`/`unhide` are in (login-blind like the daemon), stamping `hidden: true`
@@ -129,16 +129,16 @@ and hidden-doesn't-count-unread paths can't run without a LINE session. The
 stub keeps it in memory (dropped with the temp state dir) and never writes
 `hidden.json`.
 
-The stub has one command the real daemon lacks — `poke`:
+The stub has one command the real daemon lacks, `poke`.
 `{"cmd":"poke","chat":"<mid>"}` writes a `state.wanted`, equivalent to "the
 user clicked that chat's notification". The real daemon reaches the same
-point via `notify-send`'s action — needing a notification server, a
+point via `notify-send`'s action, which needs a notification server, a
 notification, and a person to click it, none of which development can drive.
 
 `python3 daemon/stub_test.py` pins these shapes against [protocol.md](protocol.md)
 (pure stdlib, runs inside its own temp `XDG_STATE_HOME`).
 
-**Never point the stub at the real state dir** — it will overwrite
+**Never point the stub at the real state dir.** It will overwrite
 `state.json`.
 
 ## Take screenshots

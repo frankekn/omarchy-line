@@ -76,16 +76,16 @@
 出現；啟動／resume 中途的暫態不帶它，consumer 不可把暫態當成 session 已結束。
 `login.attempt` 是 `logout`（使用者按登出後的收尾）、`resume`（開機從 storage 恢復
 失敗）或 `manual`（按「登入 LINE」的 QR 嘗試失敗）。凡是 `settled: true` 的終局
-teardown——登出、任何走到底的 resume（不論失敗原因是 `token_expired`，還是開機時
-storage 裡根本沒有 token）、或已建立又失敗的 manual——面板都會清掉上個帳號的
+teardown，包括登出、任何走到底的 resume（不論失敗原因是 `token_expired`，還是開機時
+storage 裡根本沒有 token）、或已建立又失敗的 manual，面板都會清掉上個帳號的
 durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建立就失敗的 manual）則
 保留草稿，等下一次登入接續。
 
 `refresh` 說的是**聊天室清單那條路**（talk 請求），跟 `link`（push 連線）是兩件事，
-兩者可以一好一壞 —— 所以不併進 `link`，不然又看不出來。`at` 是最後一次
+兩者可以一好一壞，所以不併進 `link`，不然又看不出來。`at` 是最後一次
 `getMessageBoxes` 成功、`chats` 寫進檔案的毫秒時間戳；`failures` 是從那之後連續
 失敗的次數，成功就歸 0；`reason` 只在 `failures > 0` 時存在，分類跟 `login.reason`
-同一套（`network`／`token_expired`／`unknown`）。失敗只在進入連錯的那一刻落檔一次
+同一套（`network`／`token_expired`／`unknown`）。失敗只在進入連錯的那一刻寫進檔案一次
 （跟 `link` 的邊寫同一個形狀），之後的計數靠 30 秒心跳帶上去；面板在
 `failures >= 2` 時把「清單可能過期」印在清單標題下那一行（一次 30 秒的 timeout
 手機熱點下就會發生，單次不跳字），未讀徽章不受影響。登入前沒有這個欄位，登出
@@ -100,15 +100,15 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 `timings` 是 daemon 記憶體裡的滾動診斷資料，每個項目最多保留最近 64 次，單位都是
 毫秒。`chats.refresh` 是完整聊天室刷新，`state.write` 是 state.json 的原子寫入，
 `cmd.<name>` 是 socket 指令從讀到完整一行、等候前一條一般指令或共享媒體佇列，到回覆
-寫回的總時間。統計在 state 寫入真正輪到磁碟時才取樣，只搭下一次原本就會發生的寫入，
+寫回的總時間。統計在 state 真正寫到磁碟時才取樣，只搭下一次原本就會發生的寫入，
 不會為了量測額外喚醒面板；daemon 重啟後重新累積。
 
 `stateBytes` 是同一個滾動視窗量在**序列化後的 byte 數**上：單位是 UTF-8 位元組，
-不是毫秒，所以欄位名不帶 `Ms`。取樣在 state 寫入真正輪到磁碟、整份 JSON 文字產生的
+不是毫秒，所以欄位名不帶 `Ms`。取樣在 state 真正寫到磁碟、整份 JSON 文字產生的
 那一刻，一次寫入只取樣一次（心跳、刷新、推播摘要全走同一個 `writeState`，不會為了
-量測多序列化一份）；跟 `timings` 同一拍——這次寫入自己的大小要等下一次寫入才會
+量測多序列化一份）；跟 `timings` 同一拍，這次寫入自己的大小要等下一次寫入才會
 上榜，daemon 重啟後重新累積，剛啟動、視窗還空時整個區塊不存在。`chats` 則是**這份
-檔案自己**序列化當下的 chats 列數（含被隱藏的那幾間——它們仍留在檔案裡），跟
+檔案自己**序列化當下的 chats 列數（含被隱藏的那幾間，它們仍留在檔案裡），跟
 滾動統計不同拍，讀的時候當「這份檔案的現況」。要對寫入做任何減量（欄位 diff、
 分檔）之前，部署端直接讀這一區塊，拿到的就是實際數字。
 
@@ -116,13 +116,13 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 契約本來就是只讀自己認得的鍵、未知欄位忽略，所以舊面板不受影響。
 
 聊天室那一列的 `hidden` 同理：**只有被隱藏的那幾間才有這個鍵**，沒隱藏的整個不存在
-（不是 `false`），舊的面板照樣畫得出來。被隱藏的聊天**仍然留在 `chats` 裡** —— 面板
+（不是 `false`），舊的面板照樣畫得出來。被隱藏的聊天**仍然留在 `chats` 裡**，因為面板
 要靠它做搜尋，只是平常不畫。daemon 在每次寫 state 的當下才蓋上這個鍵，來源是
 `hidden.json`；聊天摘要本身的快取不帶它，不然隱藏之後那份快取會一直說著舊答案。
 
 ## `wanted`：從通知點進來的聊天室
 
-點桌面通知的時候，daemon 會先寫一筆 `wanted`，再叫 shell 把面板打開 —— shell 的
+點桌面通知的時候，daemon 會先寫一筆 `wanted`，再叫 shell 把面板打開。shell 的
 IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間」是走面板本來就在監看的
 `state.json`。
 
@@ -135,8 +135,8 @@ IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間
 
 ## `events.json`：即時事件
 
-`events.json` 是一個環狀緩衝，**只留最近 200 筆**，跟 `state.json` 分檔寫入 —
-— 事件爆量的時候重寫的是這份小檔，`state.json` 不必跟著長大或一直被重讀。
+`events.json` 是一個環狀緩衝，**只留最近 200 筆**，跟 `state.json` 分檔寫入。
+事件爆量的時候重寫的是這份小檔，`state.json` 不必跟著長大或一直被重讀。
 面板記住自己處理到哪個 `seq`，之後只吃比它大的，就不用為了一則新訊息重抓
 整頁歷史。
 
@@ -151,16 +151,16 @@ IPC 只會 open／close／toggle，沒辦法帶參數，所以「要開哪一間
 }
 ```
 
-- `seq` 在**同一個 daemon 行程裡**嚴格遞增，不重複也不回頭。重啟會從 1 重來 ——
+- `seq` 在**同一個 daemon 行程裡**嚴格遞增，不重複也不回頭。重啟會從 1 重來，
   所以 `bootId` 換了就代表「這是新的一輪」，面板要把 watermark 歸零。
 - `at` 是毫秒時間戳，`chat` 是聊天室 mid（每一種 `kind` 都有，面板可以先照它篩掉
   不是現在這間的事件，不必看 payload）。
 - 事件寫檔會**合併**：最密 250 毫秒一次（每秒 ≤ 4 次），一次進來一整串（相簿、
   被拆開的長句）不會讓面板重讀 20 次 events.json。
-- 登出會把 `events` 清空（`seq` 不歸零 —— 同一個 `bootId` 裡倒退的 seq 是面板唯一
+- 登出會把 `events` 清空（`seq` 不歸零，因為同一個 `bootId` 裡倒退的 seq 是面板唯一
   沒辦法解釋的情況）。
 - 檔案只是**補齊**用的慢路：面板連著 socket 的時候，每筆事件先以 `{"event":…,"boot":…}`
-  推播幀直接送達（見下），檔案隨後才落；斷線期間漏掉的，重連後靠讀檔
+  推播幀直接送達（見下），檔案隨後才寫入；斷線期間漏掉的，重連後靠讀檔
   補齊。
 
 | `kind` | 欄位 | 什麼時候發 |
@@ -199,21 +199,21 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | 無 |
 | `hide` | `chat` | 無（把那一間從清單上拿掉，記在 `hidden.json`） |
 | `unhide` | `chat` | 無 |
-| `login` | —— | 無 |
-| `logout` | —— | 無 |
-| `sync` | —— | `{ chats, link, at }` |
+| `login` | 無 | 無 |
+| `logout` | 無 | 無 |
+| `sync` | 無 | `{ chats, link, at }` |
 
 ## 推播幀
 
-面板連著 socket 的時候，daemon 會主動寫兩種**推播幀** —— 沒有 `id`、不對應任何
+面板連著 socket 的時候，daemon 會主動寫兩種**推播幀**。推播幀沒有 `id`、不對應任何
 請求，跟回覆共用同一條序列化寫入通道，所以一行永遠完整：
 
-- `{"event": <event>, "boot": "<bootId>"}` —— 事件環裡的一筆新事件（`history`
+- `{"event": <event>, "boot": "<bootId>"}`：事件環裡的一筆新事件（`history`
   事件也在裡面）。client 拿 `seq` 對自己的 watermark 去重；`boot` 跟已知的
   `bootId` 不同代表 daemon 重啟過，歸零後從 `events.json` 重新補齊。
-- `{"chat": <row>, "chatsRevision": N, "boot": "<bootId>"}` —— 單一聊天室列
+- `{"chat": <row>, "chatsRevision": N, "boot": "<bootId>"}`：單一聊天室列
   欄位變動（新訊息的預覽、收回、頭像補上）時整列推過來。`chatsRevision` 是它的
-  水位線 —— 同一欄位的檔案寫入如果帶著更舊的 revision 抵達，直接丟掉，不能
+  水位線。同一欄位的檔案寫入如果帶著更舊的 revision 抵達，直接丟掉，不能
   蓋回已推播的新值。整列重建（refresh 輪、登出）不推，照舊由 `state.json` 收口。
   這種幀不進事件環、不帶 `seq`。
 
@@ -251,13 +251,13 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 ## 指令細節
 
 回應**一定寫得完整**：daemon 是用 `writeAll` 一路寫到最後一個位元組，不是靠一次
-`conn.write` —— unix socket 一次只吃得下緩衝區塞得下的量（實測 219264 位元組），
+`conn.write`。unix socket 一次只吃得下緩衝區塞得下的量（實測 219264 位元組），
 `stickers` 這種十幾萬位元組的回應會被截斷，而且不會有任何錯誤，面板只會等一個永遠
 不會來的換行。萬一回應本身編不成 JSON（例如混進 BigInt 或循環參照），daemon 會回
 `{ok:false, error:"回覆無法編碼"}` 並在 journal 留一行
-`[cmd] <cmd> reply unserializable: <錯誤類別>` —— 值本身不進 journal。
+`[cmd] <cmd> reply unserializable: <錯誤類別>`，值本身不進 journal。
 
-`sync` 是手動同步：重建 push 連線（不等它完成）並重抓聊天列表 —— 回報的一定是**收到這個
+`sync` 是手動同步：重建 push 連線（不等它完成）並重抓聊天列表。回報的一定是**收到這個
 請求之後**才跑完的那一輪，剛好有一輪在飛就先等它結束。`chats` 是抓回來的
 聊天室數量、`link` 是**同步開始當下**的 push 狀態（`"up"`／`"down"`；重建一開始就會把
 狀態設成 down，回報之後的值等於每次都說 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
@@ -266,13 +266,13 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 `members` 是 @ 用的群組成員名單，只有群組（`c…`）和 room（`r…`）能問；1:1（`u…`）回
 `{ok:false, error:"這不是群組，沒有成員名單"}`。名單裡不含自己。daemon 快取十分鐘，
 所以同一間聊天室來回開關只會真的抓一次。room 的名單多半拿不到，那時回
-`{ok:false, error:"多人聊天室（room）拿不到成員名單"}` —— 面板不跳橫幅，等使用者真的
+`{ok:false, error:"多人聊天室（room）拿不到成員名單"}`。面板不跳橫幅，等使用者真的
 打了 `@` 才在選單裡說原因。
 
 `image` 拿的是一張**公開**圖片的本機檔：daemon 抓進 `media/public-images/`（合併、
 上限與清掃見 [architecture.zh-TW.md](architecture.zh-TW.md#公開圖片)），回 `{ "path": "…" }`，面板只讀 `file://`。只收
 `https://`、不帶帳號密碼、回應的內容型別要是 `image/`，重導最多五次而且每一跳都得是
-`https://`；任何一項不成立或抓不回來都回 `{ok:false, error:"圖片下載失敗"}` —— 面板
+`https://`；任何一項不成立或抓不回來都回 `{ok:false, error:"圖片下載失敗"}`。面板
 不會改成自己去連 HTTPS，那正是這支指令要避開的那條路。
 
 `send`／`reply` 不指定要不要加密，交給 LINE 決定：先照明文送，對方要求加密時才由
@@ -280,7 +280,7 @@ linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）�
 對方把 Letter Sealing 關掉時金鑰查詢會直接回 `E2EE_RETRY_PLAIN`，訊息連送都送不出去。
 
 `reply` 就是帶引言的 `send`：一樣的 `mentions` 驗證、一樣的加密、一樣的拒絕，只多一個
-`replyTo`。少了它回 `{ok:false, error:"沒有指定要回覆哪一則訊息"}` —— 不擋的話訊息還是
+`replyTo`。少了它回 `{ok:false, error:"沒有指定要回覆哪一則訊息"}`。不擋的話訊息還是
 送得出去，只是變成沒有引言的普通訊息，等於默默吃掉使用者挑的那一則。
 
 `react` 的 `type` 是 LINE 的六個預設表情
@@ -308,11 +308,11 @@ linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）�
 daemon 快取一小時，`{"cmd":"stickers","refresh":true}` 會重抓（同一刻只會有一輪在跑，
 兩個面板同時開不會變成兩倍的請求）。清單來自 LINE 貼圖小舖的
 `getOwnedProductSummaries`，但**那支 API 不回貼圖 id**，所以每個貼圖包的貼圖是再去抓
-公開的 `productInfo.meta`（不需要登入）。抓不到的那個貼圖包 `stickers` 會是**空陣列**
-—— 帳號確實有這個貼圖包，只是這次讀不到，讓它從清單裡消失只會更難解釋。`animated` 是
+公開的 `productInfo.meta`（不需要登入）。抓不到的那個貼圖包 `stickers` 會是**空陣列**。
+帳號確實有這個貼圖包，只是這次讀不到，讓它從清單裡消失只會更難解釋。`animated` 是
 **整包**的性質不是單張的：LINE 的 JSON 沒有逐張的旗標，收到的貼圖也只有 `STKOPT`。
 `url` 跟收到的貼圖走同一條 CDN 路徑，面板兩邊可以共用同一段畫圖的程式。登出會把快取
-清掉 —— 換一個帳號就是換一批貼圖包。
+清掉，因為換一個帳號就是換一批貼圖包。
 
 小舖那邊出事分兩句：請求本身失敗（連不上、Thrift 丟例外）是
 `{ok:false, error:"貼圖清單讀不到：<原因>"}`；回來的東西**根本不是一份清單**（該有
@@ -327,12 +327,12 @@ list 的欄位不是陣列、或整包不是物件也不是陣列）是
 `sendSticker` 送出一張貼圖。`packageId`／`stickerId` 是十進位編號，`version` 選用
 （不給就用清單裡那一包的 `version`）。編號形狀不對回
 `{ok:false, error:"貼圖編號不對"}`，貼圖包不在自己的清單裡回
-`{ok:false, error:"這個貼圖包不在你的貼圖清單裡"}` —— LINE 對 metadata 照單全收，
+`{ok:false, error:"這個貼圖包不在你的貼圖清單裡"}`。LINE 對 metadata 照單全收，
 擋不下來的話對方收到的是一顆放不出圖的空泡泡，而且收不回來。**不檢查**那張貼圖在不在
 那一包裡：`stickers` 是空的那幾包本來就沒得檢查，擋下來等於把 daemon 讀不到清單這件事
 算在使用者頭上。貼圖**不走 E2EE**（內容就是 metadata，而 metadata 本來就不加密），
 送出之後跟 `send` 一樣由 LINE 把自己送出的推回來，面板收到的是 `message` 事件。
-整包是動態的（`animated`）就多帶一個 `STKOPT: "A"`，靜態的那幾包整個欄位不帶 ——
+整包是動態的（`animated`）就多帶一個 `STKOPT: "A"`，靜態的那幾包整個欄位不帶。
 linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`，不帶的話連
 自己推回來的那則都是不會動的那一格。面板畫的時候再換回靜態網址：APNG 在 Qt 裡只
 畫得出第一格，一張卻要幾百 KB。
@@ -345,7 +345,7 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 `send` 的 `mentions` 是選用的，`[{ start, end, mid }]` 或 `[{ start, end, all: true }]`：
 
 - **`start`／`end` 是 `text` 的 UTF-16 code unit 位移，半開區間 `[start, end)`。**
-  一個中日韓字算 1，BMP 以外的表情符號（surrogate pair）算 2 —— 也就是 JavaScript
+  一個中日韓字算 1，BMP 以外的表情符號（surrogate pair）算 2，也就是 JavaScript
   `String` 的 `length` 和 `substring` 用的那個單位，兩邊都是 JS，誰都不用換算。
   這是 LINE 自己的單位：linejs 用 `parseInt` 讀 `MENTIONEES` 的 `S`／`E` 再交給
   `String.prototype.substring`。
@@ -395,7 +395,7 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 所以 `count` 加起來就是有多少人按過。
 
 `readBy` 的 `count` 是「除了自己以外，已經讀到這則的人數」，`all` 是「daemon 知道的
-人都讀到了」—— 1:1 就是對方讀了（畫成「已讀」），群組是還沒到齊（畫成「已讀 N」）。
+人都讀到了」。1:1 就是對方讀了（畫成「已讀」），群組是還沒到齊（畫成「已讀 N」）。
 分母是 `getMessageReadRange` 回報有 range 的成員（扣掉自己）。什麼都不知道的時候
-**整個欄位不存在**，不是 `count: 0` —— 不能把「不知道」畫成「沒人讀」。開聊天室時抓
+**整個欄位不存在**，不是 `count: 0`，因為不能把「不知道」畫成「沒人讀」。開聊天室時抓
 一次，之後靠 `read` 事件更新。

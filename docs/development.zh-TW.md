@@ -56,7 +56,7 @@ systemctl --user restart enil         # 改了 daemon 之後
 ## 用 stub 跑面板
 
 
-只要有東西照這個契約寫檔案與監聽 socket，這個外掛就能用 —— 不一定要是這個 daemon。
+只要有東西照這個契約寫檔案與監聽 socket，這個外掛就能用，不一定要是這個 daemon。
 `daemon/stub.py` 就是這樣一個東西：純標準庫的假 daemon，餵假資料給面板，讓人不用真的
 LINE session 也能改 UI。
 
@@ -79,16 +79,15 @@ UTF-16 那個單位。
 
 兩階段剪貼簿指令也在：stub 沒有剪貼簿，所以 `probeClipboardImage` 一律回一張畫出來的
 假 PNG 的 `stage`，再交給 `sendClipboardImage` 送出（IMAGE，縮圖走 `preview`）；
-探測時多加
-一個真 daemon **沒有**的 `empty: true` 才回「剪貼簿裡沒有圖片」——
+探測時多加一個真 daemon **沒有**的 `empty: true` 才回「剪貼簿裡沒有圖片」，
 不然面板那條「沒東西可以貼」的路只能靠清空真的剪貼簿才走得到。`sendFile` 的
 `contentType` 也照 daemon 那套從副檔名判（IMAGE／VIDEO／FILE），影片不給 `mediaPath`，
-太大的那三句拒絕也一模一樣 —— 這是唯一不用真的準備一個 1 GB 檔案就能看到那句話的地方
+太大的那三句拒絕也一模一樣。這是唯一不用真的準備一個 1 GB 檔案就能看到那句話的地方
 （測試用的是 sparse 檔）。
 
 `reply`／`react`／`unsend` 三個指令也都在，而且會照樣寫 `events`：`send` 和 `reply`
 會補一筆 `message` 事件（真的 daemon 是 LINE 把自己送出的訊息推回來），兩秒後再補一筆
-`read` 並把 `readBy` 掛上去 —— 沒有這個「假的對方」，面板的「已讀」根本沒東西可以測。
+`read` 並把 `readBy` 掛上去。沒有這個「假的對方」，面板的「已讀」根本沒東西可以測。
 `react` 換的是整串 `reactions`（不是差異），`unsend` 只肯收回 `ME` 送的那幾則。
 fixture 裡本來就有帶 `replyTo`（含一則只有 `id`、引不到原文的）、`reactions` 和
 `readBy` 的訊息。
@@ -98,13 +97,13 @@ fixture 裡本來就有帶 `replyTo`（含一則只有 `id`、引不到原文的
 帶 `stickerUrl` 的訊息事件。
 
 `image` 也在，而且非有不可：面板只讀本機檔，少了它貼圖格、貼圖選單、FLEX 預覽和燈箱
-在 stub 底下全是破圖。stub 沒有網路，所以圖是畫出來的 —— 一個網址一個檔（sha256 命名、
+在 stub 底下全是破圖。stub 沒有網路，所以圖是畫出來的。一個網址一個檔（sha256 命名、
 跟 daemon 同樣放 `media/public-images/`、不帶副檔名），問幾次都是同一條路徑，`#` 後面
 那半跟 daemon 一樣先丟掉。不是 `https://`、帶帳號密碼、或解析不出來的網址，回的是跟
 daemon 一字不差的 `圖片下載失敗`。
 
 大頭貼也在：一部分聊天室和送出者有 `avatarPath`／`fromAvatar`（`media/avatars/` 底下
-畫出來的假圖），一部分故意沒有 —— 沒有大頭貼的那一列面板一樣要畫得出來。
+畫出來的假圖），一部分故意沒有，因為沒有大頭貼的那一列面板一樣要畫得出來。
 
 `hide`／`unhide` 也在（跟 daemon 一樣不看有沒有登入），被隱藏的那幾間會在寫 state 的
 當下帶上 `hidden: true`：沒有它，右鍵選單、搜尋才找得回來、以及「隱藏之後不算未讀」
@@ -118,7 +117,7 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 `python3 daemon/stub_test.py` 把這些形狀釘在 [protocol.zh-TW.md](protocol.zh-TW.md) 的契約上（純標準庫，跑在自己的暫存
 `XDG_STATE_HOME` 裡）。
 
-**別讓 stub 指到真的 state 目錄** —— 它會蓋掉 `state.json`。
+**別讓 stub 指到真的 state 目錄**，它會蓋掉 `state.json`。
 
 ## 截圖
 

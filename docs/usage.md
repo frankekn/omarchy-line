@@ -31,22 +31,22 @@ What a notification looks like:
   in groups, the content itself in 1:1. Non-text renders as `[圖片]`/`[貼圖]`/
   `[影片]`/`[語音]`/`[檔案]`.
 - **Icon** is the chat's avatar. If it isn't cached yet the notification goes
-  out after at most three seconds anyway — better iconless than late.
+  out after at most three seconds anyway. Better iconless than late.
 - **Clicking opens the panel and jumps into that chat.** Mechanism:
-  `notify-send --action=default=開啟` — omarchy's notification plugin invokes
+  `notify-send --action=default=開啟`. Omarchy's notification plugin invokes
   the libnotify action literally named `default` on click
   (`shell/plugins/notifications/Service.qml:376`), and falls back to focusing
-  the sender's window class — but this panel is a layer surface with no window
+  the sender's window class, but this panel is a layer surface with no window
   to focus. On click the daemon writes a `state.wanted` entry (see
   [protocol.md](protocol.md#wanted-the-chat-opened-from-a-notification)) and runs `omarchy-shell io.github.frankekn.line open`.
 - libnotify actions only work while the notifying process lives, so
   `notify-send` stays resident (`--action` already implies `--wait`) until the
-  notification is dismissed; ten silent minutes and it reaps itself, so an
+  notification is dismissed. After ten silent minutes it reaps itself, so an
   ignored notification never leaves an immortal process.
 
 With no `notify-send`, the first attempt writes
 `[notify] notify-send not found; notifications disabled` to the journal once
-and never repeats; everything else is unaffected (`libnotify` package,
+and never repeats. Everything else is unaffected (`libnotify` package,
 preinstalled on Omarchy). Notification **content never enters the journal**.
 
 ## Keyboard
@@ -80,39 +80,39 @@ Lightbox  ←→ (or h/l) previous/next   wheel zooms   drag pans   double-click
           Esc or click the backdrop to close
 ```
 
-Mouse: drag on a message to select; links open in the default browser
-(`xdg-open`); right-click opens the menu (six reactions on the top row, then
-copy message / copy link / open link / reply / unsend — the link items only
+With the mouse, drag on a message to select. Links open in the default browser
+(`xdg-open`). Right-click opens the menu (six reactions on the top row, then
+copy message / copy link / open link / reply / unsend. The link items only
 appear over a real link, reply only when one is actually pointed at, unsend
-only on your own messages). Messages without a text bubble — images, stickers,
-attachments — get the same menu. Reaction chips under a message add on click
-and undo your own; the quote line above a reply jumps to the original.
+only on your own messages). Messages without a text bubble (images, stickers,
+attachments) get the same menu. Reaction chips under a message add on click
+and undo your own. The quote line above a reply jumps to the original.
 Clicking empty space clears the selection and returns focus to the input, so
 you can keep typing right after selecting. Opening a link or a file follows
 one rule: the two overlay placements ("below the bar" and "center") close the
-panel first (otherwise the browser hides underneath); `App window` mode does
-not. Only `http://` and `https://` open — anything else is refused with
+panel first (otherwise the browser hides underneath). `App window` mode does
+not. Only `http://` and `https://` open. Anything else is refused with
 "Can't open this link".
 
 Copying goes through **wl-copy** (the `wl-clipboard` package): content travels
 over stdin, never on a command line. It isn't in `omarchy`'s dependency list,
 but omarchy's own clipboard plugin and network panel use it, so any normal
-setup has it; genuinely missing it makes copy answer
-"Copy failed: wl-copy not found" — `sudo pacman -S wl-clipboard` and it works
+setup has it. If it is missing, copy answers
+"Copy failed: wl-copy not found". Run `sudo pacman -S wl-clipboard` and it works
 immediately.
 
-With the sticker menu open, Esc only closes the menu — the chat does not fall
-back to the list; it is the topmost layer (except the lightbox). Switching
+With the sticker menu open, Esc only closes the menu. The chat does not fall
+back to the list. The menu is the topmost layer (except the lightbox). Switching
 chats, leaving the conversation, or logging out also closes it: picking half
 way and switching chats would send the next sticker to the wrong room.
 
-With the lightbox open, Esc only closes the lightbox — the chat does not fall
-back either; focus returns to wherever it was (the reply box in a chat, the
-search box in the list). While it is open only `o` does anything — not even
-`r` goes through; close it first to sync.
+With the lightbox open, Esc only closes the lightbox. The chat does not fall
+back either, and focus returns to wherever it was (the reply box in a chat, the
+search box in the list). While it is open only `o` does anything. Not even
+`r` goes through, so close it first to sync.
 
-`/`, `L` and `r` only work when the input box isn't focused (i.e. after Esc) —
-otherwise they're just characters. `r` needs no arm-and-confirm like `L`:
+`/`, `L` and `r` only work when the input box isn't focused (after Esc).
+Otherwise they're just characters. `r` needs no arm-and-confirm like `L`:
 syncing can't break anything, an extra press is just an extra round.
 
 
@@ -153,7 +153,7 @@ the group on every device.
 ## Settings
 
 Panel language (`language`) is `System`, `繁體中文` or `English`. `System`
-follows your OS locale — zh* gets 繁體中文, everything else gets English —
+follows your OS locale. zh* gets 繁體中文 and everything else gets English,
 so an English system still gets 繁體中文 by picking it explicitly:
 
 ```bash
@@ -161,7 +161,7 @@ omarchy bar set io.github.frankekn.line language "繁體中文"
 ```
 
 Daemon-reported errors and message placeholders follow the same setting at
-display time; the wire protocol stays unchanged.
+display time. The wire protocol stays unchanged.
 
 `A−` `A+` next to the search box adjust text scale directly (80–160, steps of
 10). Written back to shell.json, so it survives reboots.
@@ -174,14 +174,14 @@ omarchy bar set io.github.frankekn.line textScale 130
 
 `Scroll 1×` on the same row is wheel speed (`scrollSpeed`, %); click steps
 through (0.5× → 0.75× → 1× → 1.5× → 2× → 3× → 0.5×). Chat list, conversation,
-and sticker menu all change together; `1×` is default (a notch ≈ 60px, close
+and sticker menu all change together. `1×` is default (a notch ≈ 60px, close
 to the old fixed step):
 
 ```bash
 omarchy bar set io.github.frankekn.line scrollSpeed 150
 ```
 
-Any number in 50–300 is accepted, not just the six steps; the button shows
+Any number in 50–300 is accepted, not just the six steps. The button shows
 your factor and clicking jumps to the next step above it. Qt's `Flickable`
 has no "pixels per wheel notch" setting (the step is hardcoded), so the panel
 measures wheel distance itself: a normal mouse notch is 60px (scaled to the
@@ -192,7 +192,7 @@ the same logic with their own step (≈ two tabs, or one sticker). Dragging,
 touch, the scrollbar and the `j`/`k` keys are unchanged.
 
 Next over, `Read 60` is how many messages to ask the daemon at once
-(`historyPage`); click steps (30 → 60 → 100 → 150 → 30). **The first page
+(`historyPage`). Click steps (30 → 60 → 100 → 150 → 30). **The first page
 when opening a chat and every older page above use this number:**
 
 ```bash
@@ -201,7 +201,7 @@ omarchy bar set io.github.frankekn.line historyPage 100
 
 Any number in 20–200 is accepted, steps or not (same rule as scroll speed:
 the button looks for "the next step above current", so hand-editing 37 still
-works). The 200 cap is recognized by the daemon too — a `count` arriving over
+works). The 200 cap is recognized by the daemon too. A `count` arriving over
 the socket is clamped to 1–200 there as well, and a non-number counts as
 unset (default 30).
 
@@ -213,10 +213,10 @@ Older pages don't wait for the very top: **the next page is requested one
 screen before the top**, so by the time you reach it the page is usually
 already attached. One request in flight at a time, and once the oldest
 message is reached it stops asking (an empty page from the daemon means "no
-older") — reopening the chat or pressing sync restarts the count.
+older"). Reopening the chat or pressing sync restarts the count.
 
 Panel position (`placement`) has three modes. The button right of the search
-box shows **the current one**; click cycles (below bar → center → window →
+box shows **the current one**. Click cycles (below bar → center → window →
 below bar), written back to shell.json:
 
 | Value | Layout | Best for |
@@ -253,22 +253,22 @@ omarchy bar set io.github.frankekn.line windowHeight 860
 ```
 
 All three modes share identical keyboard handling (Esc peels back to close,
-`/`, `L`, `r`, the lightbox). The only difference is Tab — "switch to the
-neighboring bar panel" — which does nothing in `App window` mode because the
+`/`, `L`, `r`, the lightbox). The only difference is Tab ("switch to the
+neighboring bar panel"), which does nothing in `App window` mode because the
 window isn't a bar panel.
 
 
 ## Known limits
 
 - Unofficial client, with account risk (see the [Disclaimer](../README.md#disclaimer))
-- Panel UI is Traditional Chinese or English; message content is untranslated
-- Multi-person rooms (`r…` mids) can't take files — linejs's
+- Panel UI is Traditional Chinese or English, and message content is untranslated
+- Multi-person rooms (`r…` mids) can't take files. linejs's
   `uploadMediaByE2EE` only accepts `u`/`c`
 - E2EE videos show 📎 rather than a thumbnail: the thumbnail is encrypted
-  too — getting one means downloading the whole video
-- Sent videos need `ffmpegthumbnailer` or `ffmpeg` for a preview; with
-  neither they send without one (see [Send files and images](#send-files-and-images)) — deliberately not
-  making a decoder a hard dependency
+  too, and getting one means downloading the whole video
+- Sent videos need `ffmpegthumbnailer` or `ffmpeg` for a preview. With
+  neither, they send without one (see [Send files and images](#send-files-and-images)). A decoder is
+  deliberately not a hard dependency
 - Sent videos carry no resolution (`WIDTH`/`HEIGHT`): knowing it takes
   decoding a frame, and the thumbnail step is allowed to be absent
 - AVI has no readable duration: `RIFF` doesn't fix a duration's position in
