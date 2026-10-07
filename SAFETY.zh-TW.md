@@ -18,9 +18,11 @@
   `App window` 位置，按 Esc 回到清單後，聊天室還會留在右欄，但在你再次看它之前，
   它不會送出已讀。點進它的回覆框就算在看，並會為這段期間進來的訊息送出一次已讀。
 - **不繞過限制重試。** LINE 對任何請求回 `ABUSE_BLOCK`、`BANNED` 或
-  `EXCESSIVE_ACCESS` 時，daemon 會停掉所有自動發出的 LINE 流量。面板會顯示
-  `LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。只有你點那一行或重新登入，
-  流量才會恢復。其他錯誤，例如 `MAINTENANCE_ERROR`，不會讓 daemon 停下來。細節見
+  `EXCESSIVE_ACCESS` 時，在你操作之前，daemon 不會自己發出任何 LINE 請求。它會
+  結束 push 迴圈，不只是忽略收到的事件。面板會顯示
+  `LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。只有你點那一行（會執行一次
+  手動同步）或重新登入，自動流量才會恢復。你自己傳的訊息還是會送到 LINE，LINE 拒絕
+  的話，面板會顯示 LINE 的錯誤。其他錯誤，例如 `MAINTENANCE_ERROR`，不會讓 daemon 停下來。細節見
   [LINE 限制帳號的時候](docs/architecture.zh-TW.md#line-限制帳號的時候)。
 - **除了 LINE 的伺服器，不把你的資料送到其他伺服器。** daemon 只拿你的登入 token
   跟 LINE 的伺服器溝通，你的訊息和檔案也只送到 LINE。在你自己的電腦上，桌面通知會把
@@ -49,7 +51,13 @@ Deno 用 `daemon/enil-flags.sh` 裡一份固定的權限清單執行 daemon，�
   那台主機看得到你的 IP 位址，也大致知道圖片是什麼時候被抓的。這個請求是單純的
   `GET`，不帶 cookie，也不帶 LINE token。daemon 拒絕 `http:` 網址，也拒絕解析到私有
   位址的主機。
-- 安裝與更新時會從 JSR 和 npm 下載 daemon 的相依套件，並從 GitHub 下載 linejs fork。
+- `daemon/install.sh` 會以 git submodule 的方式從 GitHub 下載 linejs fork。
+- daemon 第一次從原始碼啟動時，Deno 會從 JSR 和 npm 下載 `daemon/deno.json` 列出的
+  相依套件，版本以 `daemon/deno.lock` 鎖定的為準，存進 Deno 的快取（預設是
+  `~/.cache/deno`）。`install.sh` 最後會啟動 daemon，所以這一步發生在安裝的最後。
+  之後再啟動都用快取。外掛更新後，Deno 只下載快取裡還沒有的版本。
+  `deno task build` 會在建置時下載，編譯出來的 `enil` 執行檔已經包含這些套件，所以
+  執行檔啟動時不會下載任何東西。
 
 ## 存在磁碟上的資料
 

@@ -12,7 +12,8 @@ StartLimitIntervalSec=0
 # ~/.config/systemd/user/ and `systemctl --user enable --now enil`.
 WorkingDirectory=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon
 # enil-run.sh execs the compiled ./enil when its stamp matches this checkout,
-# /usr/bin/deno otherwise -- plugin updates can never strand a stale binary.
+# otherwise `deno run` with the deno found on PATH, then at ~/.deno/bin/deno.
+# Plugin updates can never strand a stale binary.
 ExecStart=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/enil-run.sh
 # Any exit, a clean one included, brings it back; only `systemctl stop` does not
 # (the panel's guard covers that and a hung daemon).

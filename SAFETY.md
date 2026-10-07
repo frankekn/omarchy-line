@@ -23,10 +23,13 @@ of them must update this page in the same commit.
   receipts until you view it again. Clicking into its reply box counts as viewing it, and sends one read
   receipt for the messages that arrived in the meantime.
 - **It does not retry around a restriction.** When LINE answers any request
-  with `ABUSE_BLOCK`, `BANNED`, or `EXCESSIVE_ACCESS`, the daemon stops all
-  automatic LINE traffic. The panel shows `LINE restricted this account
-  (<code>); connection paused — tap to retry`. Traffic starts again only when
-  you tap that line or log in. Other errors, such as `MAINTENANCE_ERROR`, do
+  with `ABUSE_BLOCK`, `BANNED`, or `EXCESSIVE_ACCESS`, the daemon makes no
+  LINE request on its own until you act. It ends the push loop instead of
+  only ignoring its events. The panel shows `LINE restricted this account
+  (<code>); connection paused — tap to retry`. Automatic traffic starts again
+  only when you tap that line, which runs a manual sync, or log in. A message
+  you send yourself still goes to LINE, and the panel shows LINE's error if
+  LINE refuses it. Other errors, such as `MAINTENANCE_ERROR`, do
   not stop the daemon. [When LINE restricts the
   account](docs/architecture.md#when-line-restricts-the-account) has the
   details.
@@ -62,8 +65,16 @@ applies to `deno run` and to a compiled binary.
   and roughly when the image was fetched. The request is a plain `GET` with
   no cookies and no LINE token. The daemon refuses `http:` addresses and
   hosts that resolve to private addresses.
-- Installing and updating download the daemon's dependencies from JSR and
-  npm, and the linejs fork from GitHub.
+- `daemon/install.sh` downloads the linejs fork from GitHub as a git
+  submodule.
+- The first time the daemon starts from source, Deno downloads the JSR and
+  npm dependencies that `daemon/deno.json` names, at the versions that
+  `daemon/deno.lock` pins, into its cache (`~/.cache/deno` by default).
+  `install.sh` starts the daemon, so this happens at the end of the install.
+  Later starts use the cache. After a plugin update, Deno downloads only the
+  versions that the cache does not have yet. `deno task build` downloads them
+  at build time, and the compiled `enil` binary includes them, so the binary
+  downloads nothing when it starts.
 
 ## What is stored on disk
 

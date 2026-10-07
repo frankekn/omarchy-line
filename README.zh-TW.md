@@ -164,9 +164,11 @@ omarchy restart shell
 
 **LINE 會因為這個停用我的帳號嗎？** 有可能。LINE 沒有提供這種存取方式，允不允許由
 LINE 決定。daemon 以次要裝置登入，除非你在面板上操作，它不會送出任何訊息、表情回應
-或已讀。LINE 回 `ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS` 時，daemon 會停掉所有自動發出的
-LINE 流量，面板會顯示 `LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。在你點
-那一行或重新登入之前，什麼都不會重試。
+或已讀。LINE 回 `ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS` 時，daemon 會結束 push
+迴圈，也不會自己發出任何 LINE 請求。面板會顯示
+`LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。在你點那一行（會執行一次手動
+同步）或重新登入之前，什麼都不會重試。你自己傳的訊息還是會送到 LINE，LINE 拒絕的話，
+面板會顯示 LINE 的錯誤。
 [docs/architecture.zh-TW.md](docs/architecture.zh-TW.md#line-限制帳號的時候) 說明
 哪些會停、哪些會留著。
 

@@ -14,8 +14,10 @@ Chen, so this project starts at 2.x.
   `enil.service`. It never touches the state directory. Running it again is
   safe.
 - When LINE refuses the account with `ABUSE_BLOCK`, `BANNED`, or
-  `EXCESSIVE_ACCESS`, the daemon stops all automatic LINE traffic and keeps
-  the session. The panel shows `LINE restricted this account (<code>);
+  `EXCESSIVE_ACCESS`, the daemon makes no LINE request on its own and keeps
+  the session. It ends linejs' push loop instead of only ignoring its
+  events. A message you send yourself still goes to LINE and shows LINE's
+  error. The panel shows `LINE restricted this account (<code>);
   connection paused — tap to retry`. Tapping that line or logging in resumes
   traffic. `MAINTENANCE_ERROR` keeps retrying, and per-request errors such as
   `NOT_AVAILABLE_USER` do not stop the daemon.

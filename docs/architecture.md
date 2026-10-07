@@ -125,7 +125,7 @@ that answer, and retrying is what turns a rate limit into a ban. When any LINE
 call fails with one of these codes, `haltForRestriction` in
 `daemon/modules/restriction.ts` stops every automatic path: the poll, the
 refresh retry, the watchdog reconnect, the reconnect after wake, and the push
-streams. It writes one journal line and publishes the link in `state.json` as
+loop. It writes one journal line and publishes the link in `state.json` as
 `push: "down"` with `reason: "restricted"` and the code (see
 [protocol.md](protocol.md)).
 
@@ -143,10 +143,16 @@ login lifts it too. The daemon keeps the session while it waits: it does not
 revoke the token, and the chat list and your drafts stay. Ending the session
 would force a new QR scan over what may be a one-hour rate limit.
 
-One idle connection stays open. linejs runs its push loop for as long as the
-client holds a token, and the daemon cannot end that loop without clearing the
-token. The halt aborts the push streams, so no events reach the daemon, but
-the connection and its 30-second pings continue while the halt lasts.
+The halt ends linejs' push loop, not only its event stream. linejs runs that
+loop for as long as the client holds a token, and the daemon keeps the token.
+So the halt replaces the client's push connect step with one that fails with
+the same refusal, and it closes the open connection. The loop's next connect
+attempt fails without contacting LINE, and the loop exits. A manual sync or a
+login puts the original connect step back and starts a new loop.
+
+While LINE refuses the account, the daemon makes no LINE request on its own.
+What you do in the panel still goes to LINE, such as a message you send or a
+chat you open. If LINE refuses that request, the panel shows LINE's error.
 
 Other codes do not halt the daemon. `MAINTENANCE_ERROR` clears by itself, so
 the daemon keeps retrying with its normal backoff. `NOT_AVAILABLE_USER` can

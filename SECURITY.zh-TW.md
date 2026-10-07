@@ -48,7 +48,7 @@ omarchy-line 是 Omarchy 上的非官方 LINE 面板。本機的 daemon 持有 L
 ## 不在範圍內
 
 - [SAFETY.zh-TW.md](SAFETY.zh-TW.md) 已經寫明的行為。例如 FLEX 圖片的主機看得到你的
-  IP 位址，以及安裝時會從 JSR、npm 和 GitHub 下載相依套件。
+  IP 位址，安裝時會從 GitHub 抓 linejs，以及 daemon 第一次啟動時會從 JSR 和 npm 下載相依套件。
 - 需要 root，或需要已經以你的身分執行的程式碼才能做到的攻擊。這種程式碼本來就讀得到
   你的檔案。
 - LINE 對非官方 client 施加的帳號限制。這是已知風險，[免責聲明](README.zh-TW.md#免責聲明)

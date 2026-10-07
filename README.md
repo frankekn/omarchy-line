@@ -188,9 +188,11 @@ Deleting it removes them from this computer.
 of access, and it decides what it allows. The daemon logs in as a secondary
 device, and it sends no message, reaction, or read receipt unless you act in
 the panel. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
-`EXCESSIVE_ACCESS`, the daemon stops all automatic LINE traffic, and the panel
-shows `LINE restricted this account (<code>); connection paused — tap to
-retry`. Nothing retries until you tap that line or log in again.
+`EXCESSIVE_ACCESS`, the daemon ends its push loop and makes no LINE request on
+its own. The panel shows `LINE restricted this account (<code>); connection
+paused — tap to retry`. Nothing retries until you tap that line, which runs a
+manual sync, or log in again. A message you send yourself still goes to LINE,
+and the panel shows LINE's error if LINE refuses it.
 [docs/architecture.md](docs/architecture.md#when-line-restricts-the-account)
 explains what stops and what stays.
 

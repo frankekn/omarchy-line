@@ -56,8 +56,8 @@ still apply to that.
 ## Out of scope
 
 - Behavior that [SAFETY.md](SAFETY.md) already documents. For example, a FLEX
-  image host sees your IP address, and installing downloads dependencies from
-  JSR, npm, and GitHub.
+  image host sees your IP address, installing fetches linejs from GitHub, and
+  the daemon's first start downloads its dependencies from JSR and npm.
 - Attacks that need root, or code that already runs as your user. Such code
   can read your files anyway.
 - Account restrictions that LINE applies to unofficial clients. They are a

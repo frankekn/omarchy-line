@@ -101,7 +101,7 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 請求。daemon 自己再怎麼重試都改變不了這個答案，而重試正是把一次流量限制變成停權的
 原因。任何一個 LINE 呼叫以這些代碼失敗時，`daemon/modules/restriction.ts` 裡的
 `haltForRestriction` 會停掉每一條自動路徑：輪詢、重新整理的重試、watchdog 重連、
-睡醒後的重連，以及 push stream。它在 journal 寫一行，並把 `state.json` 裡的 link
+睡醒後的重連，以及 push 迴圈。它在 journal 寫一行，並把 `state.json` 裡的 link
 寫成 `push: "down"`，帶上 `reason: "restricted"` 和代碼（見
 [protocol.zh-TW.md](protocol.zh-TW.md)）。
 
@@ -117,9 +117,14 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 session：不撤銷 token，聊天列表和草稿都還在。結束 session 的話，可能只是一小時的
 流量限制，卻要你重新掃一次 QR 碼。
 
-會留著一條閒置連線。只要 client 還有 token，linejs 的 push 迴圈就會一直跑，daemon
-不清掉 token 就停不了它。暫停時 push stream 已經中止，不會再有事件送到 daemon，但
-那條連線和它每 30 秒一次的 ping 在暫停期間會繼續。
+暫停會結束 linejs 的 push 迴圈，不只是不再接收事件。只要 client 還有 token，linejs
+就會一直跑這個迴圈，而 daemon 會保留 token。所以暫停時，daemon 把 client 的 push
+連線步驟換成一個直接丟出同一個拒絕錯誤的版本，並關掉目前的連線。迴圈下一次連線會在
+碰到網路之前就失敗，然後結束。手動同步或登入會把原本的連線步驟放回去，再開一個新的
+迴圈。
+
+LINE 拒絕這個帳號的期間，daemon 不會自己發出任何 LINE 請求。你在面板上的操作還是會
+送到 LINE，例如傳訊息或打開聊天室。LINE 拒絕那個請求的話，面板會顯示 LINE 的錯誤。
 
 其他代碼不會讓 daemon 暫停。`MAINTENANCE_ERROR` 會自己解除，所以 daemon 照平常的
 退避繼續重試。`NOT_AVAILABLE_USER` 可能來自某一個請求的對象，例如傳訊息給已刪除的
