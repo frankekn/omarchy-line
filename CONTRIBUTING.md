@@ -57,8 +57,7 @@ the user.
 - Keep one change per pull request.
 - CI runs the checks above, except `omarchy plugin validate`, on a
   GitHub-hosted runner for every pull request, including pull requests from
-  forks. It uses no secrets. The automated review runs only for pull requests
-  from branches in this repository.
+  forks. It uses no secrets.
 - Update the English and the Traditional Chinese docs together. Each `.md`
   file has a `.zh-TW.md` twin.
 - For UI changes, add a screenshot taken against the stub.

@@ -46,7 +46,6 @@ python3 daemon/stub_test.py
 - 一個 pull request 只做一件事。
 - CI 會在 GitHub 提供的 runner 上，對每一個 pull request 跑上面的檢查（`omarchy
   plugin validate` 除外），從 fork 來的 pull request 也一樣。CI 不用任何 secret。
-  自動 review 只對這個 repo 裡的分支發的 pull request 跑。
 - 英文和繁體中文文件一起更新。每一個 `.md` 檔都有對應的 `.zh-TW.md`。
 - 改到 UI 的話，附一張對著 stub 拍的截圖。
 

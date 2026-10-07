@@ -169,13 +169,8 @@ dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`
 `.github/workflows/ci.yml` 在 GitHub 提供的 `ubuntu-24.04` runner 上跑，對象是推到
 `main` 的 commit，以及每一個 pull request（包括從 fork 來的 pull request）。它不用任何
 secret，對 repo 只有唯讀權限。它跑上面那些檢查，但不跑需要 Omarchy shell 的
-`omarchy plugin validate` 和 `qmllint`。另外還跑 review finalizer 的測試
-（`node --test .github/scripts/needlefish-finalize.test.cjs`）、
-`sh -n daemon/enil-run.sh`，以及檢查 `manifest.json` 有沒有 `id`、`name` 和
-`version`。
-
-自動 review（`.github/workflows/needlefish.yml`）需要一個 secret，所以只對這個 repo
-裡的分支發的 pull request 跑，從 fork 來的 pull request 一律不跑。
+`omarchy plugin validate` 和 `qmllint`。另外還跑 `sh -n daemon/enil-run.sh`，
+以及檢查 `manifest.json` 有沒有 `id`、`name` 和 `version`。
 
 ## 調校用的環境變數
 

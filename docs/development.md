@@ -205,14 +205,8 @@ config, your state, and your daemon are not touched. A capture larger than
 pushes to `main` and for every pull request, including pull requests from
 forks. It uses no secrets and has read-only access to the repository. It
 runs the checks above except `omarchy plugin validate` and `qmllint`, which
-need the Omarchy shell. It also runs the review finalizer tests
-(`node --test .github/scripts/needlefish-finalize.test.cjs`),
-`sh -n daemon/enil-run.sh`, and a check that `manifest.json` has `id`,
-`name`, and `version`.
-
-The automated review (`.github/workflows/needlefish.yml`) needs a secret. It
-runs only for pull requests from branches in this repository, never for pull
-requests from forks.
+need the Omarchy shell. It also runs `sh -n daemon/enil-run.sh` and a check
+that `manifest.json` has `id`, `name`, and `version`.
 
 ## Tuning variables
 
