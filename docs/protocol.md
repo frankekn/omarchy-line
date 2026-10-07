@@ -87,7 +87,7 @@ login or logout teardown finished. Transient states mid-startup/resume don't
 carry it and consumers must not read them as a settled session.
 `login.attempt` is `logout` (teardown after the user pressed logout),
 `resume` (boot-time storage resume failed) or `manual` (a QR attempt via
-"登入 LINE" failed). Any `settled: true` terminal teardown (logout, any
+**Log in to LINE** failed). Any `settled: true` terminal teardown (logout, any
 resume that ran to its end whether the cause is `token_expired` or storage
 holding no token at boot, or an established-then-failed manual)
 makes the panel drop the previous account's durable drafts. Retryable
@@ -102,7 +102,7 @@ since, reset by a success. `reason` exists only when `failures > 0` and shares
 `login.reason`'s classes (`network`/`token_expired`/`restricted`/`unknown`). A failure only
 lands in the file at the moment the streak begins (same edge-write shape as
 `link`). Later counting rides the 30 s heartbeat. At `failures >= 2` the panel
-prints "清單可能過期" under the list title line (a single 30 s timeout happens
+prints "Chat list may be stale" under the list title line (a single 30 s timeout happens
 on phone hotspots and doesn't trip this). The unread badge is unaffected. The
 field is absent before login and removed on logout. The stub counts every
 write as a success, plus a `fail-refresh` command the real daemon lacks (same
@@ -476,15 +476,15 @@ Messages returned by `history` (absent fields are omitted, never `null`):
 message along, and fetching per message means a round trip per bubble, so the
 daemon only looks inside the messages it rendered this session (last 500,
 `text` truncated at 200 chars). An unresolved one carries only `id` and the
-panel must still render (one "回覆訊息" line is enough).
+panel must still render. The panel then shows "message" as the quote text.
 
 `reactions`' `mine` is "did I pick this one". One person counts once per
 message, so `count` sums to how many reacted.
 
 `readBy`'s `count` is "people other than me who read up to this message" and
 `all` is "everyone the daemon knows about has read it". In 1:1 that's the
-other person having read (drawn "已讀"), in a group not-yet-everyone (drawn
-"已讀 N"). The denominator is members with a range in `getMessageReadRange`
+other person having read (drawn "Read"), in a group not-yet-everyone (drawn
+"Read N"). The denominator is members with a range in `getMessageReadRange`
 (minus self). When nothing is known **the whole field is absent**, not
 `count: 0`. "Unknown" must never draw as "nobody read". Fetched once on
 opening a chat, then kept by `read` events.

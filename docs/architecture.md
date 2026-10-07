@@ -206,14 +206,15 @@ as an unknown error, where a single timed-out request nobody answered was
 enough to kill the daemon for a systemd restart.
 
 Both layers above are automatic but both make you wait: the watchdog checks
-once a minute, the floor poll every five. To skip the wait, press the **同步**
-button right of the list search box (keyboard `r`, or click the "LINE 連線中斷，
-重連中" line under the title). It rebuilds the push connection and refetches
+once a minute, the floor poll every five. To skip the wait, press the **Sync**
+button right of the list search box (keyboard `r`, or click the "LINE link
+down, reconnecting" line under the title). It rebuilds the push connection and refetches
 the chat list immediately, re-reading the open conversation too. The button
-reads "同步中…" while working, usually settling on "已同步 HH:MM" within
+reads "Syncing…" while working, usually settling on "Synced HH:MM" within
 seconds (if a refetch was already in flight it waits out that round and the
-button stays on "同步中…" meanwhile). A failure prints its reason
-(`同步失敗：連不上 LINE，稍後重試` and friends), never silence. The rebuild
+button stays on "Syncing…" meanwhile). A failure prints its reason
+(`Sync failed: Can't reach LINE — try again later` and similar), never
+silence. The rebuild
 itself takes eight seconds (linejs's own pusher must get its recovery window
 first, or both loops fight over one connection) but the sync does not wait for
 it. The refetch needs no new connection, so the view comes back first and
@@ -305,7 +306,7 @@ there leaves LINE where it was.
 
 Two ways to send files: `/file <path>` in the input, or `📎` for a system file
 picker. The picker uses **zenity**, which Omarchy does not preinstall.
-Without it `📎` answers "找不到 zenity，請 sudo pacman -S zenity". Installing
+Without it `📎` answers "zenity not found — sudo pacman -S zenity". Installing
 makes it work immediately, with no shell restart needed. Picking a file then
 cancelling shows no message, by design.
 
@@ -323,8 +324,10 @@ voice message needs a duration and the daemon has no demuxer. Sending as one
 yields a 0:00 waveform.
 
 **Oversized files are refused before being read**: images (incl. gif) **20
-MB**, videos and files **1 GB**, refusing with "圖片太大（超過 20 MB）" /
-"影片太大（超過 1 GB）" / "檔案太大（超過 1 GB）". The cap is spelled out
+MB**, videos and files **1 GB**, refusing with "Image too large (over 20 MB)",
+"Video too large (over 1 GB)", or "File too large (over 1 GB)". The daemon
+sends its refusals in Traditional Chinese, and the English panel translates
+them. This page quotes the English panel. The cap is spelled out
 because the user picked the file and only they can pick a smaller one. The
 caps are ours: LINE refuses only after the whole upload, which on home
 upstream means minutes wasted for an error nobody can act on. The image cap
@@ -374,26 +377,27 @@ in `media/` and a restricted `stage` name returned. The panel then sends
 function as `sendFile`, deleting the stage on success or failure. Pasted
 screenshots and picked-file images share one type check, naming, and refusal.
 
-Failures all say why, never a bare "send failed": no wl-clipboard →
-"找不到 wl-paste，請 sudo pacman -S wl-clipboard"; text in the clipboard →
-"剪貼簿裡沒有圖片"; an unsendable format names it ("剪貼簿的圖片格式不支援:
-image/tiff"); oversized → "剪貼簿的圖片太大（超過 20 MB）". The daemon is a
+Failures all say why, never a bare "send failed". Without wl-clipboard the
+panel shows "wl-paste not found — sudo pacman -S wl-clipboard". Text in the
+clipboard gives "No image on the clipboard". An unsendable format is named
+("Unsupported clipboard image type: image/tiff"). An oversized image gives
+"Clipboard image too large (over 20 MB)". The daemon is a
 systemd user unit. **If it starts before the compositor it has no
 `WAYLAND_DISPLAY`**, wl-paste can't reach the display, and the answer is
-"連不上 Wayland，請 systemctl --user restart enil", which differs from an empty
+"Can't reach Wayland — systemctl --user restart enil", which differs from an empty
 clipboard, hence different words. A stuck wl-paste gets 5 s at most, then
-"讀不到剪貼簿" with the reason journaled.
+"Couldn't read the clipboard" with the reason journaled.
 
 **On the panel side this is `Ctrl+V` in the input box.** The clipboard lives
 on the daemon's side (`wl-paste` runs there) and the panel cannot read it, so
 the key sends a non-message `probeClipboardImage` first. The daemon reads and
-pins a staged snapshot in one shot. When the reply happens to be "剪貼簿裡沒有
-圖片", the panel knows it's text and lets the input paste normally. Only after
+pins a staged snapshot in one shot. When the reply happens to be "No image on the
+clipboard", the panel knows it's text and lets the input paste normally. Only after
 a successful probe does it send `sendClipboardImage` carrying a `requestId`,
 so a failed probe or a drop never leaves a token with no history message to
 reconcile, and the clipboard can't change between the two phases. So Ctrl+V on
 text still pastes text, one socket round-trip slower. Ctrl+V on an image sends
-it outright, leaving half-typed input untouched. The banner reads "傳送中…"
+it outright, leaving half-typed input untouched. The banner reads "Sending…"
 during the upload, same as `📎`. No bubble is drawn first. At keypress time
 nobody knows whether the clipboard holds an image, and drawing a bubble then
 withdrawing it for a text paste would flash one per paste. The real message
@@ -412,23 +416,23 @@ twice. The moment the answer lands (sent or refused), Ctrl+V works again.
 **Unopenable attachments say why instead of a bare "download failed".**
 Unsent messages still arrive from LINE with contentType `FILE`/`IMAGE` but no
 content. The daemon marks them `mediaState: "unsent"`, `hasMedia: false`,
-rewrites `text` to "已收回訊息" (the list preview too), and clicking answers
-"訊息已收回" without touching the network. Chat files expire after **7 days**
+rewrites `text` to "Message unsent" (the list preview too), and clicking
+answers "Message already unsent" without touching the network. Chat files expire after **7 days**
 (the metadata's `FILE_EXPIRE_TIMESTAMP`, stored in `expiresAt`) as
-`mediaState: "expired"`, answering "檔案已過期（LINE 只保留 7 天）", again with no
+`mediaState: "expired"`, answering "File expired (LINE keeps files for 7 days)", again with no
 network. Failures after an actual fetch split in two: the object being gone
 (HTTP 404/410, `ObsError`, or the `encrypted data too short` /
 `HMAC verification failed` upstream linejs throws earlier in decrypt) answers
-"檔案已過期或已被刪除". Everything else is "下載失敗". The panel draws from
-the two fields: an unsent message is one grey italic "已收回訊息" line with
+"File expired or deleted". Everything else is "Download failed". The panel draws from
+the two fields: an unsent message is one grey italic "Message unsent" line with
 sticker/FLEX/thumbnail/📎 all hidden. An expired file's 📎 row appends
-"（已過期）". Neither is clickable and lightbox ←/→ skips them.
+"(expired)". Neither is clickable and lightbox ←/→ skips them.
 
 Every command answered `{ok:false}` also leaves one journal line
 `[cmd] <cmd> failed: <class>: <message>` (message truncated to 120 chars, mids
 replaced by `<mid>`, request bodies never written).
 `journalctl --user -u enil | grep '\[cmd\]'` is the failure log. Refusals
 carrying a path **go only to the panel, never the journal**: a missing
-`sendFile` shows the panel `找不到檔案: <path>` (the user picked that path)
-while the journal only gets "找不到檔案".
+`sendFile` shows the panel `File not found: <path>` (the user picked that path),
+while the journal line leaves the path out.
 

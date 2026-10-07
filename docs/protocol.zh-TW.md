@@ -92,7 +92,7 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 失敗的次數，成功就歸 0；`reason` 只在 `failures > 0` 時存在，分類跟 `login.reason`
 同一套（`network`／`token_expired`／`restricted`／`unknown`）。失敗只在進入連錯的那一刻寫進檔案一次
 （跟 `link` 的邊寫同一個形狀），之後的計數靠 30 秒心跳帶上去；面板在
-`failures >= 2` 時把「清單可能過期」印在清單標題下那一行（一次 30 秒的 timeout
+`failures >= 2` 時把「LINE 清單可能過期」印在清單標題下那一行（一次 30 秒的 timeout
 手機熱點下就會發生，單次不跳字），未讀徽章不受影響。登入前沒有這個欄位，登出
 會拿掉。stub 每次寫檔都算一次成功，另有一個真 daemon 沒有的 `fail-refresh` 指令
 （跟 `poke` 同一個性質）把 `failures` 推上去，讓面板那句話不用等真的斷網也看得到。
@@ -394,7 +394,7 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 `replyTo` 的 `fromName`／`text` 是**盡力而為**：LINE 不會把被引用的那則跟著送過來，
 每一則都去補抓等於一個泡泡一趟往返，所以 daemon 只從自己這輪渲染過的訊息裡查
 （最近 500 則，`text` 截到 200 字）。查不到就只有 `id`，面板照樣要畫得出來
-（畫成一行「回覆訊息」就好）。
+面板這時會把引言畫成「訊息」。
 
 `reactions` 的 `mine` 是「自己有沒有選這一個」。同一則訊息上一個人只算一次，
 所以 `count` 加起來就是有多少人按過。
