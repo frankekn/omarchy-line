@@ -1592,6 +1592,124 @@ class FixtureTest(unittest.TestCase):
             s.close()
 
 
+class DemoFixtureTest(unittest.TestCase):
+    """demo-en / demo-zh: the README screenshots' data.
+
+    The point of these fixtures is how they read, so the tests pin that: no
+    test-data markers, each locale in its own language, every feature the
+    panel draws present in both, and every picture a real file.
+    """
+
+    # Strings the daemon itself writes in Chinese; the panel translates them.
+    DAEMON_WORDS = {"我", "已收回訊息"}
+    CJK = re.compile(r"[\u3000-\u9fff\uff00-\uffef]")
+
+    @classmethod
+    def setUpClass(cls):
+        cls.stubs = {loc: Stub("--fixture", "demo-" + loc) for loc in ("en", "zh")}
+
+    @classmethod
+    def tearDownClass(cls):
+        for s in cls.stubs.values():
+            s.close()
+
+    def messages(self, s):
+        out = []
+        for c in s.state()["chats"]:
+            res = s.call(cmd="history", chat=c["mid"], count=100)
+            self.assertTrue(res["ok"], res)
+            out.extend(res["data"])
+        return out
+
+    def visible_strings(self, s):
+        """What the panel prints that came from the fixture, not the daemon."""
+        state = s.state()
+        out = [state["me"]["displayName"]]
+        for c in state["chats"]:
+            out += [c["name"], c["lastFrom"]]
+        for m in self.messages(s):
+            out += [m["fromName"], m["text"], m.get("fileName", ""),
+                    m.get("altText", ""), (m.get("replyTo") or {}).get("text", ""),
+                    (m.get("replyTo") or {}).get("fromName", "")]
+        return [v for v in out if v and v not in self.DAEMON_WORDS]
+
+    def test_no_test_markers_on_screen(self):
+        for loc, s in self.stubs.items():
+            for text in self.visible_strings(s):
+                self.assertNotIn("STUB", text.upper(), loc)
+
+    def test_english_shows_no_chinese(self):
+        for text in self.visible_strings(self.stubs["en"]):
+            self.assertIsNone(self.CJK.search(text), text)
+
+    def test_chinese_names_are_chinese(self):
+        state = self.stubs["zh"].state()
+        names = [state["me"]["displayName"]] + [c["name"] for c in state["chats"]]
+        names += [m["fromName"] for m in self.messages(self.stubs["zh"])]
+        for name in names:
+            self.assertRegex(name, r"^[\u4e00-\u9fff]+$")
+
+    def test_both_locales_show_every_feature(self):
+        for loc, s in self.stubs.items():
+            msgs = self.messages(s)
+            types = {m["contentType"] for m in msgs}
+            self.assertLessEqual({"NONE", "IMAGE", "FILE", "STICKER", "FLEX"},
+                                 types, loc)
+            kinds = {"all" if e.get("all") else "mid"
+                     for m in msgs for e in m.get("mentions", [])}
+            self.assertEqual({"all", "mid"}, kinds, loc)
+            self.assertTrue(any(m.get("reactions") for m in msgs), loc)
+            self.assertTrue(any(m.get("readBy", {}).get("all") is False
+                                and m["readBy"]["count"] >= 2 for m in msgs), loc)
+            self.assertTrue(any(m.get("readBy", {}).get("all") is True
+                                for m in msgs), loc)
+            self.assertTrue(any((m.get("replyTo") or {}).get("text")
+                                for m in msgs), loc)
+            self.assertTrue(any(m["unsent"] for m in msgs), loc)
+            self.assertTrue(any(m["mediaState"] == "expired" for m in msgs), loc)
+            self.assertTrue(any(m["contentType"] == "FILE"
+                                and m["mediaState"] == "ok" for m in msgs), loc)
+            unread = [c["unread"] for c in s.state()["chats"]]
+            self.assertGreater(sum(unread), 0, loc)
+            for m in msgs:
+                for e in m.get("mentions", []):
+                    self.assertEqual(
+                        "@" + e["name"] if not e.get("all") else "@All",
+                        m["text"].encode("utf-16-le")[
+                            e["start"] * 2:e["end"] * 2].decode("utf-16-le"), loc)
+
+    def test_every_picture_is_a_demo_asset(self):
+        demo = os.path.join(os.path.dirname(HERE), "docs", "images", "demo")
+
+        def same_as_an_asset(path):
+            with open(path, "rb") as f:
+                body = f.read()
+            for name in os.listdir(demo):
+                with open(os.path.join(demo, name), "rb") as f:
+                    if f.read() == body:
+                        return True
+            return False
+
+        for loc, s in self.stubs.items():
+            state = s.state()
+            for c in state["chats"]:
+                self.assertTrue(same_as_an_asset(c["avatarPath"]), c["name"])
+            for m in self.messages(s):
+                if m.get("fromAvatar"):
+                    self.assertTrue(same_as_an_asset(m["fromAvatar"]), m["id"])
+                urls = list(m.get("flexImages", []))
+                if m.get("stickerUrl"):
+                    urls.append(m["stickerUrl"])
+                for url in urls:
+                    res = s.call(cmd="image", url=url)
+                    self.assertTrue(res["ok"], res)
+                    self.assertTrue(same_as_an_asset(res["data"]["path"]), url)
+                if m["contentType"] == "IMAGE":
+                    res = s.call(cmd="preview", chat=m["chat"], messageId=m["id"])
+                    self.assertTrue(res["ok"], res)
+                    self.assertTrue(same_as_an_asset(res["data"]["path"]), m["id"])
+
+
 class HiddenTest(unittest.TestCase):
     """`hide` / `unhide`: the chat rows the user has taken off the list.
 
