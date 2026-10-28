@@ -7,10 +7,10 @@
  * behind it can never fire. Here every write is a pid-suffixed temp file,
  * fsynced and renamed into place at 0600, and a failure rejects.
  *
- * Dependency direction: a leaf. It imports only linejs's BaseStorage contract,
+ * Dependency direction: a leaf. It imports only linejs's storage module,
  * so tests can drive it against a temp dir without the LINE session.
  */
-import { BaseStorage, type Storage } from "@evex/linejs/storage";
+import { BaseStorage, MemoryStorage, type Storage } from "@evex/linejs/storage";
 
 type Data = Record<Storage["Key"], Storage["Value"]>;
 
@@ -107,5 +107,70 @@ export class SessionStore extends BaseStorage {
     for (const [key, value] of Object.entries(await this.getAll())) {
       await storage.set(key, value);
     }
+  }
+
+  async stageLogin(): Promise<StagedSessionStore> {
+    const data = await this.getAll();
+    // A new QR session must not inherit the previous session's refresh token.
+    for (const key of [".auth", "refreshToken", "expire"]) delete data[key];
+    return new StagedSessionStore(
+      this,
+      data,
+      (next) => this.withLock(() => this.write(next)),
+    );
+  }
+}
+
+class StagedSessionStore extends BaseStorage {
+  private readonly memory: MemoryStorage;
+  private storage: BaseStorage;
+  private writing: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly backing: SessionStore,
+    data: Data,
+    private readonly publish: (data: Data) => Promise<void>,
+  ) {
+    super();
+    this.memory = new MemoryStorage(data);
+    this.storage = this.memory;
+  }
+
+  private withLock(fn: () => Promise<void>): Promise<void> {
+    const run = this.writing.then(fn);
+    this.writing = run.catch(() => {});
+    return run;
+  }
+
+  commit(accessToken: string): Promise<void> {
+    return this.withLock(async () => {
+      if (this.storage === this.backing) return;
+      if (!accessToken) throw new Error("QR login returned no access token");
+      await this.memory.set(".auth", accessToken);
+      await this.publish(this.memory.getAll());
+      // The library keeps this object for refresh/E2EE writes after login.
+      this.storage = this.backing;
+    });
+  }
+
+  async get(key: Storage["Key"]): Promise<Storage["Value"] | undefined> {
+    await this.writing;
+    return await this.storage.get(key);
+  }
+
+  set(key: Storage["Key"], value: Storage["Value"]): Promise<void> {
+    return this.withLock(() => this.storage.set(key, value));
+  }
+
+  delete(key: Storage["Key"]): Promise<void> {
+    return this.withLock(() => this.storage.delete(key));
+  }
+
+  clear(): Promise<void> {
+    return this.withLock(() => this.storage.clear());
+  }
+
+  migrate(storage: BaseStorage): Promise<void> {
+    return this.withLock(() => this.storage.migrate(storage));
   }
 }

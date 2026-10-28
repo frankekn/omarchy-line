@@ -65,6 +65,10 @@ Deno 用 `daemon/enil-flags.sh` 裡一份固定的權限清單執行 daemon，�
 這個目錄，每次啟動時都把目錄設回 `0700`、把 `storage.json` 設回 `0600`。這些權限能擋住
 這台電腦上的其他使用者，但擋不住以你的身分執行的程式。
 
+QR 登入期間的憑證與金鑰變更先留在記憶體。認證及首次 profile 請求成功後，才連同
+access token 原子發布完整的新 session。提交前登入失敗，原本的 session 存檔不變；
+提交後的 token 輪替仍使用同一個即時儲存層。
+
 | 路徑 | 內容 |
 |---|---|
 | `storage.json` | 你的登入 token、refresh token、E2EE 金鑰與登入憑證。**這個檔案就是你的 LINE 帳號。** |

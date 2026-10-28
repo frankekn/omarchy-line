@@ -153,18 +153,34 @@ const DECRYPT_WIDTH = 8;
 
 // The block between the enil:fetchguard markers is sliced out verbatim by
 // daemon/fetchguard_test.ts, so it must stay self-contained: the only module
-// state it may read is the two timeout constants above, which the test stubs.
+// state it may read is REQUEST_TIMEOUT_MS and UPLOAD_TIMEOUT_MS above, which the
+// test stubs.
 // enil:fetchguard-begin
 /**
- * Which ceiling a host gets. OBS is the media host -- linejs posts uploads to
- * the `https://obs.line-apps.com/` prefix (3.3.2 base/obs/mod.ts:50) -- and an
- * upload answers only after the whole body is on the wire, so a 30s ceiling
- * would kill every large attachment. Everything else is a talk call.
+ * Margin past a long poll's own hold time. linejs aborts the poll itself 5s
+ * after `x-lst` (base/login/mod.ts checkQrCodeVerified), and only that abort
+ * reads as "no scan yet, poll again"; this ceiling must lose that race.
  */
-function headerTimeoutMs(url: URL): number {
-  return url.hostname.startsWith("obs")
-    ? UPLOAD_TIMEOUT_MS
-    : REQUEST_TIMEOUT_MS;
+const LONG_POLL_GRACE_MS = 15_000;
+
+/**
+ * Which ceiling a request gets. OBS is the media host -- linejs posts uploads
+ * to the `https://obs.line-apps.com/` prefix (3.3.2 base/obs/mod.ts:50) -- and
+ * an upload answers only after the whole body is on the wire, so a 30s ceiling
+ * would kill every large attachment.
+ *
+ * A QR or PIN login poll carries `x-lst`: the server holds the request open
+ * that long, waiting for the phone (150s as of 2026-10). Cutting it at the talk
+ * ceiling ended the whole QR login 60s in, before most people had scanned.
+ * Everything else is a talk call.
+ */
+function headerTimeoutMs(req: Request): number {
+  if (new URL(req.url).hostname.startsWith("obs")) return UPLOAD_TIMEOUT_MS;
+  const holdMs = Number(req.headers.get("x-lst"));
+  if (Number.isFinite(holdMs) && holdMs > 0) {
+    return Math.max(REQUEST_TIMEOUT_MS, holdMs + LONG_POLL_GRACE_MS);
+  }
+  return REQUEST_TIMEOUT_MS;
 }
 
 /**
@@ -199,7 +215,7 @@ async function guardedFetch(
   // advice and the refresh retry below both hang off that classification.
   const timer = setTimeout(
     () => ctrl.abort(new Error("timed out waiting for response headers")),
-    headerTimeoutMs(new URL(req.url)),
+    headerTimeoutMs(req),
   );
   // The caller's own signal still has to work: aborting the push stream is how
   // listen() is stopped.

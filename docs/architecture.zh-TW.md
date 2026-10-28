@@ -43,10 +43,18 @@ daemon 在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）寫三樣東�
 ## 讓 daemon 一直在跑
 
 systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 daemon 怎麼
-結束，5 秒後都會再起來。只有 `systemctl --user stop enil` 會讓它停著。面板補上這個
-情況和 daemon 卡死的情況：daemon 看起來掛了的時候，面板會自己執行
-`systemctl --user restart enil`，最多每 45 秒一次。面板上的「啟動 daemon」按鈕做同樣
-的事，防連點間隔 3 秒。
+結束，5 秒後都會再起來。面板離線時也每 15 秒檢查一次，但會等 `state.json` 重讀完成，
+結果仍離線才要求恢復。state 目錄稍晚出現時，不必重啟正常的 daemon。
+
+`DaemonSupervisor.qml` 是所有面板與螢幕共用的 singleton。它合併恢復要求，自動路徑
+冷卻 45 秒，手動路徑防連點 3 秒。先送本機 socket `ping`，收到對應回覆就取消恢復，
+包括舊 daemon 不認得 `ping` 時的拒絕回覆；這不會向 LINE 發出請求。探測失敗才查
+systemd：inactive 或 failed 的 unit 用 `start`，不用 `restart`。同一個 active PID
+必須連續至少 10 秒無法回覆，才執行一次 `restart`。PID 換了，或 systemd 正在轉換
+狀態，就重新計算寬限。查詢失敗不會授權任何服務操作，每次恢復最多操作一次。
+
+面板開著時，自己的 socket 仍每 1.5 秒重連一次，七次失敗後要求共用恢復。關掉其中一個
+面板不會取消其他面板的恢復，也不會取得另一份獨立冷卻。
 
 `daemon/enil-run.sh` 是 unit 的 `ExecStart`。它依序做這些事：
 
@@ -54,8 +62,9 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
    checkout 在這份 checkout 釘住的 commit 以外，腳本就印出能修好它的兩行
    `git submodule` 指令，並以結束碼 78 結束。不是 git checkout 的話，改成檢查
    `daemon/vendor/linejs` 裡有沒有檔案，空的就以結束碼 78 結束。
-2. `enil.rev` 跟這份 checkout 的 `HEAD` 一致，而且 `daemon.ts` 沒有比執行檔新時，執行
-   編譯好的 `enil`。
+2. `enil.rev` 符合來源指紋及執行檔雜湊時，才執行編譯好的 `enil`。來源指紋涵蓋
+   `daemon/` 下的檔名與內容，包括模組、vendored 原始碼、設定與 lockfile。戳記缺少、
+   格式過舊、比對失敗或計算失敗時，都改跑原始碼。
 3. 否則先在 `PATH` 上找 `deno`，再找 `~/.deno/bin/deno`。user unit 拿到的是 systemd
    的 `PATH`，不是你登入 shell 的 `PATH`，所以第二個位置是給 Deno 官方安裝程式裝的
    版本用的。兩個都找不到就以結束碼 127 結束。
@@ -152,9 +161,15 @@ stream 被 error 掉之後 `for await` 再一行），兩行走同一個退避�
 以前這條只能等三分鐘的沒動靜檢查才會被發現。
 
 另外，每一個對 LINE 的請求都有「等回應標頭」的時間上限：一般 30 秒，上傳走的 obs
-主機 180 秒（上傳要整包送完才會有回應標頭）。上限只管標頭，不管內容，所以 push 連線
-和媒體下載那種一開好幾個小時的 body 不會被砍掉。這層是自己加的，因為 linejs 雖然
-自己設了 30 秒 timeout，加密傳輸層卻把請求重建了一次而漏掉那個 signal，等於沒設；
+主機 180 秒（上傳要整包送完才會有回應標頭）。QR 或 PIN 登入輪詢帶 `x-lst`，也就是
+伺服器等手機時把請求開著的時間，這種請求的上限是 `x-lst` 加 15 秒。實際觀察到的
+2 × 150 秒登入，在舊版 30 秒上限下會於 60 秒後失敗。只有 library 的 QR/PIN 輪詢
+耗盡時才產生 `QR_POLLING_EXPIRED`，對應面板的 `qr_expired` 提示；掃碼後取得 profile
+等其他階段的網路逾時仍算網路錯誤。
+
+上限只管標頭，不管內容，所以 push 連線和媒體下載那種一開好幾個小時的 body 不會被
+這個計時器砍掉。這是額外的一層保護，目前釘住的 linejs 也會傳遞呼叫端的 abort signal。
+較舊的加密傳輸層會把請求重建一次而漏掉那個 signal，等於沒設；
 筆電睡醒後那條連線早就死了但核心不知道，一個抓聊天列表的請求就這樣卡了十幾分鐘，
 順帶把後面每一次刷新都擋住。現在最多卡 30 秒就會失敗，並在 15 秒後自己重抓一次，
 不用等五分鐘的保底輪詢。上限可以用 `ENIL_REQUEST_TIMEOUT_MS`（毫秒）調整。逾時本身

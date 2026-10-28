@@ -42,7 +42,7 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
     "qrPng": "…/qr-<ts>.png",          // only when status=qr
     "pin": "…",                        // only when status=pin
     "error": "…",                      // only when status=error, human-readable
-    "reason": "…",                     // optional, the error's class
+    "reason": "…",                     // optional, the error's class: network|token_expired|restricted|qr_expired|unknown
     "attempt": "logout",               // optional; logout|resume|manual — which attempt this state belongs to
     "settled": true                     // optional; true once login/logout teardown completed
   },
@@ -240,9 +240,17 @@ Socket commands (one JSON line per request, replies
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | none |
 | `hide` | `chat` | none (removes the row from the list, recorded in `hidden.json`) |
 | `unhide` | `chat` | none |
+| `ping` | none | none (local event-loop health; no LINE request) |
 | `login` | none | none |
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
+
+`ping` answers `{ok:true}` without a LINE session or network call. Recovery
+accepts a matching reply from older daemons too, even if they refuse this
+unknown command. It tests local responsiveness, not LINE connectivity.
+`login.reason: "qr_expired"` means the QR/PIN polling budget was exhausted;
+a general request timeout, including profile loading after a scan, remains
+`network` instead.
 
 ## Push frames
 
@@ -267,7 +275,7 @@ lines are ignored and behavior is unchanged. If a push can't be written or
 the peer reads too slowly, the daemon closes that connection. The panel
 reconnects and catches up via `events.json` and `state.json`.
 
-While logged out, everything except `login`, `logout`, `hide`, `unhide` and
+While logged out, everything except `ping`, `login`, `logout`, `hide`, `unhide` and
 `discardClipboardImage` answers `{ok:false, error:"尚未登入"}`. An unknown cmd
 answers `unknown cmd: <cmd>`. `hide`/`unhide` sit before the login gate: they
 only touch our own file and never LINE, so a missing session is no reason to

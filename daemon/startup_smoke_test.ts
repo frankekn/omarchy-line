@@ -89,6 +89,22 @@ Deno.test("daemon boots to idle against an empty state dir and stops clean", asy
     "startup banner names the state file and the socket",
   );
 
+  // A health probe must work before login and never start a LINE session.
+  const health = await Deno.connect({
+    transport: "unix",
+    path: `${stateHome}/enil/sock`,
+  });
+  try {
+    await health.write(
+      new TextEncoder().encode('{"id":"health-test","cmd":"ping"}\n'),
+    );
+    const reply = await lineReader(health.readable).read(1_000);
+    assert(reply !== null, "logged-out daemon did not answer the health probe");
+    assertEquals(JSON.parse(reply), { ok: true, id: "health-test" });
+  } finally {
+    health.close();
+  }
+
   // Give the resume attempt and the startup sweep a moment, then stop.
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   const grace = Date.now() + 5_000;

@@ -281,6 +281,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
   const cmd = String(req.cmd ?? "");
   const requestId = panelRequestId(req);
 
+  // Local event-loop health only: never contacts LINE or requires a session.
+  if (cmd === "ping") return { ok: true };
+
   if (cmd === "login") {
     if (client) return { ok: true };
     // startLogin() must not be awaited: on the happy path it runs for as long

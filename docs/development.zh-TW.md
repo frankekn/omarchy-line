@@ -25,6 +25,7 @@ daemon 需要 [Deno](https://deno.com) 2。面板的測試需要 Node.js。按�
 ```bash
 (cd daemon && deno task check && deno task no-any && deno task lint && deno task fmt && deno task test)
 node tests/qml/run.js
+python3 tests/qml/supervisor_test.py
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
@@ -37,6 +38,8 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   `// enil:*` 標記切出來單獨測。
 - `node tests/qml/run.js` 從 `Panel.qml` 切出函式本體來跑，不需要 daemon、socket 或
   state 目錄。
+- `python3 tests/qml/supervisor_test.py` 用離屏 Quickshell、假的 systemctl、socket 與
+  state 測試恢復流程；沒裝 Quickshell 就略過，不會操作真實服務或 LINE 帳號。
 - `tests/qml/keytest/run.sh` 在 offscreen 的 `qmltestrunner` 下跑列表的按鍵路徑。
 - `python3 daemon/stub_test.py` 拿 stub 對照協定，在自己的暫存 `XDG_STATE_HOME` 裡跑。
 - `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。
@@ -179,7 +182,7 @@ daemon 會讀下面這些環境變數。要替 systemd unit 設定，執行 `sys
 
 | 變數 | 預設 | 作用 |
 |---|---|---|
-| `ENIL_REQUEST_TIMEOUT_MS` | `30000` | 等 LINE 回應標頭的時間。上傳用 180 秒。 |
+| `ENIL_REQUEST_TIMEOUT_MS` | `30000` | 等 LINE 回應標頭的時間。上傳用 180 秒。登入輪詢用它的 `x-lst` 加 15 秒。 |
 | `ENIL_PUSH_STALE_MS` | `180000` | push 連線安靜多久之後，watchdog 會重建它。 |
 | `ENIL_CHAT_LIMIT` | `500` | 一次聊天列表請求要幾個聊天室。 |
 | `ENIL_INCREMENTAL` | 開 | 設成 `0` 會讓每一次重新整理都整份重抓聊天列表。 |
@@ -197,9 +200,11 @@ cd daemon
 deno task build    # 產生 ./enil 和 ./enil.rev
 ```
 
-只有 `enil.rev` 跟 checkout 的 `HEAD` 一致，而且 `daemon.ts` 沒有比執行檔新的時候，
-`enil-run.sh` 才會用 `./enil`。否則它用 Deno 跑 `daemon.ts`，所以更新之後不會有舊的
-執行檔繼續在跑。
+`enil-build.sh` 會先移除舊戳記，只有編譯成功且前後來源指紋一致，才發布新的
+`enil.rev`；戳記也包含執行檔的雜湊。`enil-run.sh` 使用 `./enil` 前會重算並比對兩者。
+模組、vendored 原始碼、設定、lockfile、來源檔新增或刪除，以及執行檔被修改，都會使
+戳記失效；舊的 HEAD 戳記也不接受。指紋計算失敗時改跑 Deno 原始碼，不會信任舊
+執行檔。測試檔也保守納入指紋。編譯時不要同時修改來源：這些檢查不是檔案系統快照。
 
 ## 效能測試
 

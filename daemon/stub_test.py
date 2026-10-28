@@ -1441,6 +1441,9 @@ class FixtureTest(unittest.TestCase):
             self.assertEqual("idle", s.state()["login"]["status"])
             # The daemon has no identity before a session exists.
             self.assertEqual({}, s.state()["me"])
+            res = s.call(cmd="ping")
+            self.assertEqual({"ok": True, "id": res["id"]}, res)
+            self.assertEqual("idle", s.state()["login"]["status"])
             res = s.call(cmd="history", chat="cstub-family")
             self.assertEqual({"ok": False, "error": "尚未登入", "id": res["id"]}, res)
             # syncNow() in daemon.ts refuses with the very same string; the
