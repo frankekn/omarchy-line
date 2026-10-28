@@ -4,6 +4,18 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers continue from the original omarchy-line plugin by Unayung
 Chen, so this project starts at 2.x.
 
+## [Unreleased]
+
+### Fixed
+
+- After a reboot, pasting into the panel failed with `Can't reach Wayland —
+  systemctl --user restart enil` until the daemon was restarted by hand.
+  `enil.service` was wanted by `default.target`, so it started at boot before
+  the compositor and never had `WAYLAND_DISPLAY`. The unit is now wanted by
+  and part of `graphical-session.target`, and `install.sh` runs
+  `systemctl --user reenable` so an upgrade drops the old `default.target`
+  link.
+
 ## [2.16.0] - 2026-10-07
 
 ### Added

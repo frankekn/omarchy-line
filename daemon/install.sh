@@ -7,7 +7,7 @@
 #   1. vendored linejs at the pinned commit (submodule sync + update)
 #   2. a Deno 2 on PATH or at ~/.deno/bin
 #   3. ~/.config/systemd/user/enil.service matching daemon/enil.service
-#   4. the unit enabled and (re)started
+#   4. the unit enabled under graphical-session.target and (re)started
 #
 # The state dir (~/.local/state/enil: token, media, event ring) is the
 # daemon's alone and is never touched here.
@@ -64,8 +64,10 @@ else
   say "unit installed: $unit"
 fi
 
-# 4. Enabled, and restarted onto whatever just changed. restart starts a
-# stopped unit too, so one verb covers first install and refresh alike.
-systemctl --user enable --quiet enil.service
+# 4. Enabled, and restarted onto whatever just changed. reenable drops the
+# links of an older [Install] section (default.target) before it adds the
+# current one, so an upgrade does not keep starting the daemon at boot. restart
+# starts a stopped unit too, so one verb covers first install and refresh alike.
+systemctl --user reenable --quiet enil.service
 systemctl --user restart enil.service
 say "enil.service enabled and restarted"

@@ -99,7 +99,7 @@ Deno.test("first run installs the unit, reloads, enables and restarts; a rerun o
     `git -C ${f.plugin} submodule status -- daemon/vendor/linejs`,
     "deno --version",
     "systemctl --user daemon-reload",
-    "systemctl --user enable --quiet enil.service",
+    "systemctl --user reenable --quiet enil.service",
     "systemctl --user restart enil.service",
   ]);
   const unit = `${f.home}/.config/systemd/user/enil.service`;
@@ -113,12 +113,12 @@ Deno.test("first run installs the unit, reloads, enables and restarts; a rerun o
   const second = await f.run();
   assertEquals(second.code, 0, second.err);
   // Same git and deno checks (they are what converge), no daemon-reload
-  // because the unit did not change, enable is idempotent, restart is the
+  // because the unit did not change, reenable is idempotent, restart is the
   // one effect a refresh is for.
   assertEquals(
     second.calls.filter((c) => c.startsWith("systemctl")),
     [
-      "systemctl --user enable --quiet enil.service",
+      "systemctl --user reenable --quiet enil.service",
       "systemctl --user restart enil.service",
     ],
   );

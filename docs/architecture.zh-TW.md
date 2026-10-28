@@ -290,8 +290,9 @@ VIDEO，其餘 `file`。所以手機那種 `.jpg` 其實是 mp4 的檔案照樣�
 「找不到 wl-paste，請 sudo pacman -S wl-clipboard」；剪貼簿裡是文字是「剪貼簿裡沒有
 圖片」；是我們送不出去的圖片格式會寫出格式（「剪貼簿的圖片格式不支援:
 image/tiff」）；太大是「剪貼簿的圖片太大（超過 20 MB）」。daemon 是 systemd user
-unit，**如果它比 compositor 早起來就沒有 `WAYLAND_DISPLAY`**，那時 wl-paste 連不上
-顯示，回的是「連不上 Wayland，請 systemctl --user restart enil」。這跟剪貼簿是空的
+unit，由 `graphical-session.target` 帶起來，所以跟著桌面 session 啟動，拿得到
+`WAYLAND_DISPLAY`。**如果它還是沒有 `WAYLAND_DISPLAY`**（舊版 unit 掛在
+`default.target`，開機時比 compositor 早起來），那時 wl-paste 連不上顯示，回的是「連不上 Wayland，請 systemctl --user restart enil」。這跟剪貼簿是空的
 不是同一件事，所以話也不一樣。wl-paste 卡住最多等 5 秒，之後回「讀不到剪貼簿」，
 原因寫進 journal。
 

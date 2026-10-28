@@ -8730,6 +8730,12 @@ group("(t2e) the daemon is kept alive while the plugin runs, panel open or not")
     /^Restart=always$/m.test(unit) && /^StartLimitIntervalSec=0$/m.test(unit),
     "systemd restarts the daemon after any exit and never gives up on it",
   );
+  ok(
+    /^WantedBy=graphical-session\.target$/m.test(unit) &&
+      /^PartOf=graphical-session\.target$/m.test(unit) &&
+      !/^WantedBy=default\.target$/m.test(unit),
+    "the daemon starts with the desktop session, so it inherits WAYLAND_DISPLAY for wl-paste",
+  );
 }
 
 // The panel is closed -> no socket -> nothing is applied, but the watermark still moves.

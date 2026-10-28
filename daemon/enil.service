@@ -1,6 +1,10 @@
 [Unit]
 Description=enil LINE daemon for omarchy-line
 After=graphical-session.target
+# Stop and start with the desktop session. The clipboard commands run wl-paste,
+# which needs the WAYLAND_DISPLAY that the compositor exports into the systemd
+# user environment when the session starts.
+PartOf=graphical-session.target
 # Plugin uninstalled: skip the unit instead of restart-looping on a missing daemon.ts.
 ConditionPathExists=%h/.config/omarchy/plugins/io.github.frankekn.line/daemon/daemon.ts
 # The plugin needs the daemon whenever it runs: never stop retrying.
@@ -24,4 +28,8 @@ UMask=0077
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+# Not default.target: that starts the daemon at boot, before the compositor
+# exists, so it runs without WAYLAND_DISPLAY and every paste fails until a
+# manual restart. After= alone does not wait for a session that is not part of
+# the same start job.
+WantedBy=graphical-session.target

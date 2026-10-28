@@ -382,8 +382,10 @@ panel shows "wl-paste not found — sudo pacman -S wl-clipboard". Text in the
 clipboard gives "No image on the clipboard". An unsendable format is named
 ("Unsupported clipboard image type: image/tiff"). An oversized image gives
 "Clipboard image too large (over 20 MB)". The daemon is a
-systemd user unit. **If it starts before the compositor it has no
-`WAYLAND_DISPLAY`**, wl-paste can't reach the display, and the answer is
+systemd user unit wanted by `graphical-session.target`, so it starts with the
+desktop session and inherits `WAYLAND_DISPLAY`. **If it still starts without
+`WAYLAND_DISPLAY`** (an older unit wanted by `default.target` starts at boot,
+before the compositor), wl-paste can't reach the display, and the answer is
 "Can't reach Wayland — systemctl --user restart enil", which differs from an empty
 clipboard, hence different words. A stuck wl-paste gets 5 s at most, then
 "Couldn't read the clipboard" with the reason journaled.
