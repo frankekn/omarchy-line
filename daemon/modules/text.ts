@@ -309,8 +309,23 @@ function classifyLoginError(
   ) return "network";
   return "unknown";
 }
+
+/** Only linejs's QR/PIN polling boundary can attest to an expired code. */
+function qrLoginReason(
+  e: unknown,
+): "token_expired" | "network" | "restricted" | "unknown" | "qr_expired" {
+  const reason = classifyLoginError(e);
+  if (reason === "restricted" || reason === "token_expired") return reason;
+  let current: unknown = e;
+  for (let depth = 0; current && depth < 5; depth++) {
+    const error = current as { code?: unknown; cause?: unknown };
+    if (error.code === "QR_POLLING_EXPIRED") return "qr_expired";
+    current = error.cause;
+  }
+  return reason;
+}
 // enil:loginerror-end
 
-export { classifyLoginError, restrictionCode };
+export { classifyLoginError, qrLoginReason, restrictionCode };
 
 export type { MediaState };

@@ -8,6 +8,7 @@ export const PANEL_BACKGROUND_COMMANDS: ReadonlySet<string> = new Set([
   "download",
 ]);
 export const PANEL_SESSION_INDEPENDENT_COMMANDS: ReadonlySet<string> = new Set([
+  "ping",
   "login",
   "sync",
   "hide",

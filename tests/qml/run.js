@@ -248,6 +248,8 @@ const B = {
   loadHistory: body("  function loadHistory(mid, markRead) {"),
   armOnlineDeadline: body("  function armOnlineDeadline() {"),
   guardDaemon: body("  function guardDaemon() {"),
+  finishStateReload: body("  function finishStateReload() {"),
+  sockRetryTick: body("  function sockRetryTick() {"),
   // The prefetch trigger itself, sliced against its own closing brace like
   // submit(). contentY/originY/contentHeight/height are the ListView's own
   // properties, so it is driven under `with (msgList)` -- the way QML resolves
@@ -2740,7 +2742,7 @@ ok(
   "load failure clears the cached rows and revision identity",
 );
 ok(
-  /onLoadFailed: root\.clearStateAfterLoadFailure\(\)/.test(src),
+  /onLoadFailed: \{\s*root\.clearStateAfterLoadFailure\(\)\s*root\.finishStateReload\(\)/.test(src),
   "FileView routes read failures through the snapshot invalidation",
 );
 
@@ -3231,6 +3233,10 @@ ok(detailFor({ reason: "network" }) === "連不上 LINE，稍後重試", "networ
 ok(
   detailFor({ reason: "restricted" }) === "LINE 限制了這個帳號，稍後再登入",
   "restricted",
+);
+ok(
+  detailFor({ reason: "qr_expired" }) === "QR code 已過期，請重新登入取得新的",
+  "qr_expired",
 );
 ok(
   detailFor({ reason: "unknown" }) === "RequestError: boom",
@@ -4152,10 +4158,37 @@ ok(
   /id: sockRetryTimer/.test(src) && /running: root\.opened && !root\.sockConnected/.test(src),
   "a retry timer re-attempts the socket while the panel is open and disconnected",
 );
+{
+  const kicks = [];
+  const later = [];
+  const r = {
+    sockMisses: 0,
+    sockKickMisses: 7,
+    sockHoldoff: false,
+    kickDaemon: (force) => kicks.push(force),
+  };
+  const tick = () =>
+    new Function("root", "Qt", B.sockRetryTick)(r, { callLater: (f) => later.push(f) });
+  for (let i = 0; i < 6; i++) tick();
+  ok(
+    kicks.length === 0 && later.length === 6,
+    "a daemon that is only restarting is retried, not kicked, for the first ~9s: " +
+      JSON.stringify(kicks),
+  );
+  tick();
+  ok(
+    kicks.length === 1 && kicks[0] === false,
+    "after ~10s of refused connects the throttled kick brings the daemon back",
+  );
+  ok(
+    /onRunningChanged: if \(running\) root\.sockMisses = 0/.test(src),
+    "every new disconnect starts its own grace window",
+  );
+}
 ok(
-  /execDetached\(\["systemctl", "--user", "restart", "enil"\]\)/.test(src) &&
-    /function kickDaemon\(force\)/.test(src),
-  "a dead daemon is restarted from inside the panel",
+  /DaemonSupervisor\.request\(force\)/.test(src) &&
+    !src.includes('execDetached(["systemctl"'),
+  "panels delegate recovery instead of independently restarting the daemon",
 );
 // U74: the height/topMargin bindings live on the wrapping Item, never on the
 // Text. QQuickText re-runs layout (recomputing implicitHeight) the moment a
@@ -8683,14 +8716,20 @@ ok(
   );
 }
 
-group("(t2e) the daemon is kept alive while the plugin runs, panel open or not");
+group("(t2e) offline recovery waits for the actual state-file result");
 {
-  const guard = new Function("root", "Date", B.guardDaemon);
+  const reloads = [];
+  const stateFile = { reload: () => reloads.push(1) };
+  const guard = (root, D) =>
+    new Function("root", "Date", "stateFile", B.guardDaemon)(root, D, stateFile);
+  const finish = (root, D) =>
+    new Function("root", "Date", B.finishStateReload)(root, D);
   const FakeDate = { now: () => 5000000 };
   const kicks = [];
   const mkRoot = (updatedAt) => {
     const r = {
       nowMs: 0,
+      stateReloadPending: false,
       state: updatedAt === null ? null : { updatedAt },
       kickDaemon: (force) => kicks.push(force),
     };
@@ -8701,34 +8740,38 @@ group("(t2e) the daemon is kept alive while the plugin runs, panel open or not")
   };
   let r = mkRoot(5000000 - 10000);
   guard(r, FakeDate);
+  ok(reloads.length === 0 && kicks.length === 0, "a fresh heartbeat needs no recovery");
+  r = mkRoot(null);
+  guard(r, FakeDate);
+  guard(r, FakeDate);
   ok(
-    kicks.length === 0 && r.nowMs === 5000000,
-    "a daemon that wrote state 10s ago is left alone, and the guard moves the clock: " +
-      JSON.stringify(kicks),
+    reloads.length === 1 && kicks.length === 0 && r.stateReloadPending,
+    "only one asynchronous reload is started; no recovery before its result",
+  );
+  r.state = { updatedAt: 5000000 };
+  finish(r, FakeDate);
+  ok(
+    kicks.length === 0 && !r.stateReloadPending,
+    "a file created after the first read recovers with zero restart requests",
   );
   r = mkRoot(5000000 - 200000);
   guard(r, FakeDate);
-  ok(
-    kicks.length === 1 && kicks[0] === false,
-    "state silent past the online window brings the daemon back with the throttled kick: " +
-      JSON.stringify(kicks),
-  );
+  finish(r, FakeDate);
+  ok(kicks.length === 1 && kicks[0] === false, "still-stale state requests shared health checks");
   r = mkRoot(null);
   guard(r, FakeDate);
+  finish(r, FakeDate);
+  ok(kicks.length === 2, "a failed reload requests health checks, not an immediate restart");
+  finish(r, FakeDate);
+  ok(kicks.length === 2, "a duplicate load signal cannot repeat the request");
   ok(
-    kicks.length === 2,
-    "no state file at all (never started, or deleted) also brings it up: " +
-      JSON.stringify(kicks),
-  );
-  ok(
-    /id: daemonGuard\n\s*interval: 15000\n\s*repeat: true\n\s*running: !root\.online\n\s*onTriggered: root\.guardDaemon\(\)$/m
-      .test(src),
-    "the guard runs whenever the daemon is not online, whether or not the panel is open",
+    /onLoaded: \{\s*root\.parseState\(text\(\)\)\s*root\.finishStateReload\(\)/.test(src),
+    "the loaded state is parsed before deciding on recovery",
   );
   const unit = fs.readFileSync(path.join(REPO, "daemon", "enil.service"), "utf8");
   ok(
     /^Restart=always$/m.test(unit) && /^StartLimitIntervalSec=0$/m.test(unit),
-    "systemd restarts the daemon after any exit and never gives up on it",
+    "systemd still owns recovery after daemon exit",
   );
 }
 
@@ -17268,5 +17311,6 @@ group("(y3) err() translates daemon wire strings for display only");
   );
 }
 
+require("./supervisor.js");
 console.log("\n" + (failed === 0 ? "ALL PASS" : failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

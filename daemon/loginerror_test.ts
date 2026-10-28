@@ -212,19 +212,23 @@ Deno.test("anything else is unknown, which renders the raw text", async () => {
   assertEquals(classifyLoginError({}), "unknown");
 });
 
-Deno.test("a failed post-login setup clears the partial session but keeps stored credentials", async () => {
+Deno.test("post-login teardown distinguishes committed credentials from candidate cleanup", async () => {
   const source = await Deno.readTextFile(
     new URL("./modules/login.ts", import.meta.url),
   );
   const start = source.indexOf("    await onLoggedIn(c);");
   const branch = source.slice(start, source.indexOf("  } finally {", start));
-  assertEquals(branch.includes("const terminal = candidate !== null;"), true);
+  assertEquals(branch.includes("const terminal = committed;"), true);
   assertEquals(
-    branch.includes("await logoutClaimed(terminal, terminal, candidate);"),
+    branch.includes(
+      "await logoutClaimed(candidate !== null, terminal, candidate);",
+    ),
     true,
   );
   assertEquals(
-    branch.indexOf("await logoutClaimed(terminal, terminal, candidate);") <
+    branch.indexOf(
+      "await logoutClaimed(candidate !== null, terminal, candidate);",
+    ) <
       branch.indexOf('await setLogin("error"'),
     true,
   );
@@ -241,9 +245,13 @@ Deno.test("a failed QR attempt preserves the stored resumable session", async ()
     start,
     source.indexOf("async function onLoggedIn", start),
   );
-  assertEquals(branch.includes("const terminal = candidate !== null;"), true);
+  assertEquals(branch.includes("const terminal = committed;"), true);
+  assertEquals(branch.includes(".stageLogin()"), true);
+  assertEquals(branch.includes("await storage.commit(c.authToken);"), true);
   assertEquals(
-    branch.includes("await logoutClaimed(terminal, terminal, candidate);"),
+    branch.includes(
+      "await logoutClaimed(candidate !== null, terminal, candidate);",
+    ),
     true,
   );
   assertEquals(branch.includes("settled: terminal"), true);
@@ -440,4 +448,53 @@ Deno.test("a maintenance window and a per-target refusal are not restrictions", 
   // different enum member, and a transport error is still network.
   assertEquals(restrictionCode(new Error("UNBANNED_X BANNEDISH")), null);
   assertEquals(classifyLoginError(new TypeError("fetch failed")), "network");
+});
+
+Deno.test("QR expiry requires polling provenance rather than generic timeout text", async () => {
+  const { qrLoginReason } = await loadBlock<{
+    qrLoginReason(error: unknown): string;
+  }>("loginerror", "export { qrLoginReason };\n");
+  assertEquals(
+    qrLoginReason(new Error("Request internal failed: status=410")),
+    "unknown",
+  );
+  assertEquals(
+    qrLoginReason(new DOMException("Signal timed out.", "TimeoutError")),
+    "network",
+  );
+  assertEquals(
+    qrLoginReason({
+      name: "TimeoutError",
+      message: "checkQrCodeVerified timed out",
+    }),
+    "network",
+  );
+  const expired = {
+    code: "QR_POLLING_EXPIRED",
+    cause: new Error("status=410"),
+  };
+  assertEquals(qrLoginReason(expired), "qr_expired");
+  assertEquals(
+    qrLoginReason(new Error("wrapped", { cause: expired })),
+    "qr_expired",
+  );
+  for (
+    const code of [
+      "BANNED",
+      "ABUSE_BLOCK",
+      "EXCESSIVE_ACCESS",
+      "NOT_AUTHORIZED_DEVICE",
+    ]
+  ) {
+    assertEquals(
+      qrLoginReason({ ...expired, cause: { data: { code } } }),
+      code === "NOT_AUTHORIZED_DEVICE" ? "token_expired" : "restricted",
+    );
+  }
+  assertEquals(
+    qrLoginReason(
+      new TypeError("fetch failed", { cause: new Error("dns error") }),
+    ),
+    "network",
+  );
 });

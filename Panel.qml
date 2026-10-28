@@ -523,12 +523,19 @@ Panel {
   // ----------------------------------------------------------- state file
 
   FileView {
+    id: stateFile
     path: root.stateDir + "/state.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.parseState(text())
-    onLoadFailed: root.clearStateAfterLoadFailure()
+    onLoaded: {
+      root.parseState(text())
+      root.finishStateReload()
+    }
+    onLoadFailed: {
+      root.clearStateAfterLoadFailure()
+      root.finishStateReload()
+    }
   }
 
   // events.json carries the live-event ring — up to a few hundred KB of
@@ -2465,7 +2472,7 @@ Panel {
   // active 一關一開，就得到一顆全新的、建立當下就開始連的 Socket；
   // sockHoldoff 就是那次「關一下」的扳機。
   property bool sockHoldoff: false
-  property double lastDaemonKickMs: 0
+  property bool stateReloadPending: false
 
   // 手上那顆 socket 是 sockLoader.item，沒連上時是 null —— 全檔統一
   // 走 sockConnected / sockSend 這兩個口，別直接摸 item。
@@ -2536,18 +2543,26 @@ Panel {
 
   // daemon 不在時 socket 是拒連不是忙，物件也不會自己重連 —— 面板開著
   // 就每 1.5 秒換一顆新 socket 去試（第一拍本身就是給正常連線的寬限），
-  // 同時照冷卻把 daemon 拉起來 —— 點 bar 圖示的那一刻，死掉、或 sock 檔
-  // 被刪成孤兒的 daemon，都由這條路救回來。
+  // 連續試了 sockKickMisses 拍（約 10 秒）都接不上，才照冷卻把 daemon 拉起來
+  // —— 點 bar 圖示的那一刻，死掉、或 sock 檔被刪成孤兒的 daemon，都由這條路救回來。
+  // 不在第一拍就踢：daemon 剛被 systemctl restart、install.sh 或更新重啟時，
+  // 線斷個一兩秒是正常的，第一拍就踢會把剛起來的 daemon 再重啟一次。
+  readonly property int sockKickMisses: 7
+  property int sockMisses: 0
   Timer {
     id: sockRetryTimer
     interval: 1500
     repeat: true
     running: root.opened && !root.sockConnected
-    onTriggered: {
-      root.kickDaemon(false)
-      root.sockHoldoff = true
-      Qt.callLater(function() { root.sockHoldoff = false })
-    }
+    onRunningChanged: if (running) root.sockMisses = 0
+    onTriggered: root.sockRetryTick()
+  }
+
+  function sockRetryTick() {
+    root.sockMisses++
+    if (root.sockMisses >= root.sockKickMisses) root.kickDaemon(false)
+    root.sockHoldoff = true
+    Qt.callLater(function() { root.sockHoldoff = false })
   }
 
   // 斷線＝所有在飛的請求都不會回來了。三份等回覆的紀錄要一起清，留著哪一份，
@@ -3168,16 +3183,18 @@ Panel {
     }
   }
 
-  // daemon 沒在跑還救得回來：restart 對死掉的 unit 等於 start，對活著但
-  // sock 檔變孤兒的（stub 沒設 XDG_STATE_HOME 那種事故）反而才是唯一解。
-  // 面板自己救自己，不用人下 systemctl —— 自動路徑 45 秒冷卻擋
-  // crash-loop 連踢，手按那條 3 秒防連點。
+  // 所有螢幕共用一個恢復流程：先確認 RPC 與 unit 狀態，再決定 start/restart。
+  // 這裡只提要求，不因某一個面板讀檔失敗就重啟正在登入的 daemon。
   function kickDaemon(force) {
-    var now = Date.now()
-    if (now - root.lastDaemonKickMs < (force ? 3000 : 45000)) return
-    root.lastDaemonKickMs = now
-    root.notice = tr("daemon.starting")
-    Quickshell.execDetached(["systemctl", "--user", "restart", "enil"])
+    if (DaemonSupervisor.request(force)) root.notice = tr("daemon.starting")
+  }
+
+  Connections {
+    target: DaemonSupervisor
+    function onFinished(healthy) {
+      if (root.notice === root.tr("daemon.starting"))
+        root.notice = healthy ? "" : root.tr("daemon.notRunning")
+    }
   }
 
   // 自動的那兩層都要等：watchdog 一分鐘才看一次 push 有沒有斷，保底輪詢是五分鐘。
@@ -5046,13 +5063,8 @@ Panel {
 
   onStateChanged: root.armOnlineDeadline()
 
-  // plugin 在跑，daemon 就要活著 —— 不管面板開沒開。systemd 的 Restart=always 管
-  // daemon 自己退出的情況；這裡管它退不出來或被停掉的那兩種：卡住（心跳停了但程序
-  // 還在，systemd 看不出來）和 systemctl stop（systemd 照指示不重啟）。兩種都表現成
-  // state 超過 online 的時窗沒更新，或根本沒有 state。不在線時每 15 秒看一次，
-  // kickDaemon 自己有 45 秒冷卻，重啟中的 daemon 不會被連環重啟；回到在線就停。
-  // 不用 triggeredOnStart：shell 剛起來 state 還沒讀到也算不在線，第一拍等 15 秒，
-  // state 早就讀進來了，正常的 daemon 不會因為 shell 重開而被重啟。
+  // 離線時每 15 秒重讀一次，補上首次載入時 state 目錄尚不存在的情況。
+  // 讀完才判斷；仍離線只會請共用 supervisor 檢查，不直接重啟 daemon。
   Timer {
     id: daemonGuard
     interval: 15000
@@ -5062,6 +5074,15 @@ Panel {
   }
 
   function guardDaemon() {
+    root.nowMs = Date.now()
+    if (root.online || root.stateReloadPending) return
+    root.stateReloadPending = true
+    stateFile.reload()
+  }
+
+  function finishStateReload() {
+    if (!root.stateReloadPending) return
+    root.stateReloadPending = false
     root.nowMs = Date.now()
     if (!root.online) root.kickDaemon(false)
   }

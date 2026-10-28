@@ -50,11 +50,24 @@ When `state.json`'s `updatedAt` has not moved for 3 minutes, the panel shows
 ## Keeping the daemon running
 
 The systemd user unit `daemon/enil.service` uses `Restart=always`, so any exit
-brings the daemon back after 5 seconds. Only `systemctl --user stop enil`
-keeps it down. The panel covers that case and a hung daemon: when the daemon
-looks dead, the panel runs `systemctl --user restart enil` itself, at most
-once every 45 seconds. A manual **start daemon** button in the panel does the
-same with a 3-second guard.
+brings the daemon back after 5 seconds. The panel also checks an offline
+state every 15 seconds. It waits for the `state.json` reload to finish and
+requests recovery only if that result is still offline. A newly created
+state directory therefore recovers without restarting a healthy daemon.
+
+`DaemonSupervisor.qml` is a singleton shared by every panel and screen. It
+coalesces recovery requests, with a 45-second automatic cooldown and a
+3-second manual guard. First it sends a local socket `ping`. Any matching
+reply, including a refusal from an older daemon, cancels recovery. No LINE
+request is made. If the probe fails, it queries systemd: an inactive or
+failed unit gets `start`, not `restart`. An active PID must fail probes for
+at least 10 seconds before it gets one `restart`. A changed PID or a systemd
+transition resets that grace period. Failed status queries never authorize
+a service operation. Each recovery attempt can issue at most one operation.
+
+The open panel still retries its own socket every 1.5 seconds and requests
+shared recovery after seven failed attempts. Closing one panel does not
+cancel another panel's recovery or give it a separate cooldown.
 
 `daemon/enil-run.sh` is the unit's `ExecStart`. It does these steps in
 order:
@@ -66,7 +79,9 @@ order:
    checks that `daemon/vendor/linejs` has files, and exits with code 78 if it
    is empty.
 2. It runs the compiled `enil` binary if `enil.rev` matches the checkout's
-   `HEAD` and `daemon.ts` is not newer than the binary.
+   source fingerprint and binary hash. The fingerprint covers file names and
+   contents under `daemon/`, including modules, vendored sources, configuration
+   and lockfiles. A missing, legacy or failed fingerprint falls back to source.
 3. Otherwise it looks for `deno` on `PATH`, then at `~/.deno/bin/deno`. A user
    unit gets systemd's `PATH`, not your login shell's, so the second location
    covers the upstream Deno installer. If it finds neither, it exits with code
@@ -192,9 +207,16 @@ quiet check.
 
 Every request to LINE also has a header wait cap: 30 s normally, 180 s for the
 obs upload host (uploads answer headers only after the whole body is sent).
+A QR or PIN login poll carries `x-lst`, the time the server holds it open
+while it waits for the phone. That poll gets its `x-lst` plus 15 s. The
+observed 2 × 150 s login failed after 60 s under the old 30 s cap.
+Only exhaustion at the library's QR/PIN polling boundary produces
+`QR_POLLING_EXPIRED` and the panel's `qr_expired` advice. Network timeouts
+elsewhere, including the profile request after a scan, stay network errors.
 The cap bounds headers, not bodies, so the push connection and media downloads
-with hours-long bodies are never cut. This layer is ours: linejs sets its own
-30 s timeout, but the encrypted transport rebuilt the request and dropped that
+with hours-long bodies are never cut by this header timer. This layer is an
+additional bound; the pinned linejs transport now forwards its caller's abort
+signal as well. An older transport rebuilt the request and dropped that
 signal, which meant no timeout at all. After a laptop woke, the keep-alive
 connection was long dead while the kernel disagreed, and one chat-list request
 sat there for ten minutes blocking every refresh behind it. Now the worst case

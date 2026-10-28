@@ -84,6 +84,12 @@ the directory back to `0700` and `storage.json` back to `0600`. These modes
 keep other users on the computer out. They do not protect the files from
 programs that run as you.
 
+A QR login stages credential and key changes in memory until authentication
+and the initial profile request succeed. It then atomically publishes the
+complete new session, including its access token. A failed pre-commit login
+leaves the stored session unchanged. Later token rotations use the same live
+store.
+
 | Path | What it holds |
 |---|---|
 | `storage.json` | Your login token, refresh token, E2EE keys, and login certificate. **This file is your LINE account.** |

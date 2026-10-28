@@ -1,11 +1,7 @@
 #!/bin/sh
-# The systemd ExecStart. Prefer a compiled binary, but only one built from this
-# exact checkout: the stamp written by `deno task build` stops matching after
-# `omarchy plugin update`, and a stale binary must not shadow newer sources. A
-# daemon.ts newer than the binary means the checkout was edited by hand -- same
-# answer. Before either path, refuse to start on a checkout whose vendored
-# linejs is missing or out of date, and say exactly what fixes it: systemd would
-# otherwise restart-loop on an import error that names a file inside vendor/.
+# Prefer a compiled binary only when its source and binary fingerprints match.
+# Keep the vendor gate before either execution path to avoid an import-error
+# restart loop when the submodule is missing or at the wrong revision.
 set -eu
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 plugin=$(CDPATH= cd -- "$dir/.." && pwd)
@@ -31,10 +27,9 @@ elif [ ! -f "$dir/vendor/linejs/packages/linejs/client/mod.ts" ]; then
   exit 78
 fi
 
-head=$(git -C "$plugin" rev-parse HEAD 2>/dev/null || echo "")
-if [ -n "$head" ] && [ -x "$bin" ] && [ -f "$bin.rev" ] \
-    && [ "$(cat "$bin.rev")" = "$head" ] \
-    && [ ! "$dir/daemon.ts" -nt "$bin" ]; then
+if [ -x "$bin" ] && [ -f "$bin.rev" ] \
+    && fingerprint=$(sh "$dir/enil-fingerprint.sh" "$bin" 2>/dev/null) \
+    && [ -n "$fingerprint" ] && [ "$(cat "$bin.rev")" = "$fingerprint" ]; then
   exec "$bin"
 fi
 

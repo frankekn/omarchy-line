@@ -28,7 +28,7 @@ export { guardedFetch, headerTimeoutMs, classifyLoginError };
       input: RequestInfo | URL,
       init?: RequestInit,
     ): Promise<Response>;
-    headerTimeoutMs(url: URL): number;
+    headerTimeoutMs(req: Request): number;
     classifyLoginError(error: unknown): "network" | "token_expired" | "unknown";
   }>("fetchguard", prelude);
 }
@@ -127,16 +127,55 @@ Deno.test("the caller's own abort still propagates", async () => {
 Deno.test("only the media host gets the upload ceiling", async () => {
   const m = await loadModule();
   assertEquals(
-    m.headerTimeoutMs(new URL("https://obs.line-apps.com/talk/m/upload.nhn")),
+    m.headerTimeoutMs(
+      new Request("https://obs.line-apps.com/talk/m/upload.nhn"),
+    ),
     m.UPLOAD_TIMEOUT_MS,
   );
   assertEquals(
-    m.headerTimeoutMs(new URL("https://gw.line.naver.jp/enc")),
+    m.headerTimeoutMs(new Request("https://gw.line.naver.jp/enc")),
     m.REQUEST_TIMEOUT_MS,
   );
   assertEquals(
-    m.headerTimeoutMs(new URL("https://legy-jp-long.line.naver.jp/S4")),
+    m.headerTimeoutMs(new Request("https://legy-jp-long.line.naver.jp/S4")),
     m.REQUEST_TIMEOUT_MS,
+  );
+});
+
+Deno.test("a login long poll is held for its x-lst, not the talk ceiling", async () => {
+  const m = await loadModule(30_000);
+  const poll = (lst: string) =>
+    new Request("https://legy.line-apps.com/acct/lp/lgn/sq/v1", {
+      headers: { "x-lst": lst },
+    });
+  // LINE asked for 150s holds in 2026-10; a 30s ceiling ended the QR login
+  // after two polls, before the phone could scan.
+  const held = m.headerTimeoutMs(poll("150000"));
+  assert(held > 150_000 + 5_000, `ceiling ${held}ms cuts the poll first`);
+  // A hold shorter than the talk ceiling never lowers it.
+  assertEquals(m.headerTimeoutMs(poll("1000")), m.REQUEST_TIMEOUT_MS);
+  // Garbage in the header falls back to the talk ceiling.
+  assertEquals(m.headerTimeoutMs(poll("soon")), m.REQUEST_TIMEOUT_MS);
+  assertEquals(m.headerTimeoutMs(poll("-5")), m.REQUEST_TIMEOUT_MS);
+});
+
+Deno.test("a long poll answering after the talk ceiling still resolves", async () => {
+  const m = await loadModule(20);
+  await withFetch(
+    (input) =>
+      new Promise<Response>((resolve, reject) => {
+        const s = (input as Request).signal;
+        s.addEventListener("abort", () => reject(s.reason));
+        // The phone scans after the 20ms talk ceiling but inside the hold.
+        setTimeout(() => resolve(new Response("ok")), 80);
+      }),
+    async () => {
+      const res = await m.guardedFetch(
+        "https://legy.line-apps.com/acct/lp/lgn/sq/v1",
+        { headers: { "x-lst": "200" } },
+      );
+      assertEquals(await res.text(), "ok");
+    },
   );
 });
 

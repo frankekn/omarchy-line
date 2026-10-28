@@ -163,6 +163,7 @@ var STRINGS = {
   "login.tokenExpired":  { zh: "登入已過期，請重新掃描", en: "Login expired — scan again" },
   "login.network":       { zh: "連不上 LINE，稍後重試", en: "Can't reach LINE — try again later" },
   "login.restricted":    { zh: "LINE 限制了這個帳號，稍後再登入", en: "LINE restricted this account — log in later" },
+  "login.qrExpired":     { zh: "QR code 已過期，請重新登入取得新的", en: "QR code expired — log in again for a new one" },
   "members.none":        { zh: "讀不到成員名單", en: "Couldn't load the member list" },
   "err.stickers":        { zh: "貼圖清單讀不到", en: "Couldn't load stickers" },
   "err.sync":            { zh: "同步失敗", en: "Sync failed" },

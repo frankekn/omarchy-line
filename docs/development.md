@@ -28,6 +28,7 @@ must exit 0.
 ```bash
 (cd daemon && deno task check && deno task no-any && deno task lint && deno task fmt && deno task test)
 node tests/qml/run.js
+python3 tests/qml/supervisor_test.py
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
@@ -41,6 +42,9 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   sliced out between `// enil:*` markers and tested on their own.
 - `node tests/qml/run.js` slices function bodies out of `Panel.qml` and runs
   them. It needs no daemon, socket, or state directory.
+- `python3 tests/qml/supervisor_test.py` exercises recovery under an offscreen
+  Quickshell with fake systemctl, sockets and state. It skips without
+  Quickshell and never operates the real service or LINE account.
 - `tests/qml/keytest/run.sh` runs the list view's key paths under an
   offscreen `qmltestrunner`.
 - `python3 daemon/stub_test.py` checks the stub against the protocol. It runs
@@ -216,7 +220,7 @@ invalid number is ignored with an `[env] <name> ignored` journal line.
 
 | Variable | Default | Effect |
 |---|---|---|
-| `ENIL_REQUEST_TIMEOUT_MS` | `30000` | Time to wait for a LINE response's headers. Uploads use 180 seconds. |
+| `ENIL_REQUEST_TIMEOUT_MS` | `30000` | Time to wait for a LINE response's headers. Uploads use 180 seconds. A login poll uses its `x-lst` plus 15 seconds. |
 | `ENIL_PUSH_STALE_MS` | `180000` | How long the push connection may stay silent before the watchdog rebuilds it. |
 | `ENIL_CHAT_LIMIT` | `500` | How many chats one chat-list request asks for. |
 | `ENIL_INCREMENTAL` | on | Set to `0` to make every refresh a full chat-list fetch. |
@@ -235,9 +239,15 @@ cd daemon
 deno task build    # writes ./enil and ./enil.rev
 ```
 
-`enil-run.sh` uses `./enil` only when `enil.rev` matches the checkout's
-`HEAD` and `daemon.ts` is not newer than the binary. Otherwise it runs
-`daemon.ts` with Deno, so an update never leaves a stale binary running.
+`enil-build.sh` removes any old stamp before compiling and publishes a new
+`enil.rev` only after a successful build with matching before/after source
+fingerprints. The stamp also includes the binary's hash. `enil-run.sh`
+recomputes both before using `./enil`; changed modules, vendored sources,
+configuration, lockfiles, added or removed source files, and modified binaries
+all invalidate it. An old HEAD-only stamp is not accepted. Fingerprint failure
+falls back to Deno source instead of trusting an old binary. Test files are
+conservatively included too. Do not edit sources during a build: the checks
+are not a filesystem snapshot.
 
 ## Benchmarks
 

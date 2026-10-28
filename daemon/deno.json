@@ -48,7 +48,7 @@
     "fmt": "deno fmt --check",
     "lint": "deno lint",
     "test": "deno test -A",
-    "build": "sh -c '. ./enil-flags.sh && deno compile $ENIL_DENO_FLAGS --output enil daemon.ts' && git rev-parse HEAD > enil.rev",
+    "build": "sh ./enil-build.sh sh -c '. ./enil-flags.sh && deno compile $ENIL_DENO_FLAGS --output \"$1\" daemon.ts' sh",
     "bench:startup": "deno run -A bench/startup_bench.ts",
     "bench:thrift": "deno run -A bench/thrift_decode_bench.ts"
   }
