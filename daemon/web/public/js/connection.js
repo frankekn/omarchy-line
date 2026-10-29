@@ -17,6 +17,8 @@ import { makeStateDecoder } from "./state-wire.js";
  * @param {(frame: object) => void} [options.onFrame]
  * @param {(status: string) => void} [options.onStatus]
  * @param {() => void} [options.onReady]
+ * @param {(signal: AbortSignal) => Promise<boolean>} [options.onRejected]
+ * @param {() => void} [options.onExpired]
  * @param {() => string} [options.offlineMessage]
  * @param {() => string} [options.errorMessage]
  */
@@ -30,6 +32,8 @@ export function createConnection(
     onFrame = () => {},
     onStatus = () => {},
     onReady = () => {},
+    onRejected,
+    onExpired = () => {},
     offlineMessage = () => "Disconnected",
     errorMessage = () => "Request failed",
   },
@@ -75,6 +79,7 @@ export function createConnection(
     let gotFrame = false, resyncing = quiet;
     model.socket = socket;
     const reconnect = model.everConnected;
+    let beforeFirstFrame = true;
     socket.addEventListener("message", (event) => {
       if (model.socket !== socket) return;
       let frame;
@@ -106,6 +111,7 @@ export function createConnection(
       gotFrame = true;
       if (frame.web === "state") resyncing = false;
       if (firstFrame) {
+        cancelSessionCheck();
         model.connected = true;
         model.everConnected = true;
         model.retryDelay = 1000;
@@ -122,6 +128,7 @@ export function createConnection(
           );}
       } else onFrame(frame);
       if (firstFrame && reconnect) onReady();
+      beforeFirstFrame = false;
     });
     socket.addEventListener("close", () => {
       if (model.socket !== socket) return;
@@ -129,6 +136,7 @@ export function createConnection(
       rejectPending();
       onStatus("reconnecting");
       if (model.signedIn) {
+        if (beforeFirstFrame) checkRejectedSession();
         model.retryTimer = schedule(connect, model.retryDelay);
         model.retryDelay = Math.min(model.retryDelay * 2, 15000);
       }
@@ -136,12 +144,44 @@ export function createConnection(
   }
   function stop() {
     model.signedIn = false;
+    cancelSessionCheck();
     cancel(model.retryTimer);
     model.socket?.close();
   }
   function start() {
+    cancelSessionCheck();
     model.signedIn = true;
     connect();
+  }
+  let sessionCheck;
+  function cancelSessionCheck() {
+    if (!sessionCheck) return;
+    clearTimeout(sessionCheck.timer);
+    sessionCheck.controller.abort();
+    sessionCheck = null;
+  }
+  function checkRejectedSession() {
+    if (!onRejected || sessionCheck) return;
+    const controller = new AbortController();
+    const check = { controller, timer: 0 };
+    sessionCheck = check;
+    check.timer = setTimeout(() => {
+      if (sessionCheck === check) sessionCheck = null;
+      controller.abort();
+    }, 10000);
+    Promise.resolve().then(() => onRejected(controller.signal)).then(
+      (expired) => {
+        if (sessionCheck !== check) return;
+        sessionCheck = null;
+        if (expired && model.signedIn && !model.connected) {
+          stop();
+          onExpired();
+        }
+      },
+    ).catch(() => {}).finally(() => {
+      clearTimeout(check.timer);
+      if (sessionCheck === check) sessionCheck = null;
+    });
   }
   return { command, start, stop };
 }

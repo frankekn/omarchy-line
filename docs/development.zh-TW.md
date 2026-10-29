@@ -140,8 +140,11 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
 後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應使用
 `Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體，瀏覽器可以私下保留一天。
-啟動時網頁只在 `/api/session` 確認 cookie 後才開 WebSocket。session 檢查失敗時，
-登入畫面會顯示連線錯誤。
+HTML 回應（包括 304）會在載入模組時預載 `/api/session`，session 仍是 `no-store`。
+啟動時網頁只在 session 確認 cookie 後才開 WebSocket；session 檢查失敗時，登入畫面
+會顯示連線錯誤。如果 socket 在第一個 frame 前關閉，網頁會在重連時再檢查 session。
+確認 session 已失效時會停止重連，保留原頁並顯示登入連結。使用者可在點擊連結前複製
+輸入框草稿；已存入瀏覽器的草稿在重新登入後仍可使用。網路錯誤則維持原本的重連間隔。
 
 不用 LINE 帳號，接 stub 跑網頁：
 

@@ -66,6 +66,8 @@ provide(
     errorMessage: () => t("genericError"),
     onFrame: (frame) => ctx.onFrame(frame),
     onStatus: (status) => ctx.connectionStatus(status),
+    onRejected: (signal) => ctx.checkRejectedSession(signal),
+    onExpired: () => ctx.sessionExpired(),
     onReady: () => {
       if (model.active) ctx.loadHistory(model.active, ctx.isViewingChat());
     },

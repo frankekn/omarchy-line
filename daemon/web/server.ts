@@ -113,6 +113,9 @@ function serveAsset(
     "Cache-Control": "no-cache",
     ETag: asset.etag,
   });
+  if (path === "/index.html") {
+    headers.set("Link", "</api/session>; rel=preload; as=fetch; crossorigin");
+  }
   const matches = req.headers.get("if-none-match")?.split(",").some((value) => {
     const tag = value.trim();
     return tag === "*" || tag.replace(/^W\//, "") === asset.etag;

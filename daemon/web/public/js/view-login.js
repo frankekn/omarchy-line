@@ -5,6 +5,7 @@ import { $, el, fileUrl, setAvatar } from "./dom.js";
 export function createLoginView(ctx) {
   const model = ctx.model, t = ctx.t;
   let noticeSignature = "";
+  let webSessionExpired = false;
   let syncGeneration = 0, syncAccount = model.account;
   function toast(message) {
     $("toast").textContent = String(message || t("genericError"));
@@ -25,7 +26,7 @@ export function createLoginView(ctx) {
     const restricted = state?.link?.reason === "restricted";
     const pushDown = !restricted && state?.link?.push === "down";
     const stale = Number(state?.refresh?.failures || 0) >= 2;
-    const signature = JSON.stringify([
+    const signature = webSessionExpired ? "expired" : JSON.stringify([
       offline,
       restricted,
       restricted ? state?.link?.code : "",
@@ -35,6 +36,25 @@ export function createLoginView(ctx) {
     ]);
     if (signature === noticeSignature) return;
     noticeSignature = signature;
+    if (webSessionExpired) {
+      const notice = el(
+        "div",
+        "notice",
+        ctx.english
+          ? "Your web session expired. Copy any draft before signing in again."
+          : "網頁登入已失效。請先複製需要的草稿，再重新登入。",
+      );
+      const link = el(
+        "a",
+        "notice-action",
+        ctx.english ? "Sign in again" : "重新登入",
+      );
+      link.href = "/";
+      notice.append(link);
+      $("notices").replaceChildren(notice);
+      $("notices").hidden = false;
+      return;
+    }
     if (offline) notices.push(t("daemonOffline"));
     if (restricted) {
       const button = el(
@@ -102,8 +122,13 @@ export function createLoginView(ctx) {
     renderNotices();
   }
   function connectionStatus(status) {
-    $("connection-text").textContent = t(status);
-    $("connection").classList.toggle("connected", status === "connected");
+    $("connection-text").textContent = webSessionExpired
+      ? ctx.english ? "Sign-in required" : "需要重新登入"
+      : t(status);
+    $("connection").classList.toggle(
+      "connected",
+      !webSessionExpired && status === "connected",
+    );
     renderNotices();
   }
   function renderLogin(state) {
@@ -144,6 +169,7 @@ export function createLoginView(ctx) {
     setAvatar($("account-avatar"), "", me?.displayName || account);
   }
   function showApp() {
+    webSessionExpired = false;
     $("signin-screen").hidden = true;
     $("app").hidden = false;
     ctx.start();
@@ -165,6 +191,16 @@ export function createLoginView(ctx) {
       $("signin-error").hidden = false;
     }
     $("signin-screen").hidden = false;
+  }
+  async function checkRejectedSession(signal) {
+    const response = await fetch("/api/session", { cache: "no-store", signal });
+    if (response.status === 401) return true;
+    if (!response.ok) return false;
+    return (await response.json())?.signedIn === false;
+  }
+  function sessionExpired() {
+    webSessionExpired = true;
+    connectionStatus("reconnecting");
   }
   $("signin-form").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -221,5 +257,7 @@ export function createLoginView(ctx) {
     renderLogin,
     renderAccount,
     beginSession,
+    checkRejectedSession,
+    sessionExpired,
   };
 }

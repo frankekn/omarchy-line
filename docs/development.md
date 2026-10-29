@@ -167,9 +167,15 @@ startup. Restart the web server after editing HTML, CSS or JavaScript; a
 browser reload then revalidates the cached assets. API responses use
 `Cache-Control: no-store`, except signed-in media from `/api/file`, which the
 browser may keep privately for one day.
-At startup, the page opens the WebSocket only after `/api/session` confirms
-the cookie. A failed session check shows a connection error on the sign-in
-screen.
+The HTML response preloads `/api/session` while modules load, including on
+304 responses. The session stays `no-store`; at startup the page opens the
+WebSocket only after the session confirms the cookie. A failed session check
+shows a connection error on the sign-in screen. If a socket closes before its
+first frame, the page checks the session again while reconnecting. If the
+session has expired, reconnecting stops and the page stays open with a sign-in
+link. The user can copy the composer draft before following it; drafts saved
+in browser storage remain available after sign-in. Network errors keep the
+existing reconnect backoff.
 
 To run the page against the stub, without a LINE account:
 

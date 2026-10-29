@@ -334,6 +334,43 @@ Deno.test("API responses stay no-store; signed-in media is private", async () =>
   }
 });
 
+Deno.test("page responses preload the private session on 200 and 304", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    const page = await web.handle(get("/"));
+    const tag = page.headers.get("etag");
+    assert(tag);
+    const link = "</api/session>; rel=preload; as=fetch; crossorigin";
+    assertEquals(page.headers.get("link"), link);
+    const html = await page.text();
+    const signedIn = await web.handle(get("/", { headers: { cookie } }));
+    assertEquals(signedIn.headers.get("etag"), tag);
+    assertEquals(signedIn.headers.get("link"), link);
+    assertEquals(await signedIn.text(), html);
+    const cached = await web.handle(get("/", {
+      headers: { cookie, "if-none-match": tag },
+    }));
+    assertEquals(cached.status, 304);
+    assertEquals(cached.headers.get("link"), link);
+    assertEquals(cached.headers.get("cache-control"), "no-cache");
+    const stylesheet = await web.handle(get("/app.css"));
+    assertEquals(stylesheet.headers.get("link"), null);
+    await stylesheet.body?.cancel();
+    const redirect = await web.handle(get(`/?key=${KEY}`));
+    assertEquals(redirect.status, 303);
+    assertEquals(redirect.headers.get("link"), null);
+    const session = await web.handle(
+      get("/api/session", { headers: { cookie } }),
+    );
+    assertEquals(session.headers.get("cache-control"), "no-store");
+    assertEquals(await session.json(), { signedIn: true });
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("uncompressed assets do not vary by Accept-Encoding", async () => {
   const { stateDir, web } = await fixture();
   try {
