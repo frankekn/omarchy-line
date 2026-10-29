@@ -137,6 +137,10 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 `controller-*.js` 負責改共用的 model，`view-*.js` 負責畫面，
 `app.js` 把它們組起來。伺服器只提供 `public/js/<name>.js` 這一層，不支援子目錄。
 
+伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
+後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應（包括媒體）使用
+`Cache-Control: no-store`。
+
 不用 LINE 帳號，接 stub 跑網頁：
 
 ```bash
@@ -203,6 +207,26 @@ deno run -A tests/web/realboot.js
 同樣可以設定 `CHROMIUM`、`ENIL_WEB_TEST_PORT` 和 `ENIL_WEB_TEST_TMPDIR`。
 原始碼測試要求 `enil-run.sh` 會選用 Deno，而不是現有且符合目前版本的 `daemon/enil`
 執行檔。成功時會刪除暫存 state；失敗時會保留 state 和 log。
+
+要以手機大小的 viewport 對 stub 量測網頁載入：
+
+```bash
+CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
+  deno run --frozen -A tests/web/loadperf.js
+```
+
+腳本用 Chromium 模擬 150 和 300 毫秒延遲、5 Mbps 頻寬，量測冷、熱快取載入並
+開啟 stub 聊天室，回報回應數量、傳輸位元組和 runtime import 圖的深度。登入在計時前
+完成；回應位元組不含 WebSocket 流量。這是本機模擬，不是 Tailscale relay 的實測。
+`ENIL_WEB_TEST_TMPDIR` 可指定隔離暫存 state 的上層目錄。
+
+要確認編譯後 daemon 的內容 ETag 和 304 回應，並從暫存副本移除原始網頁資源：
+
+```bash
+ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
+```
+
+此測試使用空的暫存 state，不會啟動 LINE 登入。這兩個腳本都不屬於 CI 必跑項目。
 
 ## 截圖
 

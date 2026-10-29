@@ -67,21 +67,59 @@ export function parseAddr(
   return { hostname: m[1], port };
 }
 
-async function serveAsset(publicDir: URL, path: string): Promise<Response> {
-  let body: string;
+interface Asset {
+  body: Uint8Array<ArrayBuffer>;
+  etag: string;
+  type: string;
+}
+
+/** Snapshot public assets once. Compiled assets do not have reliable mtimes. */
+async function loadAssets(publicDir: URL): Promise<Map<string, Asset>> {
+  const paths = ["/index.html", "/app.css"];
   try {
-    body = await Deno.readTextFile(new URL(path.slice(1), publicDir));
-  } catch {
-    return status(404);
-  }
-  const type = path.endsWith(".html")
-    ? "text/html; charset=utf-8"
-    : path.endsWith(".js")
-    ? "text/javascript; charset=utf-8"
-    : "text/css; charset=utf-8";
-  return new Response(body, {
-    headers: securityHeaders({ "Content-Type": type }),
+    for await (const entry of Deno.readDir(new URL("js/", publicDir))) {
+      const path = `/js/${entry.name}`;
+      if (entry.isFile && ASSET_RE.test(path)) paths.push(path);
+    }
+  } catch { /* A missing directory leaves the JS routes unavailable. */ }
+  const assets = new Map<string, Asset>();
+  await Promise.all(paths.map(async (path) => {
+    try {
+      const body = await Deno.readFile(new URL(path.slice(1), publicDir));
+      const hash = new Uint8Array(await crypto.subtle.digest("SHA-256", body));
+      const etag = `"${
+        Array.from(hash, (b) => b.toString(16).padStart(2, "0")).join("")
+      }"`;
+      const type = path.endsWith(".html")
+        ? "text/html; charset=utf-8"
+        : path.endsWith(".js")
+        ? "text/javascript; charset=utf-8"
+        : "text/css; charset=utf-8";
+      assets.set(path, { body, etag, type });
+    } catch { /* An unreadable asset keeps its existing 404 behavior. */ }
+  }));
+  return assets;
+}
+
+function serveAsset(
+  assets: Map<string, Asset>,
+  path: string,
+  req: Request,
+): Response {
+  const asset = assets.get(path);
+  if (!asset) return status(404);
+  const headers = securityHeaders({
+    "Content-Type": asset.type,
+    "Cache-Control": "no-cache",
+    ETag: asset.etag,
   });
+  const matches = req.headers.get("if-none-match")?.split(",").some((value) => {
+    const tag = value.trim();
+    return tag === "*" || tag.replace(/^W\//, "") === asset.etag;
+  });
+  if (matches) return new Response(null, { status: 304, headers });
+  headers.set("Content-Length", String(asset.body.byteLength));
+  return new Response(asset.body, { headers });
 }
 
 function signedInRedirect(auth: WebAuth): Response {
@@ -153,6 +191,7 @@ async function signinBody(
 export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const log = opts.log ?? ((line: string) => console.log(line));
   const publicDir = opts.publicDir ?? new URL("./public/", import.meta.url);
+  const assets = await loadAssets(publicDir);
   const auth = await WebAuth.create(opts.key);
   const uploads = await Uploads.open(opts.stateDir);
   const feed = new StateFeed(`${opts.stateDir}/state.json`);
@@ -176,14 +215,14 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
 
     if (get && path === "/") {
       const given = url.searchParams.get("key");
-      if (given === null) return serveAsset(publicDir, "/index.html");
+      if (given === null) return serveAsset(assets, "/index.html", req);
       const result = auth.signin(given);
       if (result === "blocked") return status(429);
       return result === "ok"
         ? signedInRedirect(auth)
         : status(401, "wrong key");
     }
-    if (get && ASSET_RE.test(path)) return serveAsset(publicDir, path);
+    if (get && ASSET_RE.test(path)) return serveAsset(assets, path, req);
     if (get && path === "/api/session") {
       return json({ signedIn: auth.signedIn(req) });
     }
@@ -224,7 +263,11 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       if (connections.size >= MAX_BRIDGES) return status(503);
       return bridge(req, bridgeDeps);
     }
-    if (get && path === "/api/file") return serveFile(opts.stateDir, url);
+    if (get && path === "/api/file") {
+      const response = await serveFile(opts.stateDir, url);
+      response.headers.set("Cache-Control", "no-store");
+      return response;
+    }
     if (req.method === "POST" && path === "/api/upload") {
       return uploads.receive(req, url);
     }

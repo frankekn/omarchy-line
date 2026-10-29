@@ -162,6 +162,11 @@ shared model, and `view-*.js` draw it. `app.js` puts them together. The server
 serves `public/js/<name>.js` from that one directory only, with no
 subdirectories.
 
+The server snapshots the page's assets and their content-based ETags at
+startup. Restart the web server after editing HTML, CSS or JavaScript; a
+browser reload then revalidates the cached assets. API responses, including
+media, use `Cache-Control: no-store`.
+
 To run the page against the stub, without a LINE account:
 
 ```bash
@@ -236,6 +241,30 @@ The same `CHROMIUM`, `ENIL_WEB_TEST_PORT` and `ENIL_WEB_TEST_TMPDIR` settings
 apply. The source run requires that `enil-run.sh` would select Deno instead of
 an existing up-to-date `daemon/enil` binary. Failed runs keep their logs and
 temporary state; successful runs remove them.
+
+To measure page loading against the stub on a phone-sized viewport:
+
+```bash
+CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
+  deno run --frozen -A tests/web/loadperf.js
+```
+
+The script uses Chromium network emulation at 150 and 300 ms latency and
+5 Mbps. It measures cold and warm loads, opens a stub chat, reports response
+counts and transferred bytes, and calculates the runtime import graph depth.
+It signs in before timing; response bytes exclude WebSocket traffic. The
+results are a local simulation, not a measurement of a Tailscale relay.
+`ENIL_WEB_TEST_TMPDIR` sets the parent for its isolated temporary state.
+
+To check content ETags and 304 responses from a compiled daemon, with the
+source web assets removed from its temporary copy:
+
+```bash
+ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
+```
+
+This test uses an empty temporary state and does not start LINE login. Neither
+script is part of the CI suite.
 
 ## Take screenshots
 

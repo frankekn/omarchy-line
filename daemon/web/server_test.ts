@@ -1,5 +1,6 @@
 import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
+import { pathToFileURL } from "node:url";
 import { WebAuth } from "./auth.ts";
 import { sniffInline, uploadName, Uploads } from "./files.ts";
 import { createWeb, parseAddr } from "./server.ts";
@@ -210,6 +211,195 @@ Deno.test("only the page's own files are served", async () => {
     web.close();
     await Deno.remove(stateDir, { recursive: true });
   }
+});
+
+Deno.test("static assets revalidate against content after a restart", async () => {
+  const temp = await Deno.makeTempDir({ prefix: "enil-web-assets-" });
+  const stateDir = `${temp}/state`;
+  const publicPath = `${temp}/public`;
+  await Deno.mkdir(`${publicPath}/js`, { recursive: true });
+  await Deno.writeTextFile(`${publicPath}/index.html`, "<html>first</html>");
+  await Deno.writeTextFile(`${publicPath}/app.css`, "body { color: red; }");
+  await Deno.writeTextFile(`${publicPath}/js/test.js`, "export const n = 1;");
+  const options = {
+    addr: "127.0.0.1:0",
+    key: KEY,
+    stateDir,
+    publicDir: pathToFileURL(`${publicPath}/`),
+    log: () => {},
+  };
+  let web = await createWeb(options);
+  try {
+    for (const path of ["/", "/app.css", "/js/test.js"]) {
+      const response = await web.handle(get(path));
+      assertEquals(response.status, 200, path);
+      assertEquals(response.headers.get("cache-control"), "no-cache");
+      assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+      assert(
+        response.headers.get("content-security-policy")?.includes("'self'"),
+      );
+      const body = await response.arrayBuffer();
+      assertEquals(
+        Number(response.headers.get("content-length")),
+        body.byteLength,
+      );
+      const tag = response.headers.get("etag");
+      assert(tag);
+      assert(tag.startsWith('"') && tag.endsWith('"'));
+      for (const value of [tag, `W/${tag}`, `"other", ${tag}`, "*"]) {
+        const cached = await web.handle(get(path, {
+          headers: { "if-none-match": value },
+        }));
+        assertEquals(cached.status, 304, `${path}: ${value}`);
+        assertEquals(cached.headers.get("etag"), tag);
+        assertEquals(cached.headers.get("cache-control"), "no-cache");
+        assertEquals(cached.headers.get("x-content-type-options"), "nosniff");
+        assertEquals(
+          cached.headers.get("content-security-policy"),
+          response.headers.get("content-security-policy"),
+        );
+        assertEquals(await cached.text(), "");
+      }
+    }
+    const before = await web.handle(get("/js/test.js"));
+    const oldTag = before.headers.get("etag");
+    await before.body?.cancel();
+    assert(oldTag);
+    const original = await Deno.stat(`${publicPath}/js/test.js`);
+    assert(original.mtime);
+    await Deno.writeTextFile(`${publicPath}/js/test.js`, "export const n = 2;");
+    await Deno.utime(
+      `${publicPath}/js/test.js`,
+      original.atime ?? original.mtime,
+      original.mtime,
+    );
+    assertEquals(
+      (await Deno.stat(`${publicPath}/js/test.js`)).mtime?.getTime(),
+      original.mtime.getTime(),
+    );
+    web.close();
+    web = await createWeb(options);
+    const changed = await web.handle(get("/js/test.js", {
+      headers: { "if-none-match": oldTag },
+    }));
+    assertEquals(changed.status, 200);
+    assert(changed.headers.get("etag") !== oldTag);
+    assertEquals(await changed.text(), "export const n = 2;");
+  } finally {
+    web.close();
+    await Deno.remove(temp, { recursive: true });
+  }
+});
+
+Deno.test("API responses stay no-store, including authenticated media", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const session = await web.handle(get("/api/session", {
+      headers: { "if-none-match": "*" },
+    }));
+    assertEquals(session.status, 200);
+    assertEquals(session.headers.get("cache-control"), "no-store");
+    assertEquals(await session.json(), { signedIn: false });
+    const denied = await web.handle(get("/api/file?path=/x"));
+    assertEquals(denied.status, 401);
+    assertEquals(denied.headers.get("cache-control"), "no-store");
+    const socket = await web.handle(get("/api/ws"));
+    assertEquals(socket.status, 401);
+    assertEquals(socket.headers.get("cache-control"), "no-store");
+    const upload = await web.handle(get("/api/upload", { method: "POST" }));
+    assertEquals(upload.status, 401);
+    assertEquals(upload.headers.get("cache-control"), "no-store");
+    const redirect = await web.handle(get(`/?key=${KEY}`));
+    assertEquals(redirect.status, 303);
+    assertEquals(redirect.headers.get("cache-control"), "no-store");
+    const cookie = await signedInCookie(web);
+    await Deno.writeTextFile(`${stateDir}/media/test.txt`, "private media");
+    const media = await web.handle(get(
+      `/api/file?path=${encodeURIComponent(`${stateDir}/media/test.txt`)}`,
+      { headers: { cookie, "if-none-match": "*" } },
+    ));
+    assertEquals(media.status, 200);
+    assertEquals(media.headers.get("cache-control"), "no-store");
+    assertEquals(
+      media.headers.get("content-security-policy"),
+      "default-src 'none'; sandbox",
+    );
+    assertEquals(await media.text(), "private media");
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("uncompressed assets do not vary by Accept-Encoding", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    for (const path of ["/", "/app.css", "/js/app.js"]) {
+      const plain = await web.handle(get(path));
+      const tag = plain.headers.get("etag");
+      const body = await plain.text();
+      assert(tag);
+      const response = await web.handle(get(path, {
+        headers: { "accept-encoding": "gzip, br" },
+      }));
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get("content-encoding"), null);
+      assertEquals(response.headers.get("vary"), null);
+      assertEquals(response.headers.get("etag"), tag);
+      assertEquals(await response.text(), body);
+      const cached = await web.handle(get(path, {
+        headers: { "accept-encoding": "gzip, br", "if-none-match": tag },
+      }));
+      assertEquals(cached.status, 304);
+      assertEquals(cached.headers.get("vary"), null);
+      assertEquals(cached.headers.get("content-encoding"), null);
+    }
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("modulepreload lists the entrypoint's runtime import graph", async () => {
+  const publicDir = new URL("./public/", import.meta.url);
+  const html = await Deno.readTextFile(new URL("index.html", publicDir));
+  const entries = [...html.matchAll(
+    /<script type="module" src="(\/js\/[^\"]+)">/g,
+  )];
+  assertEquals(entries.length, 1, "expected exactly one module entrypoint");
+  const entry = new URL(entries[0][1].slice(1), publicDir).href;
+  const preloads = [...html.matchAll(
+    /<link rel="modulepreload" href="(\/js\/[^\"]+)">/g,
+  )].map((match) => match[1]);
+  assertEquals(new Set(preloads).size, preloads.length, "duplicate preload");
+  const result = await new Deno.Command(Deno.execPath(), {
+    args: ["info", "--frozen", "--json", entry],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  assert(result.success, new TextDecoder().decode(result.stderr));
+  const graph = JSON.parse(new TextDecoder().decode(result.stdout)) as {
+    modules: Array<{
+      specifier: string;
+      dependencies?: Array<{ code?: { specifier: string } }>;
+    }>;
+  };
+  const modules = new Map(graph.modules.map((item) => [item.specifier, item]));
+  const visited = new Set<string>();
+  function visit(specifier: string) {
+    if (visited.has(specifier)) return;
+    const module = modules.get(specifier);
+    assert(module, `missing import ${specifier}`);
+    assert(specifier.startsWith(new URL("js/", publicDir).href), specifier);
+    visited.add(specifier);
+    for (const dependency of module.dependencies ?? []) {
+      if (dependency.code) visit(dependency.code.specifier);
+    }
+  }
+  visit(entry);
+  visited.delete(entry);
+  const paths = [...visited].map((url) => `/js/${url.split("/").pop()}`);
+  assertEquals(preloads.sort(), paths.sort());
 });
 
 Deno.test("a POST from another origin is refused", async () => {
