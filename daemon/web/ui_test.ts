@@ -415,6 +415,40 @@ Deno.test("replacement history retains older-page events without duplicate reads
   assertEquals(model.historyEvents, []);
 });
 
+Deno.test("a reopened chat ignores an older members response", async () => {
+  const model = createModel();
+  model.account = "me";
+  const responses: ((rows: object[]) => void)[] = [];
+  const ctx = {
+    model,
+    command: (cmd: string) =>
+      cmd === "members"
+        ? new Promise<object[]>((resolve) => responses.push(resolve))
+        : Promise.resolve([]),
+    saveComposer: () => {},
+    closeStickerPicker: () => {},
+    showChat: () => {},
+    restoreComposer: () => {},
+    renderActiveHeader: () => {},
+    renderChats: () => {},
+    renderMessages: () => {},
+    focusComposer: () => {},
+    updateMentionPicker: () => {},
+    reconcilePending: () => {},
+    displayError: () => {},
+  };
+  const chat = createChatController(ctx);
+  chat.openChat("c1");
+  chat.openChat("u2");
+  chat.openChat("c1");
+  assertEquals(responses.length, 2);
+  responses[1]([{ mid: "new", name: "New" }]);
+  await Promise.resolve();
+  responses[0]([{ mid: "old", name: "Old" }]);
+  await Promise.resolve();
+  assertEquals(model.members, [{ mid: "new", name: "New" }]);
+});
+
 Deno.test("message deduplication and requestId sender boundary", () => {
   const pending = {
     id: "local",

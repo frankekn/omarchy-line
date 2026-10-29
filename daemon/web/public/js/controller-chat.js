@@ -3,6 +3,7 @@
 import { applyEvent, firstUnreadIndex, mergeHistory } from "./protocol.js";
 export function createChatController(ctx) {
   const model = ctx.model;
+  let membersGeneration = 0;
   function markCurrentRead() {
     if (!ctx.isViewingChat()) return;
     const latest = [...model.messages].reverse().find((message) =>
@@ -14,6 +15,7 @@ export function createChatController(ctx) {
     }
   }
   function closeChat() {
+    membersGeneration++;
     model.historyGeneration++;
     model.active = "";
     model.chatOpen = false;
@@ -30,6 +32,7 @@ export function createChatController(ctx) {
     ctx.renderMessages("preserve");
   }
   function openChat(chat) {
+    const generation = ++membersGeneration, account = model.account;
     if (model.active) ctx.saveComposer();
     model.historyGeneration++;
     model.active = chat;
@@ -57,7 +60,10 @@ export function createChatController(ctx) {
     loadHistory(chat, true);
     if (chat.startsWith("c") || chat.startsWith("r")) {
       ctx.command("members", { chat }).then((members) => {
-        if (model.active === chat && Array.isArray(members)) {
+        if (
+          generation === membersGeneration && model.account === account &&
+          model.active === chat && Array.isArray(members)
+        ) {
           model.readerCount = members.length;
           model.members = members;
           ctx.updateMentionPicker();
