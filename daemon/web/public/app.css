@@ -921,6 +921,11 @@ textarea::placeholder {
   color: var(--accent);
   background: var(--hover);
 }
+.mention-error {
+  padding: 8px 10px;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
 .sticker-picker {
   position: absolute;
   right: max(28px,calc((100% - 780px)/2));

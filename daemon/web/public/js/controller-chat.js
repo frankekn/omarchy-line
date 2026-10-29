@@ -50,6 +50,7 @@ export function createChatController(ctx) {
     model.previews.clear();
     model.previewPending.clear();
     model.members = [];
+    model.membersError = "";
     model.readerCount = chat.startsWith("u") ? 1 : 0;
     ctx.closeStickerPicker();
     ctx.showChat();
@@ -66,9 +67,17 @@ export function createChatController(ctx) {
         ) {
           model.readerCount = members.length;
           model.members = members;
+          model.membersError = "";
           ctx.updateMentionPicker();
         }
-      }).catch(() => {});
+      }).catch((error) => {
+        if (
+          generation !== membersGeneration || model.account !== account ||
+          model.active !== chat
+        ) return;
+        model.membersError = error?.message || ctx.t("membersUnavailable");
+        ctx.updateMentionPicker();
+      });
     }
     ctx.focusComposer();
   }

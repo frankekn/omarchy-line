@@ -36,6 +36,7 @@ export function createModel() {
     account: "",
     reply: null,
     members: [],
+    membersError: "",
     mentions: [],
     mentionText: "",
     mentionChoices: [],

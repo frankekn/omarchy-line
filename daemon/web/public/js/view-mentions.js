@@ -8,7 +8,7 @@ export function createMentionsView(ctx) {
     $("mention-picker").hidden = !visible;
   }
   function renderMentionChoices(choices) {
-    $("mention-picker").replaceChildren(...choices.map((item, index) => {
+    const nodes = choices.map((item, index) => {
       const button = el(
         "button",
         `mention-option${index === model.mentionIndex ? " selected" : ""}`,
@@ -18,10 +18,22 @@ export function createMentionsView(ctx) {
       button.addEventListener("mousedown", (event) => event.preventDefault());
       button.addEventListener("click", () => ctx.chooseMention(index));
       return button;
-    }));
+    });
+    if (model.membersError) {
+      const error = el("div", "mention-error", model.membersError);
+      error.setAttribute("role", "status");
+      nodes.unshift(error);
+    }
+    $("mention-picker").replaceChildren(...nodes);
   }
   function handleMentionKey(event) {
     if (!model.mentionOpen || event.isComposing) return false;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      ctx.setMentionOpen(false);
+      return true;
+    }
+    if (!model.mentionChoices.length) return false;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       ctx.moveMention(event.key === "ArrowDown" ? 1 : -1);
@@ -30,11 +42,6 @@ export function createMentionsView(ctx) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       ctx.chooseMention(model.mentionIndex);
-      return true;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      ctx.setMentionOpen(false);
       return true;
     }
     return false;

@@ -74,6 +74,7 @@ const strings = {
   unreadDivider: ["未讀訊息", "Unread"],
   messageLabel: ["訊息", "Message"],
   mention: ["提及成員", "Mention members"],
+  membersUnavailable: ["無法載入成員名單", "Could not load members"],
   messagePlaceholder: ["輸入訊息…", "Write a message…"],
   send: ["送出", "Send"],
   composerHint: [

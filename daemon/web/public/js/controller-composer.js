@@ -97,7 +97,7 @@ export function createComposerController(ctx) {
       .slice(0, 20);
     setMentionChoices(start, choices);
     ctx.renderMentionChoices(choices);
-    setMentionOpen(choices.length > 0);
+    setMentionOpen(choices.length > 0 || !!model.membersError);
   }
   function moveMention(step) {
     const n = model.mentionChoices.length;

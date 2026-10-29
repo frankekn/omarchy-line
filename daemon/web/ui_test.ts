@@ -25,6 +25,7 @@ import { planKeyChanges } from "./public/js/keyed.js";
 import { createChatController } from "./public/js/controller-chat.js";
 import { createStateController } from "./public/js/controller-state.js";
 import { createSendController } from "./public/js/controller-send.js";
+import { createComposerController } from "./public/js/controller-composer.js";
 
 Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
   const examples = [
@@ -480,6 +481,22 @@ Deno.test("background markRead failures only write a debug line", async () => {
   } finally {
     console.debug = original;
   }
+});
+
+Deno.test("member errors keep the mention picker visible without matches", () => {
+  const model = createModel();
+  model.active = "c";
+  model.membersError = "members unavailable";
+  let visible = false;
+  const composer = createComposerController({
+    model,
+    readComposer: () => ({ text: "@nobody", cursor: 7, end: 7 }),
+    renderMentionChoices: () => {},
+    setMentionVisibility: (value: boolean) => visible = value,
+  });
+  composer.updateMentionPicker();
+  assertEquals(model.mentionChoices, []);
+  assertEquals(visible, true);
 });
 
 Deno.test("message deduplication and requestId sender boundary", () => {
