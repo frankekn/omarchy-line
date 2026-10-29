@@ -86,6 +86,35 @@ Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
   }
 });
 
+Deno.test("keyed plans produce every short insertion, removal and reorder", () => {
+  function sequences(remaining: string[], prefix: string[] = []): string[][] {
+    return [
+      prefix,
+      ...remaining.flatMap((key, index) =>
+        sequences(remaining.filter((_, i) => i !== index), [...prefix, key])
+      ),
+    ];
+  }
+  const cases = sequences(["a", "b", "c", "d"]);
+  for (const before of cases) {
+    for (const after of cases) {
+      const { removed, added, moved } = planKeyChanges(before, after);
+      const nodes = before.filter((key) => !removed.includes(key));
+      const placements = new Set([...added, ...moved]);
+      for (let i = after.length - 1; i >= 0; i--) {
+        if (!placements.has(after[i])) continue;
+        const at = nodes.indexOf(after[i]);
+        if (at >= 0) nodes.splice(at, 1);
+        const next = i + 1 < after.length
+          ? nodes.indexOf(after[i + 1])
+          : nodes.length;
+        nodes.splice(next, 0, after[i]);
+      }
+      assertEquals(nodes, after, `${before.join(",")} -> ${after.join(",")}`);
+    }
+  }
+});
+
 type MediaKind = "image" | "gif" | "video" | "file";
 interface MediaSendBlock {
   KIND_BY_EXT: Record<string, MediaKind | undefined>;

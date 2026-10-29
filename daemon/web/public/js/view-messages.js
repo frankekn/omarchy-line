@@ -2,8 +2,11 @@
 // helpers.
 import { $, el, formatTime, richText } from "./dom.js";
 import { compareMessages } from "./protocol.js";
+import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
+  const records = new Map();
+  let order = [], renderedChat = "", renderedAccount = "";
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
   const pendingFor = (...args) => ctx.pendingFor(...args);
@@ -29,7 +32,7 @@ export function createMessagesView(ctx) {
     target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
   }
-  function messageNode(message) {
+  function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
       row = el("article", `message-row${own ? " own" : ""}`),
@@ -73,7 +76,16 @@ export function createMessagesView(ctx) {
       content.append(richText(body, message.mentions));
       bubble.append(content);
     }
-    addMedia(bubble, message, chat);
+    if (
+      !message.unsent &&
+      ["STICKER", "FLEX", "IMAGE", "VIDEO", "FILE"].includes(
+        message.contentType,
+      )
+    ) {
+      const media = el("div", "message-media");
+      if (includeMedia) addMedia(media, message, chat);
+      bubble.append(media);
+    }
     column.append(bubble);
     if (
       !message.unsent && Array.isArray(message.reactions) &&
@@ -210,21 +222,58 @@ export function createMessagesView(ctx) {
     row.append(column);
     return row;
   }
+  // Keep media connected when an edit, reaction or read receipt only changes
+  // the rest of the message. A playing video must not be removed from the DOM.
+  function updateMessageParts(oldRow, newRow) {
+    const oldColumn = oldRow.firstElementChild;
+    const newColumn = newRow.firstElementChild;
+    const oldBubble = oldColumn.querySelector(":scope > .bubble");
+    const newBubble = newColumn.querySelector(":scope > .bubble");
+    const media = oldBubble.querySelector(":scope > .message-media");
+    oldRow.className = newRow.className;
+    oldBubble.className = newBubble.className;
+    for (const child of [...oldBubble.children]) {
+      if (child !== media) child.remove();
+    }
+    for (const child of [...newBubble.children]) {
+      if (!child.classList.contains("message-media")) {
+        oldBubble.insertBefore(child, media);
+      }
+    }
+    for (const child of [...oldColumn.children]) {
+      if (child !== oldBubble) child.remove();
+    }
+    for (const child of [...newColumn.children]) {
+      if (child === newBubble) continue;
+      if (child.classList.contains("sender")) {
+        oldColumn.insertBefore(child, oldBubble);
+      } else oldColumn.append(child);
+    }
+  }
   function renderMessages(mode = "preserve") {
-    ctx.resetReactionPickers();
     const list = $("messages"),
       oldHeight = list.scrollHeight,
       oldTop = list.scrollTop;
     const nearBottom = oldHeight - oldTop - list.clientHeight < 140;
-    ctx.disconnectPreviews();
+    if (renderedChat !== model.active || renderedAccount !== model.account) {
+      ctx.resetReactionPickers();
+      for (const record of records.values()) {
+        if (record.message) ctx.unobservePreviews(record.node);
+        record.node.remove();
+      }
+      records.clear();
+      order = [];
+      renderedChat = model.active;
+      renderedAccount = model.account;
+    }
     const rows = model.messages.slice();
+    const requestIds = new Set(
+      rows.filter((m) => m.from === model.account && m.requestId).map((m) =>
+        m.requestId
+      ),
+    );
     for (const pending of pendingFor()) {
-      if (
-        !rows.some((m) =>
-          m.from === model.account && m.requestId &&
-          m.requestId === pending.requestId
-        )
-      ) {
+      if (!requestIds.has(pending.requestId)) {
         rows.push({
           ...pending,
           status: pending.status === "sending" ? "uncertain" : pending.status,
@@ -232,48 +281,139 @@ export function createMessagesView(ctx) {
       }
     }
     rows.sort(compareMessages);
-    const nodes = [];
+    const desired = [];
     if (!model.noOlder && rows.some((m) => !m.pending)) {
-      const older = el("button", "text-button", t("older"));
-      older.type = "button";
-      older.addEventListener("click", () => ctx.loadOlder());
-      nodes.push(older);
+      desired.push({ key: "control:older", type: "older" });
     }
     if (!rows.length) {
-      nodes.push(
-        el(
-          "div",
-          "loading-message",
-          model.loading ? t("loading") : t("noMessages"),
-        ),
-      );
+      desired.push({
+        key: "control:empty",
+        type: "empty",
+        text: model.loading ? t("loading") : t("noMessages"),
+      });
     }
     let previousDay = "";
+    const counts = new Map(), dayCounts = new Map();
+    const today = new Date().toDateString();
     for (const message of rows) {
-      const date = new Date(Number(message.time || 0)),
+      const id = String(message.id || ""), count = counts.get(id) || 0;
+      counts.set(id, count + 1);
+      const key = `message:${id}:${count}`;
+      const prior = records.get(key);
+      const time = Number(message.time || 0);
+      let day = prior?.time === time ? prior.day : undefined;
+      if (day === undefined) {
+        const date = new Date(time);
         day = Number.isNaN(date.getTime()) ? "" : date.toDateString();
+      }
       if (day && day !== previousDay) {
-        nodes.push(
-          el(
-            "div",
-            "day-divider",
-            date.toLocaleDateString(english ? "en" : "zh-TW", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-            }),
-          ),
-        );
+        const dayCount = dayCounts.get(day) || 0;
+        dayCounts.set(day, dayCount + 1);
+        desired.push({ key: `day:${day}:${dayCount}`, type: "day", time });
         previousDay = day;
       }
       if (
         model.unreadMarkId && String(message.id || "") === model.unreadMarkId
       ) {
-        nodes.push(el("div", "unread-divider", t("unreadDivider")));
+        desired.push({ key: "control:unread", type: "unread" });
       }
-      nodes.push(messageNode(message));
+      desired.push({ key, type: "message", message, time, day, today });
     }
-    list.replaceChildren(...nodes);
+    const keys = desired.map((item) => item.key);
+    const changes = planKeyChanges(order, keys);
+    for (const key of changes.removed) {
+      const record = records.get(key);
+      if (record.message) {
+        ctx.unobservePreviews(record.node);
+        ctx.closeReactionPicker(String(record.message.id || ""));
+      }
+      record.node.remove();
+      records.delete(key);
+    }
+    for (const item of desired) {
+      const prior = records.get(item.key);
+      if (item.type === "message") {
+        const id = String(item.message.id || "");
+        const preview = model.previews.get(id),
+          hasPreview = model.previews.has(id);
+        const unchanged = prior?.message === item.message &&
+          prior.preview === preview && prior.hasPreview === hasPreview &&
+          prior.today === today;
+        if (unchanged) continue;
+        const signature = JSON.stringify([
+          item.message,
+          preview,
+          hasPreview,
+          today,
+        ]);
+        if (prior?.signature === signature) {
+          prior.message = item.message;
+          continue;
+        }
+        const mediaSignature = JSON.stringify([
+          item.message.contentType,
+          item.message.unsent,
+          item.message.pending,
+          item.message.mediaState,
+          item.message.previewable,
+          item.message.mediaPath,
+          item.message.hasMedia,
+          item.message.stickerUrl,
+          item.message.flexImages,
+          item.message.fileName,
+          item.message.fileSize,
+          preview,
+          hasPreview,
+        ]);
+        const keepMedia = prior?.mediaSignature === mediaSignature;
+        let node = messageNode(item.message, !keepMedia);
+        if (prior) {
+          ctx.closeReactionPicker(id);
+          if (keepMedia) {
+            updateMessageParts(prior.node, node);
+            node = prior.node;
+          } else {
+            ctx.unobservePreviews(prior.node);
+            prior.node.replaceWith(node);
+          }
+        }
+        records.set(item.key, {
+          node,
+          message: item.message,
+          signature,
+          mediaSignature,
+          preview,
+          hasPreview,
+          today,
+          time: item.time,
+          day: item.day,
+        });
+      } else if (
+        !prior || (item.type === "empty" && prior.text !== item.text)
+      ) {
+        let node;
+        if (item.type === "older") {
+          node = el("button", "text-button", t("older"));
+          node.type = "button";
+          node.addEventListener("click", () => ctx.loadOlder());
+        } else if (item.type === "day") {
+          node = el(
+            "div",
+            "day-divider",
+            new Date(item.time).toLocaleDateString(
+              english ? "en" : "zh-TW",
+              { year: "numeric", month: "short", day: "numeric" },
+            ),
+          );
+        } else if (item.type === "unread") {
+          node = el("div", "unread-divider", t("unreadDivider"));
+        } else node = el("div", "loading-message", item.text);
+        if (prior) prior.node.replaceWith(node);
+        records.set(item.key, { node, text: item.text });
+      }
+    }
+    placeKeyedNodes(list, keys, records, changes);
+    order = keys;
     if (mode === "bottom" || (mode === "follow" && nearBottom)) {
       list.scrollTop = list.scrollHeight;
     } else if (mode === "anchor") {

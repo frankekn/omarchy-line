@@ -304,8 +304,10 @@ export function createMediaView(ctx) {
       bubble.append(card);
     }
   }
-  function disconnectPreviews() {
-    previewObserver.disconnect();
+  function unobservePreviews(row) {
+    for (const node of row.querySelectorAll(".media-placeholder")) {
+      previewObserver.unobserve(node);
+    }
   }
-  return { addMedia, disconnectPreviews };
+  return { addMedia, unobservePreviews };
 }

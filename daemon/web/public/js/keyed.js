@@ -41,3 +41,23 @@ export function planKeyChanges(before, after) {
     moved: retained.filter((key) => !stationary.has(key)),
   };
 }
+
+// Removed nodes are disposed by the caller; records hold the current nodes.
+export function placeKeyedNodes(parent, keys, records, changes) {
+  const placements = new Set([...changes.added, ...changes.moved]);
+  let next = null;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const node = records.get(keys[i]).node;
+    if (
+      placements.has(keys[i]) &&
+      (node.parentNode !== parent || node.nextSibling !== next)
+    ) {
+      if (
+        node.parentNode === parent && typeof parent.moveBefore === "function"
+      ) {
+        parent.moveBefore(node, next);
+      } else parent.insertBefore(node, next);
+    }
+    next = node;
+  }
+}
