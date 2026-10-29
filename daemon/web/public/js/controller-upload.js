@@ -1,5 +1,7 @@
 // Browser file upload and retry state. Uses the shared model and injected view
 // actions.
+import { mediaKind, sizeRefusal } from "./media-kind.js";
+
 export function createUploadController(ctx) {
   const model = ctx.model, t = ctx.t;
   function uploadFile(file, progress) {
@@ -39,44 +41,49 @@ export function createUploadController(ctx) {
       return;
     }
     for (const file of files) {
-      if (file.size > 1073741824) {
-        ctx.toast(`${file.name}: ${t("tooLarge")}`);
-        continue;
-      }
-      model.uploadCount++;
-      ctx.showUploadStatus(file.name);
       try {
-        const path = await uploadFile(
-          file,
-          (percent) => ctx.showUploadStatus(file.name, percent),
-        );
-        if (model.account !== account) throw new Error(t("offlineAction"));
-        const type = file.type.startsWith("image/")
-          ? "IMAGE"
-          : file.type.startsWith("video/")
-          ? "VIDEO"
-          : "FILE";
-        if (retry) {
-          ctx.forgetPending(chat, retry.requestId);
-          if (model.active === chat) {
-            model.messages = model.messages.filter((m) =>
-              !(m.pending && m.requestId === retry.requestId)
-            );
-          }
+        const head = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+        const kind = mediaKind(file.name, head);
+        const refusal = sizeRefusal(kind, file.size);
+        if (refusal) {
+          ctx.toast(`${file.name}: ${t(refusal)}`);
+          continue;
         }
-        const message = ctx.optimistic(chat, "sendFile", { path }, {
-          contentType: type,
-          text: file.name,
-          fileName: file.name,
-          fileSize: file.size,
-        });
-        model.files.set(message.requestId, file);
-        ctx.sendOptimistic(chat, message);
+        model.uploadCount++;
+        ctx.showUploadStatus(file.name);
+        try {
+          const path = await uploadFile(
+            file,
+            (percent) => ctx.showUploadStatus(file.name, percent),
+          );
+          if (model.account !== account) throw new Error(t("offlineAction"));
+          const type = kind === "image" || kind === "gif"
+            ? "IMAGE"
+            : kind === "video"
+            ? "VIDEO"
+            : "FILE";
+          if (retry) {
+            ctx.forgetPending(chat, retry.requestId);
+            if (model.active === chat) {
+              model.messages = model.messages.filter((m) =>
+                !(m.pending && m.requestId === retry.requestId)
+              );
+            }
+          }
+          const message = ctx.optimistic(chat, "sendFile", { path }, {
+            contentType: type,
+            text: file.name,
+            fileName: file.name,
+            fileSize: file.size,
+          });
+          model.files.set(message.requestId, file);
+          ctx.sendOptimistic(chat, message);
+        } finally {
+          model.uploadCount--;
+          if (!model.uploadCount) ctx.hideUploadStatus();
+        }
       } catch (error) {
         ctx.displayError(error);
-      } finally {
-        model.uploadCount--;
-        if (!model.uploadCount) ctx.hideUploadStatus();
       }
     }
   }

@@ -18,6 +18,30 @@ import { createConnection } from "./public/js/connection.js";
 import { createModel } from "./public/js/model.js";
 import { makeRegistry } from "./public/js/registry.js";
 import { createTranslator, isEnglish } from "./public/js/i18n.js";
+import { mediaKind, sizeRefusal } from "./public/js/media-kind.js";
+
+Deno.test("upload kind and limits follow magic before extension", () => {
+  const bytes = (s: string) => new TextEncoder().encode(s);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]);
+  assertEquals(mediaKind("photo.txt", png), "image");
+  assertEquals(mediaKind("photo.jpg", bytes("....ftypmp42")), "video");
+  assertEquals(mediaKind("x.mov", bytes("....ftypM4A ")), "file");
+  assertEquals(mediaKind("x.mp4", bytes("....ftypheic")), "image");
+  assertEquals(mediaKind("x.dat", bytes("GIF89a")), "gif");
+  assertEquals(mediaKind("x.dat", bytes("RIFF....WEBP")), "image");
+  assertEquals(mediaKind("x.dat", bytes("RIFF....AVI ")), "video");
+  assertEquals(mediaKind("x.JPG", bytes("unknown")), "image");
+  assertEquals(mediaKind("x.constructor", bytes("unknown")), "file");
+  assertEquals(mediaKind("x.gif", bytes("....ftyp")), "gif");
+  assertEquals(
+    mediaKind("x", new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])),
+    "video",
+  );
+  assertEquals(sizeRefusal("image", 20 * 1024 * 1024), "");
+  assertEquals(sizeRefusal("gif", 20 * 1024 * 1024 + 1), "imageTooLarge");
+  assertEquals(sizeRefusal("video", 1024 ** 3 + 1), "videoTooLarge");
+  assertEquals(sizeRefusal("file", 1024 ** 3 + 1), "fileTooLarge");
+});
 
 Deno.test("unread position counts only incoming messages", () => {
   const rows = [
