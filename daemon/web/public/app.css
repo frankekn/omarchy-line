@@ -1045,6 +1045,49 @@ textarea::placeholder {
   margin: auto;
 }
 @media (max-width:700px) {
+  /* Keep the painted controls compact while giving touch a 44px target. */
+  button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .send-button {
+    position: relative;
+    isolation: isolate;
+    background: transparent;
+  }
+  .send-button::before {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    z-index: -1;
+    border-radius: 9px;
+    background: var(--accent);
+  }
+  .reaction-picker button,
+  .reaction-pill {
+    position: relative;
+    isolation: isolate;
+    border-color: transparent;
+    background: transparent;
+  }
+  .reaction-pill.mine {
+    border-color: transparent;
+  }
+  .reaction-picker button::before,
+  .reaction-pill::before {
+    content: "";
+    position: absolute;
+    inset: 50% 3px auto;
+    height: 25px;
+    transform: translateY(-50%);
+    z-index: -1;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+  }
+  .reaction-pill.mine::before {
+    border-color: var(--accent);
+  }
   .app-bar {
     height: 56px;
     padding: 0 15px;
