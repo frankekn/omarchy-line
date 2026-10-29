@@ -132,21 +132,33 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 | `http.ts` | 安全標頭和簡單的回應。 |
 | `public/` | 網頁本身：`index.html`、`app.css`，以及 `public/js/` 裡的原生 ES module，沒有建置步驟。 |
 
-`public/js/` 裡沒有前綴的模組（`protocol.js`、`text.js`、`drafts.js`、
-`connection.js`、`i18n.js`）不碰 DOM，所以 `ui_test.ts` 可以在 Deno 裡直接
-import 來測試。`controller-*.js` 負責改共用的 model，`view-*.js` 負責畫面，
+`public/js/` 裡的 `protocol.js`、`text.js`、`drafts.js`、`connection.js` 和
+`i18n.js` 等輔助模組可由 `ui_test.ts` 在 Deno 裡直接 import 測試，不需要瀏覽器。
+`controller-*.js` 負責改共用的 model，`view-*.js` 負責畫面，
 `app.js` 把它們組起來。伺服器只提供 `public/js/<name>.js` 這一層，不支援子目錄。
 
 不用 LINE 帳號，接 stub 跑網頁：
 
 ```bash
 cd daemon
-XDG_STATE_HOME=/tmp/enil-stub ./stub.py &
-XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
-  ENIL_WEB_KEY=devkey-0123456789abcdef deno run -A web/server.ts
+stub_state="$(mktemp -d)"
+set -m
+XDG_STATE_HOME="$stub_state" ./stub.py &
+stub_pid=$!
+XDG_STATE_HOME="$stub_state" ENIL_WEB_ADDR=127.0.0.1:18470 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run --frozen -A web/server.ts &
+web_pid=$!
 ```
 
-然後開 `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`。
+然後開 `http://127.0.0.1:18470/?key=devkey-0123456789abcdef`。
+用完後停止兩個 process group，並刪除它們的暫存 state：
+
+```bash
+kill -- "-$web_pid" "-$stub_pid"
+wait "$web_pid" "$stub_pid" 2>/dev/null || true
+rm -rf -- "$stub_state"
+```
+
 `deno task test` 會連同 `web/server_test.ts` 和 `web/ui_test.ts` 一起跑。
 
 stub 的 socket 也接受 `{"cmd":"poke","chat":"cstub-family","text":"hello"}`，

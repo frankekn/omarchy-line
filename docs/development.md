@@ -155,9 +155,9 @@ The web page lives in `daemon/web/`:
 | `http.ts` | Security headers and small responses. |
 | `public/` | The page: `index.html`, `app.css`, and plain ES modules in `public/js/`, with no build step. |
 
-In `public/js/`, the modules without a prefix (`protocol.js`, `text.js`,
-`drafts.js`, `connection.js`, `i18n.js`) do not touch the DOM, so
-`ui_test.ts` imports and tests them under Deno. `controller-*.js` change the
+In `public/js/`, `ui_test.ts` imports and tests helpers such as `protocol.js`,
+`text.js`, `drafts.js`, `connection.js` and `i18n.js` under Deno without a
+browser. `controller-*.js` change the
 shared model, and `view-*.js` draw it. `app.js` puts them together. The server
 serves `public/js/<name>.js` from that one directory only, with no
 subdirectories.
@@ -166,12 +166,24 @@ To run the page against the stub, without a LINE account:
 
 ```bash
 cd daemon
-XDG_STATE_HOME=/tmp/enil-stub ./stub.py &
-XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
-  ENIL_WEB_KEY=devkey-0123456789abcdef deno run -A web/server.ts
+stub_state="$(mktemp -d)"
+set -m
+XDG_STATE_HOME="$stub_state" ./stub.py &
+stub_pid=$!
+XDG_STATE_HOME="$stub_state" ENIL_WEB_ADDR=127.0.0.1:18470 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run --frozen -A web/server.ts &
+web_pid=$!
 ```
 
-Then open `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`.
+Then open `http://127.0.0.1:18470/?key=devkey-0123456789abcdef`.
+When finished, stop both process groups and remove their temporary state:
+
+```bash
+kill -- "-$web_pid" "-$stub_pid"
+wait "$web_pid" "$stub_pid" 2>/dev/null || true
+rm -rf -- "$stub_state"
+```
+
 `deno task test` runs `web/server_test.ts` and `web/ui_test.ts` with the rest.
 
 The stub also accepts `{"cmd":"poke","chat":"cstub-family","text":"hello"}`
