@@ -1005,7 +1005,7 @@ textarea::placeholder {
   max-height: none;
   margin: 0;
   border: 0;
-  background: #0b0e0def;
+  background: #0b0e0d;
   color: #f1f5f0;
   padding: 20px;
   overflow: hidden;
@@ -1024,6 +1024,9 @@ textarea::placeholder {
 }
 .lightbox-toolbar .icon-button {
   color: #c8d6c8;
+}
+.lightbox-toolbar .icon-button:hover {
+  background: #35483a;
 }
 .lightbox-toolbar .secondary {
   color: var(--text);
