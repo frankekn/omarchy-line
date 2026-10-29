@@ -21,6 +21,70 @@ import { createTranslator, isEnglish } from "./public/js/i18n.js";
 import { mediaKind, sizeRefusal } from "./public/js/media-kind.js";
 import { uploadName } from "./files.ts";
 import { loadBlocks } from "../slice_test.ts";
+import { planKeyChanges } from "./public/js/keyed.js";
+
+Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
+  const examples = [
+    {
+      before: [],
+      after: ["a", "b"],
+      added: ["a", "b"],
+      removed: [],
+      moved: [],
+    },
+    {
+      before: ["a", "b"],
+      after: ["x", "a", "b"],
+      added: ["x"],
+      removed: [],
+      moved: [],
+    },
+    {
+      before: ["a", "b", "c"],
+      after: ["b", "c", "a"],
+      added: [],
+      removed: [],
+      moved: ["a"],
+    },
+    {
+      before: ["a", "b", "c"],
+      after: ["c", "x", "a"],
+      added: ["x"],
+      removed: ["b"],
+      moved: ["c"],
+    },
+    {
+      before: ["local", "b"],
+      after: ["sent", "b"],
+      added: ["sent"],
+      removed: ["local"],
+      moved: [],
+    },
+    {
+      before: ["a", "b"],
+      after: [],
+      added: [],
+      removed: ["a", "b"],
+      moved: [],
+    },
+  ];
+  for (const { before, after, added, removed, moved } of examples) {
+    const plan = planKeyChanges(before, after);
+    assertEquals(plan, { removed, added, moved });
+    const nodes = before.filter((key) => !removed.includes(key));
+    const placements = new Set([...added, ...moved]);
+    for (let i = after.length - 1; i >= 0; i--) {
+      if (!placements.has(after[i])) continue;
+      const at = nodes.indexOf(after[i]);
+      if (at >= 0) nodes.splice(at, 1);
+      const next = i + 1 < after.length
+        ? nodes.indexOf(after[i + 1])
+        : nodes.length;
+      nodes.splice(next, 0, after[i]);
+    }
+    assertEquals(nodes, after);
+  }
+});
 
 type MediaKind = "image" | "gif" | "video" | "file";
 interface MediaSendBlock {
