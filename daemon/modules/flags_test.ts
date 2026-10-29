@@ -4,7 +4,7 @@
  */
 import { assert, assertEquals } from "@std/assert";
 
-const daemonDir = new URL("../", import.meta.url).pathname;
+const daemonDir = new URL("../", import.meta.url);
 
 async function fixture() {
   const root = await Deno.makeTempDir({ prefix: "enil-flags-" });
@@ -13,7 +13,7 @@ async function fixture() {
   await Deno.mkdir(bin, { recursive: true });
   await Deno.mkdir(daemon, { recursive: true });
   for (const name of ["enil-run.sh", "enil-flags.sh"]) {
-    await Deno.copyFile(`${daemonDir}${name}`, `${daemon}/${name}`);
+    await Deno.copyFile(new URL(name, daemonDir), `${daemon}/${name}`);
   }
   await Deno.writeTextFile(`${daemon}/daemon.ts`, "");
   await Deno.writeTextFile(
