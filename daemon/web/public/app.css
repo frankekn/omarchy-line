@@ -6,7 +6,7 @@
   --hover: #242d26;
   --line: #2c352e;
   --text: #e5ebe4;
-  --muted: #879389;
+  --muted: #a8b7aa;
   --accent: #a8dd93;
   --accent-ink: #11200f;
   --bubble: #252d27;
@@ -26,13 +26,13 @@
     --hover: #e4ece1;
     --line: #d7e0d4;
     --text: #27342a;
-    --muted: #6e7e70;
-    --accent: #538a4d;
+    --muted: #546658;
+    --accent: #3d7139;
     --accent-ink: #fff;
     --bubble: #e8eee6;
     --own: #d9ecd3;
     --danger: #a63b32;
-    --warn: #8c6627;
+    --warn: #806020;
     --shadow: 0 24px 80px #283c2828;
   }
 }
