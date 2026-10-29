@@ -96,6 +96,11 @@ const strings = {
   close: ["關閉", "Close"],
   noStickers: ["沒有可用的貼圖。", "No stickers available."],
   reply: ["回覆", "Reply"],
+  jumpToOrigin: ["跳到原訊息", "Jump to original message"],
+  missingOrigin: [
+    "原訊息不在這一頁裡，往上捲可以載入更舊的",
+    "The original isn't in this page — scroll up to load older",
+  ],
   cancelReply: ["取消回覆", "Cancel reply"],
   reaction: ["表情", "React"],
   undoReaction: ["取消表情", "Remove reaction"],

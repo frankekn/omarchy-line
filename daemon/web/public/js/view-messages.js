@@ -17,6 +17,18 @@ export function createMessagesView(ctx) {
     SAD: "😢",
     OMG: "😱",
   };
+  function scrollToMessage(id) {
+    const target = [...$("messages").querySelectorAll(".message-row")].find(
+      (row) => row.dataset.messageId === String(id || ""),
+    );
+    if (!id || !target) {
+      ctx.toast(t("missingOrigin"));
+      return;
+    }
+    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.classList.add("quote-target");
+    setTimeout(() => target.classList.remove("quote-target"), 2000);
+  }
   function messageNode(message) {
     const chat = model.active,
       own = message.from === model.account,
@@ -34,7 +46,11 @@ export function createMessagesView(ctx) {
         text = `${quote.fromName ? `${quote.fromName}: ` : ""}${
           quote.text || t("message")
         }`;
-      bubble.append(el("div", "quote", text));
+      const button = el("button", "quote", text);
+      button.type = "button";
+      button.title = t("jumpToOrigin");
+      button.addEventListener("click", () => scrollToMessage(quote.id));
+      bubble.append(button);
     }
     let body = message.unsent
       ? t("unsent")

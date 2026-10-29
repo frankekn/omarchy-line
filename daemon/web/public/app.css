@@ -675,12 +675,20 @@ textarea::placeholder {
   font-weight: 700;
 }
 .quote {
+  display: block;
+  width: 100%;
+  border: 0;
   border-left: 2px solid var(--accent);
+  background: transparent;
+  text-align: left;
   padding: 2px 0 2px 9px;
   margin-bottom: 9px;
   color: var(--muted);
   font-size: 11px;
   white-space: pre-wrap;
+}
+.quote-target .bubble {
+  outline: 2px solid var(--accent);
 }
 .message-meta {
   display: flex;
