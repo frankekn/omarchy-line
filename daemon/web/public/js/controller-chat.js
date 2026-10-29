@@ -64,13 +64,14 @@ export function createChatController(ctx) {
     ctx.showChatList();
     ctx.renderChats();
   }
-  async function loadHistory(chat, markRead) {
-    if (model.loading && model.active === chat) return;
+  async function loadHistory(chat, markRead, replaceLoading = false) {
+    const continuing = model.loading && model.active === chat;
+    if (continuing && !replaceLoading) return;
     const generation = ++model.historyGeneration;
     model.loading = true;
     model.loadingOlder = false;
     model.noOlder = false;
-    model.historyEvents = [];
+    if (!continuing) model.historyEvents = [];
     ctx.renderMessages("bottom");
     try {
       const rows = await ctx.command("history", {

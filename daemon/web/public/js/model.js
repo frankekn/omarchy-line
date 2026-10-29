@@ -4,6 +4,7 @@ export function createModel() {
     signedIn: false,
     socket: null,
     connected: false,
+    syncing: false,
     everConnected: false,
     retryDelay: 1000,
     retryTimer: null,

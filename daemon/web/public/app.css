@@ -287,6 +287,19 @@ a:focus-visible {
 .notice + .notice {
   margin-top: 3px;
 }
+.notice-action {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.sync-button {
+  margin-top: 8px;
+}
 .line-login {
   display: grid;
   place-items: center;

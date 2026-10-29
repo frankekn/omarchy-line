@@ -21,11 +21,60 @@ export function createLoginView(ctx) {
       (state?.updatedAt && Date.now() - Number(state.updatedAt) > 180000)
     ) notices.push(t("daemonOffline"));
     if (state?.link?.reason === "restricted") {
-      notices.push(`${t("restricted")} (${String(state.link.code || "?")})`);
-    } else if (state?.link?.push === "down") notices.push(t("pushDown"));
+      const button = el(
+        "button",
+        "notice notice-action",
+        `${t("restricted")} (${String(state.link.code || "?")}) — ${
+          t(model.syncing ? "syncing" : "retrySync")
+        }`,
+      );
+      button.type = "button";
+      button.disabled = model.syncing;
+      button.addEventListener("click", syncNow);
+      notices.push(button);
+    } else if (state?.link?.push === "down") {
+      const button = el(
+        "button",
+        "notice notice-action",
+        `${t("pushDown")} — ${t(model.syncing ? "syncing" : "retrySync")}`,
+      );
+      button.type = "button";
+      button.disabled = model.syncing;
+      button.addEventListener("click", syncNow);
+      notices.push(button);
+    }
     if (Number(state?.refresh?.failures || 0) >= 2) notices.push(t("stale"));
-    $("notices").replaceChildren(...notices.map((s) => el("div", "notice", s)));
+    $("notices").replaceChildren(
+      ...notices.map((s) => typeof s === "string" ? el("div", "notice", s) : s),
+    );
     $("notices").hidden = notices.length === 0;
+  }
+  async function syncNow() {
+    if (model.syncing) return;
+    model.syncing = true;
+    $("sync").disabled = true;
+    $("sync").textContent = t("syncing");
+    renderNotices();
+    try {
+      const data = await ctx.command("sync");
+      const at = Number(data?.at) || Date.now();
+      toast(`${t("synced")} ${
+        new Date(at).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      }`);
+      if (model.active) {
+        ctx.loadHistory(model.active, ctx.isViewingChat(), true);
+      }
+    } catch (error) {
+      displayError(error);
+    } finally {
+      model.syncing = false;
+      $("sync").disabled = false;
+      $("sync").textContent = t("sync");
+      renderNotices();
+    }
   }
   function connectionStatus(status) {
     $("connection-text").textContent = t(status);
@@ -122,6 +171,7 @@ export function createLoginView(ctx) {
   $("line-logout").addEventListener("click", () => {
     if (confirm(t("confirmLogout"))) ctx.command("logout").catch(displayError);
   });
+  $("sync").addEventListener("click", syncNow);
   return {
     toast,
     displayError,

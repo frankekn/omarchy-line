@@ -30,6 +30,10 @@ const strings = {
   ],
   pushDown: ["LINE 即時連線中斷。", "The LINE push connection is down."],
   restricted: ["LINE 帳號受到限制", "The LINE account is restricted"],
+  retrySync: ["點此重試", "Tap to retry"],
+  sync: ["同步", "Sync"],
+  syncing: ["同步中…", "Syncing…"],
+  synced: ["同步完成", "Synced"],
   stale: ["聊天清單可能已過時。", "The chat list may be stale."],
   incomplete: [
     "清單不完整；搜尋只包含已載入的聊天。",
