@@ -61,9 +61,13 @@ export function createMediaView(ctx) {
     $("lightbox-prev").disabled = pictureIndex === 0;
     $("lightbox-next").disabled = pictureIndex === pictures.length - 1;
   }
+  function setPictureSource(url) {
+    $("lightbox-error").hidden = true;
+    $("lightbox-image").src = url;
+  }
   function showPicture() {
     updatePictureControls();
-    $("lightbox-image").src = pictures[pictureIndex].url;
+    setPictureSource(pictures[pictureIndex].url);
     setScale(1);
   }
   function stepPicture(delta) {
@@ -147,7 +151,7 @@ export function createMediaView(ctx) {
     pictureIndex = index;
     updatePictureControls();
     if (current.url !== pictures[index].url) {
-      $("lightbox-image").src = pictures[index].url;
+      setPictureSource(pictures[index].url);
     }
   }
   function clickableImage(image, chat, message, url, key = "") {
@@ -168,6 +172,12 @@ export function createMediaView(ctx) {
     });
   }
   $("lightbox-prev").addEventListener("click", () => stepPicture(-1));
+  $("lightbox-image").addEventListener("error", () => {
+    $("lightbox-error").hidden = false;
+  });
+  $("lightbox-image").addEventListener("load", () => {
+    $("lightbox-error").hidden = true;
+  });
   $("lightbox-next").addEventListener("click", () => stepPicture(1));
   $("lightbox-zoom-in").addEventListener("click", () => setScale(scale * 1.2));
   $("lightbox-zoom-out").addEventListener("click", () => setScale(scale / 1.2));

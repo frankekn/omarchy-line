@@ -521,6 +521,41 @@ export async function lightboxUpdates(h) {
   h.step("lightbox-live-picture-list");
 }
 
+export async function lightboxFailure(h) {
+  await Deno.writeFile(
+    `${h.stateDir}/media/invalid.jpg`,
+    new Uint8Array([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+  );
+  const now = Date.now();
+  const messages = [
+    picture(h, "valid", "stub-shot1.png", now),
+    picture(h, "invalid", "invalid.jpg", now + 1),
+  ];
+  const { context, page } = await pictureFixture(h, messages);
+  await page.locator('article[data-message-id="valid"] img').click();
+  const image = page.locator("#lightbox-image");
+  await page.locator("#lightbox-next").click();
+  await until(
+    async () =>
+      await image.evaluate((node) => node.complete && node.naturalWidth === 0),
+    "invalid image decode",
+  );
+  const error = page.locator("#lightbox-error");
+  assert.equal(await error.count(), 1);
+  assert.equal(await error.getAttribute("role"), "alert");
+  assert.equal(await error.isVisible(), true);
+  assert.equal(await error.textContent(), "Could not load attachment");
+  await page.locator("#lightbox-prev").click();
+  await until(
+    async () =>
+      await image.evaluate((node) => node.complete && node.naturalWidth > 0),
+    "valid image decode",
+  );
+  assert.equal(await error.isHidden(), true);
+  await context.close();
+  h.step("lightbox-decode-failure");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
@@ -529,4 +564,5 @@ export async function parityFixes(h) {
   await shortcutScope(h);
   await reactionEscape(h);
   await lightboxUpdates(h);
+  await lightboxFailure(h);
 }
