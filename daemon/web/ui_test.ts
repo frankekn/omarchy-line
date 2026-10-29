@@ -77,6 +77,37 @@ Deno.test("history trimming defers at protected older rows", () => {
   assert(trimHistory(nonNumericId, 2, new Set()) === nonNumericId);
 });
 
+Deno.test("history trimming limits each batch and preserves a protected boundary", () => {
+  const rows = [
+    { id: "1" },
+    { id: "pending", pending: true },
+    ...Array.from({ length: 9 }, (_, i) => ({ id: String(i + 2) })),
+  ];
+  const first = trimHistory(rows, 3, new Set(["3"]), 2);
+  assertEquals(first.map((row) => row.id), [
+    "pending",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+  ]);
+  assert(trimHistory(first, 3, new Set(["3"]), 2) === first);
+  const second = trimHistory(first, 3, new Set(), 2);
+  assertEquals(second.map((row) => row.id), [
+    "pending",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+  ]);
+});
+
 Deno.test("preview cache caps entries, protects visible images and retries later", () => {
   const cache = new Map<string, string>();
   for (let i = 0; i < 2000; i++) {
@@ -435,6 +466,77 @@ Deno.test("an empty initial history ends pagination", async () => {
   });
   await chat.loadHistory("c", false);
   assertEquals(model.noOlder, true);
+});
+
+Deno.test("an older page must advance its cursor and can resume with new data", async () => {
+  type Row = { id: string; from: string; time: number };
+  const model: Omit<ReturnType<typeof createModel>, "messages"> & {
+    messages: Row[];
+  } = { ...createModel(), messages: [{ id: "701", from: "peer", time: 1000 }] };
+  model.account = "me";
+  model.active = "c";
+  const pages: Row[][] = [
+    [{ id: "700", from: "peer", time: 2000 }],
+    [{ id: "698", from: "peer", time: 400 }],
+  ];
+  const cursors: string[] = [];
+  const chat = createChatController({
+    model,
+    command: (_cmd: string, request: { before?: string }) => {
+      cursors.push(request.before || "");
+      return Promise.resolve(pages.shift() || []);
+    },
+    reconcilePending: () => {},
+    renderMessages: () => {},
+  });
+  await chat.loadOlder();
+  assertEquals(model.messages.map((row) => row.id), ["701", "700"]);
+  assertEquals(model.noOlder, true);
+  await chat.loadOlder();
+  assertEquals(cursors, ["701"]);
+  model.messages = mergeMessage(
+    model.messages,
+    { id: "699", from: "peer", time: 500 },
+    "me",
+  );
+  await chat.loadOlder();
+  assertEquals(cursors, ["701", "699"]);
+  assertEquals(model.messages[0].id, "698");
+  assertEquals(model.noOlder, false);
+});
+
+Deno.test("an overlapping older page stops until a history refresh", async () => {
+  type Row = { id: string; from: string; time: number };
+  const model: Omit<ReturnType<typeof createModel>, "messages"> & {
+    messages: Row[];
+  } = { ...createModel(), messages: [{ id: "2", from: "peer", time: 2 }] };
+  model.account = "me";
+  model.active = "c";
+  const pages: Row[][] = [
+    [{ id: "2", from: "peer", time: 2 }],
+    [{ id: "2", from: "peer", time: 2 }],
+    [{ id: "1", from: "peer", time: 1 }],
+  ];
+  const cursors: string[] = [];
+  const chat = createChatController({
+    model,
+    command: (_cmd: string, request: { before?: string }) => {
+      cursors.push(request.before || "");
+      return Promise.resolve(pages.shift() || []);
+    },
+    reconcilePending: () => {},
+    renderMessages: () => {},
+  });
+  await chat.loadOlder();
+  assertEquals(model.noOlder, true);
+  await chat.loadOlder();
+  assertEquals(cursors, ["2"]);
+  await chat.loadHistory("c", false);
+  assertEquals(model.noOlder, false);
+  await chat.loadOlder();
+  assertEquals(cursors, ["2", "", "2"]);
+  assertEquals(model.messages.map((row) => row.id), ["1", "2"]);
+  assertEquals(model.noOlder, false);
 });
 
 Deno.test("events received during an older page update that page too", async () => {

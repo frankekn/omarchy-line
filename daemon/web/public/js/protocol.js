@@ -126,9 +126,10 @@ export function mergeHistory(rows, fresh, myMid) {
  * @param {T[]} rows
  * @param {number} limit
  * @param {Set<string>} protectedIds
+ * @param {number} [maxRemove]
  * @returns {T[]}
  */
-export function trimHistory(rows, limit, protectedIds) {
+export function trimHistory(rows, limit, protectedIds, maxRemove = Infinity) {
   // The daemon pages by numeric LINE id, while the view sorts by time first.
   // Only cut when those orders agree, so `before` cannot skip a removed row.
   let previous = "", count = 0;
@@ -143,7 +144,7 @@ export function trimHistory(rows, limit, protectedIds) {
     previous = id;
     if (!protectedIds.has(id)) count++;
   }
-  let excess = count - limit, cut = 0;
+  let excess = Math.min(count - limit, maxRemove), cut = 0;
   if (excess <= 0) return rows;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];

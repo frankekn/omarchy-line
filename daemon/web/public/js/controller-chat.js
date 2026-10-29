@@ -5,6 +5,28 @@ import { PREVIEW_CACHE_MAX, putPreview } from "./preview-cache.js";
 export function createChatController(ctx) {
   const model = ctx.model;
   let membersGeneration = 0;
+  let stoppedBefore = null;
+  function firstConfirmed() {
+    return model.messages.find((m) => !m.pending && m.id);
+  }
+  function refreshOlderAvailability() {
+    if (!model.noOlder) {
+      stoppedBefore = null;
+      return;
+    }
+    if (
+      !stoppedBefore || stoppedBefore.chat !== model.active ||
+      stoppedBefore.generation !== model.historyGeneration
+    ) {
+      stoppedBefore = null;
+      return;
+    }
+    const first = firstConfirmed();
+    if (first && String(first.id) !== stoppedBefore.id) {
+      model.noOlder = false;
+      stoppedBefore = null;
+    }
+  }
   function markCurrentRead() {
     if (!ctx.isViewingChat()) return;
     const latest = [...model.messages].reverse().find((message) =>
@@ -17,6 +39,7 @@ export function createChatController(ctx) {
   }
   function closeChat() {
     membersGeneration++;
+    stoppedBefore = null;
     model.historyGeneration++;
     model.active = "";
     model.chatOpen = false;
@@ -34,6 +57,7 @@ export function createChatController(ctx) {
   }
   function openChat(chat) {
     const generation = ++membersGeneration, account = model.account;
+    stoppedBefore = null;
     if (model.active) ctx.saveComposer();
     model.historyGeneration++;
     model.active = chat;
@@ -108,6 +132,7 @@ export function createChatController(ctx) {
     const sameChat = model.active === chat;
     const continuing = sameChat && (model.loading || model.loadingOlder);
     if (sameChat && model.loading && !replaceLoading) return;
+    stoppedBefore = null;
     const generation = ++model.historyGeneration;
     model.loading = true;
     model.loadingOlder = false;
@@ -167,10 +192,11 @@ export function createChatController(ctx) {
     }
   }
   async function loadOlder() {
+    refreshOlderAvailability();
     if (model.loading || model.loadingOlder || model.noOlder || !model.active) {
       return;
     }
-    const first = model.messages.find((m) => !m.pending && m.id);
+    const first = firstConfirmed();
     if (!first) return;
     const chat = model.active, generation = model.historyGeneration;
     model.loadingOlder = true;
@@ -198,8 +224,17 @@ export function createChatController(ctx) {
           model.readerCount,
         );
       }
-      // A cached page can be short even when older messages exist upstream.
-      model.noOlder = fresh.length === 0;
+      // A short cached page can still advance. Stop only if its merged and
+      // replayed rows do not move the numeric cursor towards older messages.
+      const next = firstConfirmed();
+      const before = String(first.id), after = String(next?.id || "");
+      const numeric = /^\d+$/.test(before) && /^\d+$/.test(after);
+      const advanced = after &&
+        (numeric ? BigInt(after) < BigInt(before) : after !== before);
+      model.noOlder = !advanced;
+      stoppedBefore = model.noOlder
+        ? { chat, generation, id: after || before }
+        : null;
       ctx.renderMessages("anchor");
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {
@@ -243,6 +278,7 @@ export function createChatController(ctx) {
     backToList,
     loadHistory,
     loadOlder,
+    refreshOlderAvailability,
     requestPreview,
   };
 }

@@ -3,12 +3,15 @@
 import { $, el, formatTime, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
+const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
+  let renderedRows = [], renderedDesired = [], renderedToday = "";
+  let renderedUnread = "";
   let followedTop = null;
-  let followFrame = 0;
+  let followFrame = 0, trimFrame = 0;
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
@@ -31,6 +34,7 @@ export function createMessagesView(ctx) {
       ctx.toast(t("missingOrigin"));
       return;
     }
+    interruptFollowing();
     // A quote jump can pass the paging threshold without the reader scrolling.
     suspendPaging(1000);
     target.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -337,12 +341,118 @@ export function createMessagesView(ctx) {
     }
     followFrame = requestAnimationFrame(settle);
   }
+  function removeRecord(key) {
+    const record = records.get(key);
+    if (record.message) {
+      ctx.unobservePreviews(record.node);
+      ctx.closeReactionPicker(String(record.message.id || ""));
+    }
+    record.node.remove();
+    records.delete(key);
+  }
+  function interruptFollowing() {
+    followedTop = null;
+    if (followFrame) cancelAnimationFrame(followFrame);
+    if (trimFrame) cancelAnimationFrame(trimFrame);
+    followFrame = 0;
+    trimFrame = 0;
+  }
+  function scheduleTrim(list) {
+    if (trimFrame) return;
+    const chat = renderedChat, account = renderedAccount;
+    trimFrame = requestAnimationFrame(() => {
+      trimFrame = 0;
+      if (
+        chat !== renderedChat || account !== renderedAccount ||
+        chat !== model.active || account !== model.account ||
+        model.loading || model.loadingOlder || $("lightbox").open ||
+        !ctx.isViewingChat()
+      ) return;
+      const top = list.scrollTop;
+      if (
+        list.scrollHeight - top - list.clientHeight > 2 &&
+        (followedTop === null || Math.abs(top - followedTop) > 2)
+      ) return;
+      const kept = trimHistory(
+        model.messages,
+        HISTORY_LIMIT,
+        protectedMessageIds(list),
+        TRIM_BATCH,
+      );
+      if (kept === model.messages) return;
+      const removed = new Set(model.messages);
+      for (const row of kept) removed.delete(row);
+      model.messages = kept;
+      model.noOlder = false;
+      const removedKeys = new Set();
+      for (const [key, record] of records) {
+        if (record.message && removed.has(record.message)) {
+          removeRecord(key);
+          removedKeys.add(key);
+        }
+      }
+      // A day heading with no remaining row must leave with its last row.
+      let dayKey = "", hasMessage = false;
+      function removeEmptyDay() {
+        if (dayKey && !hasMessage) {
+          removeRecord(dayKey);
+          removedKeys.add(dayKey);
+        }
+      }
+      for (const key of order) {
+        if (removedKeys.has(key)) continue;
+        if (key.startsWith("day:")) {
+          removeEmptyDay();
+          dayKey = key;
+          hasMessage = false;
+        } else if (key.startsWith("message:")) hasMessage = true;
+      }
+      removeEmptyDay();
+      order = order.filter((key) => !removedKeys.has(key));
+      renderedRows = renderedRows.filter((row) => !removed.has(row));
+      renderedDesired = renderedDesired.filter((item) =>
+        !removedKeys.has(item.key)
+      );
+      if (!records.has("control:older")) {
+        const node = el("button", "text-button", t("older"));
+        node.type = "button";
+        node.addEventListener("click", () => ctx.loadOlder());
+        list.insertBefore(node, list.firstChild);
+        records.set("control:older", { node });
+        order.unshift("control:older");
+        renderedDesired.unshift({ key: "control:older", type: "older" });
+      }
+      // Let the browser clamp the scroll position after the removals. Read
+      // and correct it in the next frame, after layout has caught up.
+      trimFrame = requestAnimationFrame(() => {
+        trimFrame = 0;
+        if (
+          chat !== renderedChat || account !== renderedAccount ||
+          chat !== model.active || account !== model.account ||
+          model.loading || model.loadingOlder || $("lightbox").open ||
+          !ctx.isViewingChat()
+        ) return;
+        const current = list.scrollTop;
+        const max = Math.max(0, list.scrollHeight - list.clientHeight);
+        if (
+          max - current > 2 && Math.abs(current - Math.min(top, max)) > 2
+        ) return;
+        followBottom(list);
+        scheduleTrim(list);
+      });
+    });
+  }
   function suspendPaging(delay) {
     suppressPaging = true;
     clearTimeout(pagingTimer);
     pagingTimer = setTimeout(() => suppressPaging = false, delay);
   }
   function renderMessages(mode = "preserve") {
+    if (model.noOlder) ctx.refreshOlderAvailability();
+    if ((mode === "bottom" || mode === "anchor") && trimFrame) {
+      cancelAnimationFrame(trimFrame);
+      trimFrame = 0;
+    }
     const list = $("messages"),
       oldHeight = list.scrollHeight,
       oldTop = list.scrollTop;
@@ -367,7 +477,9 @@ export function createMessagesView(ctx) {
       suppressPaging = false;
       clearTimeout(pagingTimer);
       if (followFrame) cancelAnimationFrame(followFrame);
+      if (trimFrame) cancelAnimationFrame(trimFrame);
       followFrame = 0;
+      trimFrame = 0;
       ctx.resetReactionPickers();
       for (const record of records.values()) {
         if (record.message) ctx.unobservePreviews(record.node);
@@ -375,6 +487,10 @@ export function createMessagesView(ctx) {
       }
       records.clear();
       order = [];
+      renderedRows = [];
+      renderedDesired = [];
+      renderedToday = "";
+      renderedUnread = "";
       renderedTail = null;
       followedTop = null;
       renderedChat = model.active;
@@ -385,15 +501,24 @@ export function createMessagesView(ctx) {
       String(newest.id) !== String(renderedTail.id) &&
       compareMessages(newest, renderedTail) > 0 &&
       !records.has(`message:${newest.id}:0`);
+    let deferTrim = false;
     if (
       mode === "follow" && following && appended && !chatChanged &&
-      !model.loading && !model.loadingOlder && model.messages.length > 500 &&
+      !model.loading && !model.loadingOlder &&
+      model.messages.length > HISTORY_LIMIT &&
       !$("lightbox").open && ctx.isViewingChat()
     ) {
-      const kept = trimHistory(model.messages, 500, protectedMessageIds(list));
-      if (kept !== model.messages) {
-        model.messages = kept;
-        model.noOlder = false;
+      if (model.messages.length > HISTORY_LIMIT + TRIM_BATCH) deferTrim = true;
+      else {
+        const kept = trimHistory(
+          model.messages,
+          HISTORY_LIMIT,
+          protectedMessageIds(list),
+        );
+        if (kept !== model.messages) {
+          model.messages = kept;
+          model.noOlder = false;
+        }
       }
     }
     const rows = model.messages.slice();
@@ -414,57 +539,88 @@ export function createMessagesView(ctx) {
       }
     }
     rows.sort(compareMessages);
-    renderedTail = lastConfirmed(rows);
-    const desired = [];
-    if (!model.noOlder && rows.some((m) => !m.pending)) {
-      desired.push({ key: "control:older", type: "older" });
-    }
-    if (!rows.length) {
-      desired.push({
-        key: "control:empty",
-        type: "empty",
-        text: model.loading ? t("loading") : t("noMessages"),
-      });
-    }
-    let previousDay = "", unreadPlaced = false;
-    const counts = new Map(), dayCounts = new Map();
     const today = new Date().toDateString();
-    for (const message of rows) {
-      const id = String(message.id || ""), count = counts.get(id) || 0;
-      counts.set(id, count + 1);
-      const key = `message:${id}:${count}`;
-      const prior = records.get(key);
-      const time = Number(message.time || 0);
-      let day = prior?.time === time ? prior.day : undefined;
-      if (day === undefined) {
-        const date = new Date(time);
-        day = Number.isNaN(date.getTime()) ? "" : date.toDateString();
+    const tail = rows.at(-1), lastItem = renderedDesired.at(-1);
+    const tailTime = Number(tail?.time || 0), tailDate = new Date(tailTime);
+    const tailDay = Number.isNaN(tailDate.getTime())
+      ? ""
+      : tailDate.toDateString();
+    let appendOnly = deferTrim && !pendingRows.length && !model.sent.size &&
+      rows.length === renderedRows.length + 1 && tail === newest &&
+      lastItem?.type === "message" && lastItem.day &&
+      lastItem.day === tailDay &&
+      renderedToday === today && renderedUnread === model.unreadMarkId &&
+      records.has("control:older") === !model.noOlder &&
+      String(tail.id || "") !== model.unreadMarkId;
+    if (appendOnly) {
+      for (let i = 0; i < renderedRows.length; i++) {
+        if (rows[i] !== renderedRows[i] || rows[i].pending) {
+          appendOnly = false;
+          break;
+        }
       }
-      if (day && day !== previousDay) {
-        const dayCount = dayCounts.get(day) || 0;
-        dayCounts.set(day, dayCount + 1);
-        desired.push({ key: `day:${day}:${dayCount}`, type: "day", time });
-        previousDay = day;
-      }
-      if (
-        !unreadPlaced && model.unreadMarkId &&
-        String(message.id || "") === model.unreadMarkId
-      ) {
-        desired.push({ key: "control:unread", type: "unread" });
-        unreadPlaced = true;
-      }
-      desired.push({ key, type: "message", message, time, day, today });
     }
+    let desired;
+    if (appendOnly) {
+      desired = renderedDesired.slice();
+      desired.push({
+        key: `message:${tail.id}:0`,
+        type: "message",
+        message: tail,
+        time: tailTime,
+        day: tailDay,
+        today,
+      });
+    } else {
+      desired = [];
+      if (!model.noOlder && rows.some((m) => !m.pending)) {
+        desired.push({ key: "control:older", type: "older" });
+      }
+      if (!rows.length) {
+        desired.push({
+          key: "control:empty",
+          type: "empty",
+          text: model.loading ? t("loading") : t("noMessages"),
+        });
+      }
+      let previousDay = "", unreadPlaced = false;
+      const counts = new Map(), dayCounts = new Map();
+      for (const message of rows) {
+        const id = String(message.id || ""), count = counts.get(id) || 0;
+        counts.set(id, count + 1);
+        const key = `message:${id}:${count}`;
+        const prior = records.get(key);
+        const time = Number(message.time || 0);
+        let day = prior?.time === time ? prior.day : undefined;
+        if (day === undefined) {
+          const date = new Date(time);
+          day = Number.isNaN(date.getTime()) ? "" : date.toDateString();
+        }
+        if (day && day !== previousDay) {
+          const dayCount = dayCounts.get(day) || 0;
+          dayCounts.set(day, dayCount + 1);
+          desired.push({ key: `day:${day}:${dayCount}`, type: "day", time });
+          previousDay = day;
+        }
+        if (
+          !unreadPlaced && model.unreadMarkId &&
+          String(message.id || "") === model.unreadMarkId
+        ) {
+          desired.push({ key: "control:unread", type: "unread" });
+          unreadPlaced = true;
+        }
+        desired.push({ key, type: "message", message, time, day, today });
+      }
+    }
+    renderedTail = lastConfirmed(rows);
+    renderedRows = rows;
+    renderedDesired = desired;
+    renderedToday = today;
+    renderedUnread = model.unreadMarkId;
     const keys = desired.map((item) => item.key);
     const changes = planKeyChanges(order, keys);
     for (const key of changes.removed) {
-      const record = records.get(key);
-      if (record.message) {
-        ctx.unobservePreviews(record.node);
-        ctx.closeReactionPicker(String(record.message.id || ""));
-      }
-      record.node.remove();
-      records.delete(key);
+      removeRecord(key);
     }
     for (const item of desired) {
       const prior = records.get(item.key);
@@ -580,6 +736,7 @@ export function createMessagesView(ctx) {
         settleAnchor();
       }
     } else list.scrollTop = oldTop;
+    if (deferTrim) scheduleTrim(list);
   }
   const list = $("messages");
   function loadNearTop() {
@@ -588,6 +745,7 @@ export function createMessagesView(ctx) {
     }
   }
   function resumePaging(up) {
+    interruptFollowing();
     suppressPaging = false;
     clearTimeout(pagingTimer);
     // A gesture at the top may not produce a scroll event at all.
@@ -597,6 +755,10 @@ export function createMessagesView(ctx) {
     // Remember a reader's return to the bottom before deferred layout grows.
     if (list.scrollHeight - list.scrollTop - list.clientHeight <= 2) {
       followedTop = list.scrollTop;
+    } else if (
+      followedTop !== null && Math.abs(list.scrollTop - followedTop) > 2
+    ) {
+      followedTop = null;
     }
     if (suppressPaging) {
       suspendPaging(200);

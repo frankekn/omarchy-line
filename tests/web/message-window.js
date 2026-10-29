@@ -134,12 +134,12 @@ export async function messageWindow(h) {
       document.activeElement?.blur();
       ctx.writePending(chat, []);
       model.sent.clear();
-      model.messages = Array.from({ length: 500 }, (_, i) => ({
+      model.messages = Array.from({ length: options.count ?? 500 }, (_, i) => ({
         id: String(10_000_000 + i),
         chat,
         from: "u-window-peer",
         fromName: "Peer",
-        time: now + i * 1000,
+        time: now + i * (options.days ? 3_600_000 : 1000),
         text: `Fixture ${i}`,
         contentType: "NONE",
         ...(i === (options.imageAt ?? 0) && options.image
@@ -165,13 +165,13 @@ export async function messageWindow(h) {
     await atBottom();
   }
   let nextFixtureId = 10_000_500;
-  async function fixtureMessage() {
+  async function fixtureMessage(long = false) {
     const id = nextFixtureId++;
     const message = {
       ...row(id),
       id: String(id),
       time: now + id * 1000,
-      text: `Fixture live ${id}`,
+      text: `Fixture live ${id}${long ? " long".repeat(50) : ""}`,
     };
     await deliver([message]);
     return message.id;
@@ -391,6 +391,224 @@ export async function messageWindow(h) {
   );
   assert.equal(new Set(state.ids).size, state.ids.length);
   h.step("before pages back from the retained head without a gap or duplicate");
+
+  const originalNextFixtureId = nextFixtureId;
+  await fixture({ count: 1300, days: true });
+  const deferred = await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
+    const list = document.getElementById("messages");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat,
+        message: {
+          id: "10001300",
+          chat,
+          from: model.account,
+          time: now + 1300 * 3_600_000,
+          contentType: "NONE",
+          text: "Deferred trim message",
+        },
+      },
+    });
+    const beforeScroll = model.messages.length;
+    list.scrollTop -= 600;
+    list.dispatchEvent(new Event("scroll"));
+    return beforeScroll;
+  }, { chat: CHAT, now });
+  assert.equal(deferred, 1301);
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  assert.equal((await current()).ids.length, 1301);
+  assert.ok((await current()).bottom > 2);
+  await atBottom();
+  const batchFrames = await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
+    const list = document.getElementById("messages");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat,
+        message: {
+          id: "10001301",
+          chat,
+          from: model.account,
+          time: now + 1301 * 3_600_000,
+          contentType: "NONE",
+          text: "Resume deferred trim",
+        },
+      },
+    });
+    const tail = list.querySelector(".message-row:last-child");
+    const tailBottom = tail.getBoundingClientRect().bottom;
+    const samples = [{
+      count: model.messages.length,
+      bottom: 0,
+      tail: tailBottom,
+    }];
+    return new Promise((resolve, reject) => {
+      function sample() {
+        samples.push({
+          count: model.messages.length,
+          bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
+          tail: tail.getBoundingClientRect().bottom,
+        });
+        if (model.messages.length === 500) return resolve(samples);
+        if (samples.length > 100) {
+          return reject(new Error("trim did not finish"));
+        }
+        requestAnimationFrame(sample);
+      }
+      requestAnimationFrame(sample);
+    });
+  }, { chat: CHAT, now });
+  seq = await page.evaluate(() => globalThis.__windowModel.seq);
+  assert.ok(batchFrames.length > 3);
+  for (let i = 1; i < batchFrames.length; i++) {
+    assert.ok(batchFrames[i - 1].count - batchFrames[i].count <= 200);
+    assert.ok(Math.abs(batchFrames[i].bottom) <= 2);
+    assert.ok(Math.abs(batchFrames[i].tail - batchFrames[0].tail) <= 2);
+  }
+  state = await current();
+  assert.ok(state.bottom <= 2);
+  assert.equal(state.noOlder, false);
+  assert.deepEqual(
+    await page.locator(".message-row").evaluateAll((rows) =>
+      rows.map((row) => row.dataset.messageId)
+    ),
+    state.ids,
+  );
+  assert.equal(
+    await page.locator(".day-divider").evaluateAll((days) =>
+      days.every((day) => {
+        let node = day.nextElementSibling;
+        while (node && !node.classList.contains("day-divider")) {
+          if (node.classList.contains("message-row")) return true;
+          node = node.nextElementSibling;
+        }
+        return false;
+      })
+    ),
+    true,
+  );
+  const archiveStart = archive.length;
+  archive.push(...Array.from({ length: 1302 }, (_, i) => ({
+    ...row(i),
+    id: String(10_000_000 + i),
+    time: now + i * 3_600_000,
+  })));
+  const requestsBeforeBatchPage = requests.length;
+  await page.locator("#messages > button.text-button").evaluate((node) =>
+    node.click()
+  );
+  await page.waitForFunction(() =>
+    !globalThis.__windowModel.loadingOlder &&
+    globalThis.__windowModel.messages.length === 550
+  );
+  assert.equal(requests.length, requestsBeforeBatchPage + 1);
+  assert.equal(requests.at(-1).before, "10000802");
+  state = await current();
+  assert.deepEqual(
+    state.ids,
+    Array.from({ length: 550 }, (_, i) => String(10_000_752 + i)),
+  );
+  assert.deepEqual(
+    await page.locator(".message-row").evaluateAll((rows) =>
+      rows.map((row) => row.dataset.messageId)
+    ),
+    state.ids,
+  );
+  archive.splice(archiveStart);
+  nextFixtureId = originalNextFixtureId;
+  h.step("large trims pause while reading, resume in batches and page back");
+
+  await fixture({ count: 1300 });
+  await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
+    const list = document.getElementById("messages");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat,
+        message: {
+          id: "10001300",
+          chat,
+          from: model.account,
+          time: now + 1300 * 1000,
+          contentType: "NONE",
+          text: "Before moving during trim",
+        },
+      },
+    });
+    requestAnimationFrame(() => {
+      list.scrollTop -= 600;
+      list.dispatchEvent(new Event("scroll"));
+    });
+  }, { chat: CHAT, now });
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+    )
+  );
+  assert.equal((await current()).ids.length, 1101);
+  assert.ok((await current()).bottom > 2);
+  seq = await page.evaluate(() => globalThis.__windowModel.seq);
+  h.step("moving after a trim batch cancels its pending scroll correction");
+
+  await fixture({ count: 1300 });
+  await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
+    const list = document.getElementById("messages");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat,
+        message: {
+          id: "10001300",
+          chat,
+          from: model.account,
+          time: now + 1300 * 1000,
+          contentType: "NONE",
+          text: "Before selection",
+        },
+      },
+    });
+    const text = document.querySelector(
+      'article[data-message-id="10000000"] .message-text',
+    );
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    list.scrollTop = list.scrollHeight;
+  }, { chat: CHAT, now });
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  assert.equal((await current()).ids.length, 1301);
+  assert.ok(
+    (await page.evaluate(() => getSelection().toString())).includes(
+      "Fixture 0",
+    ),
+  );
+  await page.evaluate(() => getSelection().removeAllRanges());
+  seq = await page.evaluate(() => globalThis.__windowModel.seq);
+  h.step("a selection made before a deferred trim protects its row");
 
   await fixture();
   archive.push(...Array.from({ length: 550 }, (_, i) => ({
@@ -693,6 +911,50 @@ export async function messageWindow(h) {
   await fixtureMessage();
   assert.equal((await current()).ids.length, 500);
   h.step("the current lightbox image is not trimmed");
+
+  await fixture();
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  const previousBottom = await page.locator("#messages").evaluate((list) =>
+    list.scrollTop
+  );
+  await page.locator("#messages").evaluate((list) => list.scrollTop -= 600);
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  for (let i = 0; i < 5; i++) await fixtureMessage(true);
+  assert.equal((await current()).ids.length, 505);
+  if (h.browserName === "webkit") {
+    // Mobile WebKit does not support Playwright wheel input.
+    await page.locator("#messages").evaluate((list, top) => {
+      list.scrollTop = top;
+    }, previousBottom);
+  } else {
+    const box = await page.locator("#messages").boundingBox();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    for (let i = 0; i < 5; i++) {
+      const top = await page.locator("#messages").evaluate((list) =>
+        list.scrollTop
+      );
+      if (Math.abs(top - previousBottom) <= 2) break;
+      await page.mouse.wheel(0, previousBottom - top);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+    }
+  }
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const oldPosition = await page.locator("#messages").evaluate((list) => ({
+    top: list.scrollTop,
+    bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
+  }));
+  assert.ok(Math.abs(oldPosition.top - previousBottom) <= 2);
+  assert.ok(oldPosition.bottom > 140);
+  await fixtureMessage(true);
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const afterOldPosition = await current();
+  assert.equal(afterOldPosition.ids.length, 506);
+  assert.ok(afterOldPosition.bottom > 140);
+  h.step("the previous bottom position does not resume following");
 
   await fixture({ quote: true });
   await page.evaluate(() => globalThis.__windowModel.noOlder = false);
