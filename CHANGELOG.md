@@ -10,11 +10,16 @@ Chen, so this project starts at 2.x.
 
 - An optional web page served by the daemon, for using LINE from other
   devices on your tailnet without another LINE login. Set `ENIL_WEB_ADDR` to
-  the machine's Tailscale address and `ENIL_WEB_KEY` to a sign-in key. The
-  page lists chats, shows history and media, and sends text, replies,
-  reactions, stickers, and files. It cannot read `storage.json` or use the
-  daemon machine's clipboard. `daemon/enil.plist` runs the daemon on macOS
-  under launchd. See [docs/web.md](docs/web.md).
+  the machine's Tailscale address and `ENIL_WEB_KEY` to a sign-in key. It
+  lists and searches chats, shows history and media, and sends text, replies,
+  reactions, stickers, and uploaded files. It supports drafts, mentions,
+  unread markers, manual sync, image zoom, keyboard navigation, and mobile
+  layouts. Unconfirmed sends remain visible for review and manual retry.
+  Recent acknowledged sends stay visible while waiting for a matching echo.
+  Uploads share a 1 GiB storage limit. The page cannot read `storage.json`
+  or use the daemon machine's clipboard. See [docs/web.md](docs/web.md).
+- A launchd agent, `daemon/enil.plist`, for running the daemon and web page
+  on macOS. See [docs/web.md](docs/web.md#run-it-on-a-mac).
 
 ## [2.16.0] - 2026-10-07
 
