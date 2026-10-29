@@ -211,8 +211,122 @@ export async function chatPatchOrder(h) {
   h.step("chat-patch-order-and-focus");
 }
 
+function picture(h, id, file, time = Date.now()) {
+  return {
+    id,
+    chat: CHAT,
+    from: "other",
+    fromName: "Peer",
+    text: id,
+    time,
+    contentType: "IMAGE",
+    hasMedia: true,
+    previewable: true,
+    mediaState: "ok",
+    mediaPath: `${h.stateDir}/media/${file}`,
+  };
+}
+
+async function pictureFixture(h, messages, hooks = {}) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 1200, height: 850 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const histories = new Set();
+  const tap = await tapSocket(page, {
+    client(frame) {
+      if (frame.cmd === "history" && frame.chat === CHAT) {
+        histories.add(frame.id);
+      }
+      return hooks.client?.(frame) !== false;
+    },
+    server(frame) {
+      if (histories.delete(frame.id)) frame.data = messages;
+      return hooks.server?.(frame) !== false;
+    },
+  });
+  await h.signIn(page);
+  const state = await h.state();
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.locator(`article[data-message-id="${messages[0].id}"] img`)
+    .waitFor();
+  return { context, page, tap, state };
+}
+
+export async function lightboxModifiers(h) {
+  const messages = [picture(h, "key-image", "stub-shot1.png")];
+  const { context, page } = await pictureFixture(h, messages);
+  const image = page.locator('article[data-message-id="key-image"] img');
+  const composed = await image.evaluate((node) => {
+    const event = new KeyboardEvent("keydown", {
+      key: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    node.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(composed, false);
+  assert.equal(
+    await page.locator("#lightbox").evaluate((node) => node.open),
+    false,
+  );
+  await image.click();
+  await page.locator("#lightbox[open]").waitFor();
+  await page.evaluate(() => {
+    globalThis.ctrlPrevented = null;
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && event.key === "=") {
+        globalThis.ctrlPrevented = event.defaultPrevented;
+      }
+    });
+  });
+  const before = await page.locator("#lightbox-image").getAttribute("style");
+  await page.keyboard.press("Control+=");
+  assert.equal(await page.evaluate(() => globalThis.ctrlPrevented), false);
+  assert.equal(
+    await page.locator("#lightbox-image").getAttribute("style"),
+    before,
+  );
+  for (
+    const modifier of [{ metaKey: true }, { altKey: true }, {
+      isComposing: true,
+    }]
+  ) {
+    const prevented = await page.locator("#lightbox").evaluate(
+      (node, options) => {
+        const event = new KeyboardEvent("keydown", {
+          key: "=",
+          bubbles: true,
+          cancelable: true,
+          ...options,
+        });
+        node.dispatchEvent(event);
+        return event.defaultPrevented;
+      },
+      modifier,
+    );
+    assert.equal(prevented, false);
+    assert.equal(
+      await page.locator("#lightbox-image").getAttribute("style"),
+      before,
+    );
+  }
+  await page.keyboard.press("=");
+  assert.notEqual(
+    await page.locator("#lightbox-image").getAttribute("style"),
+    before,
+  );
+  await context.close();
+  h.step("lightbox-modifiers-and-composition");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
   await chatPatchOrder(h);
+  await lightboxModifiers(h);
 }

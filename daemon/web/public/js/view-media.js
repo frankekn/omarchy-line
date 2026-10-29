@@ -111,6 +111,9 @@ export function createMediaView(ctx) {
     image.setAttribute("role", "button");
     image.addEventListener("click", () => openLightbox(chat, message, url));
     image.addEventListener("keydown", (event) => {
+      if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         openLightbox(chat, message, url);
@@ -122,6 +125,9 @@ export function createMediaView(ctx) {
   $("lightbox-zoom-in").addEventListener("click", () => setScale(scale * 1.2));
   $("lightbox-zoom-out").addEventListener("click", () => setScale(scale / 1.2));
   $("lightbox").addEventListener("keydown", (event) => {
+    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
     if (event.shiftKey && event.key.startsWith("Arrow")) {
       const x = event.key === "ArrowLeft"
         ? 40
