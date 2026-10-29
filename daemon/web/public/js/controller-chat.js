@@ -27,6 +27,7 @@ export function createChatController(ctx) {
     ctx.closeStickerPicker();
     ctx.setMentionOpen(false);
     ctx.hideChat();
+    ctx.renderMessages("preserve");
   }
   function openChat(chat) {
     if (model.active) ctx.saveComposer();

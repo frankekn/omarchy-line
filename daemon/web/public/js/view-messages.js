@@ -295,7 +295,7 @@ export function createMessagesView(ctx) {
         text: model.loading ? t("loading") : t("noMessages"),
       });
     }
-    let previousDay = "";
+    let previousDay = "", unreadPlaced = false;
     const counts = new Map(), dayCounts = new Map();
     const today = new Date().toDateString();
     for (const message of rows) {
@@ -316,9 +316,11 @@ export function createMessagesView(ctx) {
         previousDay = day;
       }
       if (
-        model.unreadMarkId && String(message.id || "") === model.unreadMarkId
+        !unreadPlaced && model.unreadMarkId &&
+        String(message.id || "") === model.unreadMarkId
       ) {
         desired.push({ key: "control:unread", type: "unread" });
+        unreadPlaced = true;
       }
       desired.push({ key, type: "message", message, time, day, today });
     }
