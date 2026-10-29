@@ -40,6 +40,28 @@ export function createComposerView(ctx) {
     updateReply();
     resizeComposer();
   }
+  const viewport = globalThis.visualViewport;
+  function fitComposerViewport() {
+    const app = $("app");
+    if (
+      !viewport || document.activeElement !== $("message-input") ||
+      !globalThis.matchMedia("(max-width: 700px)").matches ||
+      viewport.scale !== 1
+    ) {
+      app.style.height = "";
+      return;
+    }
+    const bottom = viewport.offsetTop + viewport.height;
+    const height = Math.min(
+      globalThis.innerHeight,
+      bottom - app.getBoundingClientRect().top,
+    );
+    app.style.height = `${Math.max(0, height)}px`;
+  }
+  viewport?.addEventListener("resize", fitComposerViewport);
+  viewport?.addEventListener("scroll", fitComposerViewport);
+  $("message-input").addEventListener("focus", fitComposerViewport);
+  $("message-input").addEventListener("blur", fitComposerViewport);
   $("cancel-reply").addEventListener("click", () => ctx.cancelReply());
   $("message-input").addEventListener("input", () => ctx.composerInput());
   $("message-input").addEventListener("click", () => {
