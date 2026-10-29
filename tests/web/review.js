@@ -504,7 +504,88 @@ async function membersFailure(h) {
   h.step("members-failure-mention-picker");
 }
 
+async function reactionPickerAfterUpdates(h) {
+  const initial = await h.state();
+  const message = {
+    ...row("soak-image", "Original caption", Date.now()),
+    from: initial.me.mid,
+    contentType: "IMAGE",
+    hasMedia: true,
+    previewable: true,
+    mediaPath: `${h.stateDir}/media/stub-shot1.png`,
+  };
+  const { context, page, tap, state } = await newPage(h, {
+    client(frame, channel) {
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      channel.socket.send(
+        JSON.stringify({ id: frame.id, ok: true, data: [message] }),
+      );
+      return false;
+    },
+  });
+  await page.getByRole("button", { name: family }).click();
+  const imageRow = page.locator('article[data-message-id="soak-image"]');
+  const image = imageRow.locator("img.media-image");
+  await image.waitFor();
+  const originalImage = await image.elementHandle();
+  let seq = Math.max(0, ...(state.events || []).map((event) => event.seq)) + 1;
+  const push = (event) =>
+    tap.socket.send(JSON.stringify({
+      boot: state.bootId,
+      event: { seq: seq++, chat: CHAT, ...event },
+    }));
+  const checkPicker = async () => {
+    assert.equal(
+      await originalImage.evaluate((node) => node.isConnected),
+      true,
+    );
+    assert.equal(
+      await image.evaluate((node, old) => node === old, originalImage),
+      true,
+    );
+    const react = imageRow.getByRole("button", { name: "React", exact: true });
+    const picker = imageRow.locator(".reaction-picker");
+    await react.click();
+    await picker.waitFor({ state: "visible", timeout: 3000 });
+    await react.click();
+    assert.equal(await picker.count(), 0);
+  };
+  push({ kind: "edit", message: { ...message, text: "Edited caption" } });
+  await imageRow.getByText("Edited caption").waitFor();
+  await checkPicker();
+  push({
+    kind: "reaction",
+    messageId: message.id,
+    reactions: [{ type: "LOVE", count: 1, mine: false }],
+  });
+  await imageRow.locator(".reaction-pill").waitFor();
+  await checkPicker();
+  push({ kind: "read", upTo: message.id, by: "u-peer" });
+  await imageRow.getByText(/Read/).waitFor();
+  await checkPicker();
+
+  await imageRow.getByRole("button", { name: "Reply", exact: true }).click();
+  await imageRow.getByRole("button", { name: "React", exact: true }).click();
+  await image.click();
+  await page.locator("#lightbox[open]").waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page.locator("#lightbox").evaluate((node) => node.open),
+    false,
+  );
+  assert.equal(await imageRow.locator(".reaction-picker").isVisible(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await imageRow.locator(".reaction-picker").count(), 0);
+  assert.equal(await page.locator("#reply-target").isVisible(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#reply-target").isVisible(), false);
+  assert.equal(await page.locator("#chat-view").isVisible(), true);
+  await context.close();
+  h.step("reaction-picker-after-edit-reaction-read");
+}
+
 export async function review(h) {
+  await reactionPickerAfterUpdates(h);
   await olderEvent(h);
   await olderSuperseded(h);
   await unreadSyncSupersession(h);

@@ -1,5 +1,4 @@
-// Reproduce the reaction-picker regression after an incoming edit. This probe
-// is separate from CI and fails until the product behavior is fixed.
+// Exercise the reaction picker after incoming edits. This is not part of CI.
 // CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18460 \
 //   deno run --frozen -A tests/web/soak-edit-actions.js
 import { assert, CHAT, runSuite, tapSocket } from "./harness.js";

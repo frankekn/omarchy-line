@@ -176,9 +176,11 @@ export function createMessagesView(ctx) {
       const react = el("button", "", t("reaction"));
       react.type = "button";
       react.addEventListener("click", () => {
+        const currentColumn = react.closest(".message-column");
+        if (!currentColumn) return;
         const id = String(message.id);
         if (!ctx.toggleReactionPicker(id)) {
-          column.querySelector(".reaction-picker")?.remove();
+          currentColumn.querySelector(".reaction-picker")?.remove();
           return;
         }
         const picker = el("div", "reaction-picker");
@@ -212,7 +214,7 @@ export function createMessagesView(ctx) {
             .catch(displayError);
         });
         picker.append(undo);
-        column.append(picker);
+        currentColumn.append(picker);
       });
       actions.append(react);
       if (own) {
