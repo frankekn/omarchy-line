@@ -711,3 +711,47 @@ Deno.test("the bridge bounds frames and the queue behind a slow daemon", async (
     await Deno.remove(stateDir, { recursive: true });
   }
 });
+
+Deno.test("duplicate request IDs cannot release an upload on another reply", async () => {
+  const { stateDir, web } = await fixture();
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
+    (req) => web.handle(req),
+  );
+  let peer: Deno.UnixConn | undefined;
+  try {
+    const cookie = await signedInCookie(web);
+    const upload = await web.handle(get("/api/upload?name=test", {
+      method: "POST",
+      headers: { cookie },
+      body: "hello",
+    }));
+    const { path } = await upload.json();
+    const port = server.addr.port;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+      headers: { cookie, origin: `http://127.0.0.1:${port}` },
+    });
+    const opened = new Promise<void>((r) => ws.onopen = () => r());
+    peer = await daemon.accept();
+    const reader = peer.readable.pipeThrough(new TextDecoderStream())
+      .pipeThrough(new TextLineStream()).getReader();
+    await opened;
+    ws.send(JSON.stringify({ id: 123, cmd: "history" }));
+    assertEquals(JSON.parse((await reader.read()).value!).cmd, "history");
+    const closed = new Promise<CloseEvent>((r) => ws.onclose = r);
+    ws.send(JSON.stringify({ id: 123, cmd: "sendFile", path, chat: "c" }));
+    assertEquals((await closed).code, 4004);
+    assert((await Deno.stat(path)).isFile);
+    assertEquals((await reader.read()).done, true);
+    reader.releaseLock();
+  } finally {
+    web.close();
+    try {
+      peer?.close();
+    } catch { /* already closed */ }
+    daemon.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});

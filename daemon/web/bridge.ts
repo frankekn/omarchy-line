@@ -25,6 +25,7 @@ const MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_INBOUND_QUEUE = 128;
 const MAX_INBOUND_BYTES = 4 * 1024 * 1024;
+const MAX_PENDING_COMMANDS = 256;
 export const CLOSE_DAEMON_OFFLINE = 4001;
 const CLOSE_TOO_SLOW = 4002;
 const CLOSE_BAD_FRAME = 4003;
@@ -119,6 +120,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   const close = () => shut(1001, "server stopped");
   /** request id → uploaded file to remove once the daemon has answered. */
   const sentUploads = new Map<unknown, string>();
+  const pendingIds = new Set<unknown>();
 
   const send: Send = (frame) => {
     if (ws.readyState !== WebSocket.OPEN) return;
@@ -177,6 +179,14 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
     }
     const cmd = req.cmd;
     if (typeof cmd !== "string") return refuse(req.id, "bad request");
+    if (
+      !(typeof req.id === "string" && req.id.length <= 128) &&
+      !(typeof req.id === "number" && Number.isSafeInteger(req.id))
+    ) return refuse(req.id, "bad request id");
+    if (pendingIds.has(req.id) || pendingIds.size >= MAX_PENDING_COMMANDS) {
+      shut(CLOSE_INBOUND_OVERLOAD, "duplicate or too many requests");
+      return;
+    }
     if (REFUSED_CMDS.has(cmd)) {
       return refuse(req.id, "網頁版不能使用這台主機的剪貼簿");
     }
@@ -186,6 +196,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
       req.path = real;
       sentUploads.set(req.id, real);
     }
+    pendingIds.add(req.id);
     await toDaemon(JSON.stringify(req));
   };
 
@@ -193,7 +204,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
     const lines = c.readable.pipeThrough(new TextDecoderStream())
       .pipeThrough(new TextLineStream());
     for await (const line of lines) {
-      if (sentUploads.size) await releaseUpload(line);
+      await releaseUpload(line);
       send(line);
     }
   };
@@ -204,6 +215,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
       reply = JSON.parse(line);
     } catch { /* not a reply */ }
     if (!reply || !("ok" in reply)) return;
+    pendingIds.delete(reply.id);
     const path = sentUploads.get(reply.id);
     if (path === undefined) return;
     sentUploads.delete(reply.id);
