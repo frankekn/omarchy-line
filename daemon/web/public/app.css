@@ -434,7 +434,8 @@ textarea::placeholder {
   background: transparent;
 }
 .chat-row:hover,
-.chat-row.active {
+.chat-row.active,
+.chat-row.keyboard-selected:focus-visible {
   background: var(--hover);
 }
 .chat-row.active {

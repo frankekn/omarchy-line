@@ -18,6 +18,7 @@ export function createModel() {
     eventsSeen: false,
     active: "",
     chatOpen: false,
+    selectedChat: "",
     messages: [],
     unreadMarkCount: 0,
     unreadMarkId: "",
