@@ -90,6 +90,73 @@ export async function syncAccount(h) {
   h.step("sync-account-generation");
 }
 
+export async function unreadBoundary(h) {
+  for (const inHistory of [false, true]) {
+    const context = await h.context({ locale: "en-US" });
+    const page = await context.newPage();
+    const histories = new Set();
+    let held, boot = "";
+    const tap = await tapSocket(page, {
+      client(frame) {
+        if (frame.cmd === "history" && frame.chat === CHAT) {
+          histories.add(frame.id);
+        }
+        return true;
+      },
+      server(frame) {
+        if (frame.web === "state") {
+          boot = String(frame.state.bootId || "");
+          frame.state.chats = frame.state.chats.map((row) =>
+            row.mid === CHAT ? { ...row, unread: 2 } : row
+          );
+        }
+        if (histories.delete(frame.id) && !held) {
+          held = frame;
+          return false;
+        }
+        return true;
+      },
+    });
+    await h.signIn(page);
+    await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+    await until(() => held, "initial history");
+    const now = Date.now() - 10000;
+    const message = (id, time) => ({
+      id,
+      chat: CHAT,
+      from: "u-other",
+      fromName: "Peer",
+      text: id,
+      time,
+      contentType: "NONE",
+      hasMedia: false,
+      mediaState: "ok",
+    });
+    const newer = message("new-after-open", now + 3000);
+    tap.socket.send(JSON.stringify({
+      event: { seq: 999999, kind: "message", chat: CHAT, message: newer },
+      boot,
+    }));
+    held.data = [
+      message("read0", now),
+      message("unread1", now + 1000),
+      message("unread2", now + 2000),
+      ...(inHistory ? [newer] : []),
+    ];
+    tap.socket.send(JSON.stringify(held));
+    await page.getByText("new-after-open", { exact: true }).waitFor();
+    assert.equal(
+      await page.locator(".unread-divider").evaluate((node) =>
+        node.nextElementSibling?.dataset.messageId
+      ),
+      "unread1",
+    );
+    await context.close();
+  }
+  h.step("unread-opening-boundary");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
+  await unreadBoundary(h);
 }

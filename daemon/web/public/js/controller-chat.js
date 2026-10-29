@@ -129,19 +129,27 @@ export function createChatController(ctx) {
         fresh,
         model.account,
       );
-      replayHistoryEvents();
-      model.historyEvents = [];
       if (model.unreadMarkCount > 0) {
+        const newIds = new Set(
+          model.historyEvents.map(({ event }) => event).filter((event) =>
+            event.kind === "message" && event.message?.id
+          ).map((event) => String(event.message.id)),
+        );
+        const openingMessages = model.messages.filter((message) =>
+          !newIds.has(String(message.id))
+        );
         const index = firstUnreadIndex(
-          model.messages,
+          openingMessages,
           model.unreadMarkCount,
           model.account,
         );
         model.unreadMarkId = index < 0
           ? ""
-          : String(model.messages[index].id || "");
+          : String(openingMessages[index].id || "");
         model.unreadMarkCount = 0;
       }
+      replayHistoryEvents();
+      model.historyEvents = [];
       model.noOlder = fresh.length < 50;
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {
