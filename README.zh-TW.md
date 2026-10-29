@@ -213,6 +213,7 @@ bridge 能把 LINE 跟你其他的聊天放在一起。
 - [docs/usage.zh-TW.md](docs/usage.zh-TW.md)：鍵盤操作、設定、檔案與通知。
 - [docs/architecture.zh-TW.md](docs/architecture.zh-TW.md)：面板和 daemon 怎麼合作。
 - [docs/protocol.zh-TW.md](docs/protocol.zh-TW.md)：state 檔案與 socket 指令。
+- [docs/web.zh-TW.md](docs/web.zh-TW.md)：給其他裝置用的網頁版（選用）。
 - [docs/vendoring.zh-TW.md](docs/vendoring.zh-TW.md)：內附的 linejs fork。
 - [docs/development.zh-TW.md](docs/development.zh-TW.md)：檢查、stub daemon 與 CI。
 - [CONTRIBUTING.zh-TW.md](CONTRIBUTING.zh-TW.md)：pull request 的規則。

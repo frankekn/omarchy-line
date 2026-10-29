@@ -16,8 +16,9 @@ of them must update this page in the same commit.
   secondary device. It never starts LINE's account-transfer flow, because
   that flow can log your phone out. Your phone stays the main device.
 - **It does not send on its own.** A message, a file, a sticker, a reaction,
-  or an unsend reaches LINE only when you do it in the panel. Read receipts go
-  to LINE only for the chat you are viewing in the panel. In the
+  or an unsend reaches LINE only when you do it in the panel or on the
+  [web page](docs/web.md). Read receipts go to LINE only for the chat you are
+  viewing. In the
   `Center of screen` and `App window` placements, a chat stays in the right
   pane after you press Esc to go back to the list, but it gets no read
   receipts until you view it again. Clicking into its reply box counts as viewing it, and sends one read
@@ -38,6 +39,11 @@ of them must update this page in the same commit.
   files only to LINE. On your own computer, desktop notifications pass the
   chat name, the sender, and a message preview to your notification daemon,
   which may keep them in its history.
+- **It does not serve your messages to the network unless you turn the web
+  page on.** The web page is off until you set `ENIL_WEB_ADDR`. When it is
+  on, any browser that can reach that address and has the web key can read
+  and send your messages. Bind it to a Tailscale address, not `0.0.0.0`.
+  [docs/web.md](docs/web.md) has the details.
 - **It does not put credentials in the repository.** The session token and
   keys live only in `~/.local/state/enil/storage.json`.
 
@@ -91,6 +97,7 @@ programs that run as you.
 | `messages/<your-mid>/<chat-mid>.jsonl` | Every message the daemon has seen, one file per chat. It is never cleaned up automatically. |
 | `media/` | Decrypted originals of files and images you opened, thumbnails, and `clipboard-*` images waiting to be sent. |
 | `media/avatars/` | Profile pictures. |
+| `media/web-uploads/` | Files uploaded from the web page, until LINE has them, and at most one day. |
 | `media/public-images/` | Stickers and FLEX images. |
 | `state.json` | The chat list and the last message preview of each chat. |
 | `events.json` | The newest 200 live events, including full recent messages. |

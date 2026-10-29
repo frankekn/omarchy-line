@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  launchd agent for running enil on a Mac, for the web page (docs/web.md).
+  Copy to ~/Library/LaunchAgents/io.github.frankekn.enil.plist, replace the
+  four @...@ values, then:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.frankekn.enil.plist
+  Never run it while another machine's enil holds the same LINE session.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.github.frankekn.enil</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>@CHECKOUT@/daemon/enil-run.sh</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>@CHECKOUT@/daemon</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- deno and ffmpeg from Homebrew; git for enil-run.sh's checks. -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!-- This Mac's Tailscale IP, never 0.0.0.0. -->
+    <key>ENIL_WEB_ADDR</key>
+    <string>@TAILSCALE_IP@:3440</string>
+    <!-- 16+ of A-Z a-z 0-9 - . _ ~ ; without it every restart mints a new key. -->
+    <key>ENIL_WEB_KEY</key>
+    <string>@WEB_KEY@</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Like the systemd unit's Restart=always. -->
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <!-- 0077: the session token and decrypted media are the user's alone. -->
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>@HOME@/Library/Logs/enil/enil.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/Library/Logs/enil/enil.log</string>
+</dict>
+</plist>

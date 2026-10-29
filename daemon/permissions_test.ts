@@ -64,9 +64,13 @@ Deno.test("the permission set is explicit: no -A, writes confined to the state d
       "wl-paste",
     ],
   );
-  // Every variable modules/env.ts reads is allowed, and nothing is allowed
-  // that neither env.ts nor a dependency reads.
-  const env = await Deno.readTextFile(`${DAEMON_DIR}modules/env.ts`);
+  // Every variable modules/env.ts, daemon.ts and web.ts read is allowed, and
+  // nothing is allowed that none of them nor a dependency reads.
+  const env = (await Promise.all(
+    ["modules/env.ts", "daemon.ts", "web.ts"].map((f) =>
+      Deno.readTextFile(`${DAEMON_DIR}${f}`)
+    ),
+  )).join("\n");
   const read = new Set(
     [...env.matchAll(/(?:Deno\.env\.get|envInt)\("([A-Z_]+)"/g)].map((m) =>
       m[1]

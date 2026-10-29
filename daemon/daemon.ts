@@ -47,6 +47,7 @@ import {
 } from "./modules/watchdog.ts";
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
 import { claimInstance } from "./modules/instance.ts";
+import { startWeb } from "./web.ts";
 
 /** Held for the life of the process: closing it would release the gate. */
 let instanceLock: Deno.FsFile | null = null;
@@ -88,6 +89,15 @@ async function main() {
     for await (const conn of listener) serve(conn).catch(() => {});
   })();
   console.log(`enil: ${STATE_PATH} + ${SOCK_PATH}`);
+  // The web page bridges onto the socket above, so it starts after it.
+  const webAddr = Deno.env.get("ENIL_WEB_ADDR");
+  if (webAddr) {
+    void startWeb({
+      addr: webAddr,
+      key: Deno.env.get("ENIL_WEB_KEY"),
+      stateDir: STATE_DIR,
+    }).catch((e) => console.error(`[web] failed: ${errorLine(e)}`));
+  }
 
   const resumed = await tryResume();
   if (resumed === "none") {

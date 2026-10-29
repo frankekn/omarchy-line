@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark light">
+    <meta name="theme-color" content="#101411">
+    <title>enil</title>
+    <link rel="icon"
+      href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=">
+    <link rel="stylesheet" href="/app.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main id="signin-screen" class="auth-screen" hidden>
+      <section class="auth-card" aria-labelledby="signin-title">
+        <div class="brand-mark" aria-hidden="true">e<span>_</span></div>
+        <p class="eyebrow">ENIL / WEB</p>
+        <h1 id="signin-title" data-i18n="signinTitle">連接你的 LINE</h1>
+        <p class="muted auth-intro"
+          data-i18n="signinIntro">輸入 web key，從這個裝置開啟你的對話。</p>
+        <form id="signin-form">
+          <label for="web-key" data-i18n="webKey">Web key</label>
+          <input id="web-key" name="key" type="password"
+            autocomplete="current-password" required autofocus>
+          <p id="signin-error" class="form-error" role="alert" hidden></p>
+          <button class="primary wide" type="submit"
+            data-i18n="signin">登入</button>
+        </form>
+        <p class="auth-foot"
+          data-i18n="signinFoot">你的對話，留在自己的網路裡。</p>
+      </section>
+    </main>
+
+    <main id="app" class="app" hidden>
+      <header class="app-bar">
+        <div
+          class="brand"><span class="brand-mark small" aria-hidden="true">e<span>_</span></span><span>enil</span><span class="brand-tag">/ WEB</span></div>
+        <div
+          class="bar-right"><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span><button id="web-signout" class="text-button" type="button" data-i18n="webSignout">離開網頁</button></div>
+      </header>
+      <div id="notices" class="notices" aria-live="polite" hidden></div>
+      <section id="line-login" class="line-login" hidden>
+        <div class="login-card">
+          <p class="eyebrow">LINE / SESSION</p>
+          <h1 data-i18n="lineTitle">登入 LINE</h1>
+          <p id="line-login-message" class="muted"></p>
+          <img id="qr-image" class="qr-image" alt="LINE login QR code" hidden>
+          <p id="login-pin" class="login-pin" hidden></p>
+          <button id="line-login-button" class="primary" type="button"
+            data-i18n="lineLogin">登入 LINE</button>
+        </div>
+      </section>
+      <div id="workspace" class="workspace" hidden>
+        <aside class="sidebar" aria-label="Chats" id="sidebar">
+          <div class="sidebar-top">
+            <div
+              class="section-heading"><div><p class="eyebrow" data-i18n="inboxEyebrow">YOUR SPACE</p><h1 data-i18n="chats">聊天</h1></div><span id="chat-count" class="count"></span></div>
+            <label
+              class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off"></label>
+            <p id="list-warning" class="list-warning" hidden></p>
+          </div>
+          <div id="chat-list" class="chat-list" aria-label="Chats"></div>
+          <div
+            class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><small data-i18n="lineAccount">LINE 帳號</small></span></div><button id="line-logout" class="icon-button logout" type="button" data-i18n-title="lineLogout" aria-label="登出 LINE">↪</button></div>
+        </aside>
+        <section id="conversation" class="conversation"
+          aria-label="Conversation">
+          <div id="empty-chat" class="empty-chat">
+            <div class="empty-glyph" aria-hidden="true">▤<span>_</span></div>
+            <h2 data-i18n="emptyTitle">選擇一個聊天室</h2>
+            <p data-i18n="emptyDescription">從左側選擇對話，繼續聊下去。</p>
+          </div>
+          <div id="chat-view" class="chat-view" hidden>
+            <header
+              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h2 id="active-name"></h2><span id="active-subtitle" class="muted"></span></div><button id="hide-chat" class="text-button" type="button"></button></header>
+            <div id="messages" class="messages" role="log" aria-live="polite"
+              aria-relevant="additions text"></div>
+            <div id="drop-overlay" class="drop-overlay" hidden
+              data-i18n="dropFiles">放開以上傳檔案</div>
+            <div class="composer-area">
+              <div id="mention-picker" class="mention-picker" role="group"
+                aria-label="Mentions" hidden></div>
+              <div id="upload-status" class="upload-status" role="status"
+                hidden></div>
+              <div id="reply-target" class="reply-target"
+                hidden><span id="reply-label"></span><button id="cancel-reply" class="icon-button" type="button" data-i18n-title="cancelReply" aria-label="取消回覆">×</button></div>
+              <div id="sticker-picker" class="sticker-picker" hidden>
+                <div
+                  class="picker-header"><strong data-i18n="stickers">貼圖</strong><button id="refresh-stickers" class="text-button" type="button" data-i18n="refresh">重新整理</button><button id="close-stickers" class="icon-button" type="button" data-i18n-title="close" aria-label="關閉">×</button></div>
+                <div id="sticker-content" class="sticker-content"></div>
+              </div>
+              <form id="composer"
+                class="composer"><div class="composer-tools"><button id="attach" class="tool-button" type="button" data-i18n-title="attach" aria-label="附加檔案">＋</button><button id="stickers" class="tool-button sticker-toggle" type="button" data-i18n-title="stickers" aria-label="貼圖">☺</button><input id="file-input" type="file" multiple hidden></div><label class="sr-only" for="message-input" data-i18n="messageLabel">訊息</label><textarea id="message-input" rows="1" data-placeholder="messagePlaceholder" placeholder="輸入訊息…"></textarea><button id="send" class="send-button" type="submit" data-i18n-title="send" aria-label="送出">↑</button></form>
+              <div class="composer-hint"
+                data-i18n="composerHint">Enter 送出 · Shift + Enter 換行</div>
+            </div>
+          </div>
+        </section>
+      </div>
+      <div id="toast" class="toast" role="alert" hidden></div>
+    </main>
+    <dialog id="lightbox"
+      class="lightbox"><div class="lightbox-toolbar"><span id="lightbox-name"></span><button id="lightbox-download" class="secondary" type="button" data-i18n="downloadOriginal">下載原圖</button><button id="lightbox-close" class="icon-button" type="button" data-i18n-title="close" aria-label="關閉">×</button></div><img id="lightbox-image" alt=""></dialog>
+  </body>
+</html>

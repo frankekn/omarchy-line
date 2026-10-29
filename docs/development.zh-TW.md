@@ -188,6 +188,8 @@ daemon 會讀下面這些環境變數。要替 systemd unit 設定，執行 `sys
 用的參數，不在支援範圍內：換成別的裝置類型會改變 LINE 允許的事，有些類型還會少掉
 功能，例如查詢聯絡人名稱。
 
+`ENIL_WEB_ADDR` 和 `ENIL_WEB_KEY` 會開啟網頁版，見 [web.zh-TW.md](web.zh-TW.md)。
+
 ## 編譯執行檔
 
 編譯 daemon 是選用的：

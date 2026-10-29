@@ -1,0 +1,244 @@
+import { assert, assertEquals } from "@std/assert";
+import { TextLineStream } from "@std/streams/text-line-stream";
+import { createWeb, parseAddr, sniffInline, uploadName } from "./web.ts";
+
+const KEY = "test-key-0123456789abcdef";
+
+async function fixture() {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-" });
+  await Deno.mkdir(`${stateDir}/media`, { recursive: true });
+  await Deno.writeTextFile(`${stateDir}/storage.json`, '{"secret":1}');
+  await Deno.writeTextFile(
+    `${stateDir}/state.json`,
+    JSON.stringify({ login: { status: "ok" }, chats: [] }),
+  );
+  const web = await createWeb({
+    addr: "127.0.0.1:0",
+    key: KEY,
+    stateDir,
+    log: () => {},
+  });
+  return { stateDir, web };
+}
+
+function get(path: string, init: RequestInit = {}): Request {
+  return new Request(`http://box:3440${path}`, init);
+}
+
+async function signedInCookie(
+  web: Awaited<ReturnType<typeof createWeb>>,
+): Promise<string> {
+  const res = await web.handle(
+    get("/api/signin", {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+      headers: { origin: "http://box:3440", host: "box:3440" },
+    }),
+  );
+  assertEquals(res.status, 204);
+  const set = res.headers.get("set-cookie") ?? "";
+  assert(set.includes("HttpOnly") && set.includes("SameSite=Strict"));
+  return set.split(";")[0];
+}
+
+Deno.test("parseAddr takes host:port and [v6]:port only", () => {
+  assertEquals(parseAddr("100.1.2.3:3440"), {
+    hostname: "100.1.2.3",
+    port: 3440,
+  });
+  assertEquals(parseAddr("[fd7a::1]:80"), { hostname: "fd7a::1", port: 80 });
+  assertEquals(parseAddr("3440"), null);
+  assertEquals(parseAddr("host:99999"), null);
+});
+
+Deno.test("an upload name is one safe path component", () => {
+  assertEquals(uploadName("../../etc/passwd"), "passwd");
+  assertEquals(uploadName("a\\b\u0000c.png"), "bc.png");
+  assertEquals(uploadName(".."), "file");
+  assertEquals(uploadName(null), "file");
+});
+
+Deno.test("only images and mp4 are served inline", () => {
+  assertEquals(
+    sniffInline(new Uint8Array([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
+    "image/jpeg",
+  );
+  assertEquals(sniffInline(new TextEncoder().encode("<html><script>")), null);
+});
+
+Deno.test("sign-in: wrong key, right key, then too many tries", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    assertEquals((await web.handle(get("/api/session"))).status, 401);
+    assertEquals((await web.handle(get("/api/file?path=/x"))).status, 401);
+    const wrong = () =>
+      web.handle(get("/api/signin", {
+        method: "POST",
+        body: JSON.stringify({ key: "nope" }),
+      }));
+    assertEquals((await wrong()).status, 401);
+    const cookie = await signedInCookie(web);
+    assertEquals(
+      (await web.handle(get("/api/session", { headers: { cookie } }))).status,
+      204,
+    );
+    const viaLink = await web.handle(get(`/?key=${KEY}`));
+    assertEquals(viaLink.status, 303);
+    for (let i = 0; i < 9; i++) await wrong();
+    assertEquals((await wrong()).status, 429);
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("a POST from another origin is refused", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const res = await web.handle(get("/api/signin", {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+      headers: { origin: "https://evil.example", host: "box:3440" },
+    }));
+    assertEquals(res.status, 403);
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("/api/file serves media and the QR, never storage.json", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    const file = async (path: string) => {
+      const res = await web.handle(
+        get(`/api/file?path=${encodeURIComponent(path)}`, {
+          headers: { cookie },
+        }),
+      );
+      await res.body?.cancel();
+      return res;
+    };
+    await Deno.symlink(
+      `${stateDir}/storage.json`,
+      `${stateDir}/media/link.jpg`,
+    );
+    await Deno.writeFile(
+      `${stateDir}/qr-1.png`,
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]),
+    );
+    await Deno.writeTextFile(
+      `${stateDir}/media/page.jpg`,
+      "<html><script>alert(1)</script></html>",
+    );
+    assertEquals((await file(`${stateDir}/storage.json`)).status, 404);
+    assertEquals((await file(`${stateDir}/media/link.jpg`)).status, 404);
+    assertEquals(
+      (await file(`${stateDir}/media/../storage.json`)).status,
+      404,
+    );
+    const qr = await file(`${stateDir}/qr-1.png`);
+    assertEquals(qr.status, 200);
+    assertEquals(qr.headers.get("content-type"), "image/png");
+    const page = await file(`${stateDir}/media/page.jpg`);
+    assertEquals(page.headers.get("content-type"), "application/octet-stream");
+    assert(page.headers.get("content-disposition")?.startsWith("attachment"));
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask", async () => {
+  const { stateDir, web } = await fixture();
+  const seen: string[] = [];
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  (async () => {
+    for await (const conn of daemon) {
+      (async () => {
+        const lines = conn.readable.pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextLineStream());
+        const enc = new TextEncoder();
+        for await (const line of lines) {
+          seen.push(line);
+          const req = JSON.parse(line);
+          await conn.write(
+            enc.encode(JSON.stringify({ id: req.id, ok: true }) + "\n"),
+          );
+        }
+      })().catch(() => {});
+    }
+  })().catch(() => {});
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    (req) => web.handle(req),
+  );
+  try {
+    const cookie = await signedInCookie(web);
+    const port = server.addr.port;
+    const upload = await web.handle(
+      get("/api/upload?name=a.txt", {
+        method: "POST",
+        body: "hello",
+        headers: { cookie },
+      }),
+    );
+    const { path } = await upload.json();
+    assert(path.startsWith(await Deno.realPath(`${stateDir}/media`)));
+
+    // A browser on another site cannot open it with the user's cookie.
+    const evil = await fetch(`http://127.0.0.1:${port}/api/ws`, {
+      headers: {
+        cookie,
+        origin: "https://evil.example",
+        upgrade: "websocket",
+        connection: "upgrade",
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+      },
+    });
+    await evil.body?.cancel();
+    assertEquals(evil.status, 403);
+
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+      headers: { cookie, origin: `http://127.0.0.1:${port}` },
+    });
+    const frames: Record<string, unknown>[] = [];
+    const wantId = (id: number) =>
+      new Promise<Record<string, unknown>>((resolve) => {
+        const check = () => {
+          const hit = frames.find((f) => f.id === id);
+          if (hit) resolve(hit);
+          else setTimeout(check, 10);
+        };
+        check();
+      });
+    ws.onmessage = (ev) => frames.push(JSON.parse(ev.data));
+    await new Promise((r) => ws.onopen = r);
+    ws.send(JSON.stringify({ id: 1, cmd: "probeClipboardImage", chat: "c" }));
+    ws.send(
+      JSON.stringify({
+        id: 2,
+        cmd: "sendFile",
+        chat: "c",
+        path: `${stateDir}/storage.json`,
+      }),
+    );
+    ws.send(JSON.stringify({ id: 3, cmd: "sendFile", chat: "c", path }));
+    ws.send(JSON.stringify({ id: 4, cmd: "history", chat: "c" }));
+    assertEquals((await wantId(1)).ok, false);
+    assertEquals((await wantId(2)).ok, false);
+    assertEquals((await wantId(3)).ok, true);
+    assertEquals((await wantId(4)).ok, true);
+    assert(frames.some((f) => f.web === "state"));
+    assertEquals(seen.map((l) => JSON.parse(l).id), [3, 4]);
+    ws.close();
+    await new Promise((r) => ws.onclose = r);
+  } finally {
+    web.close();
+    daemon.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});

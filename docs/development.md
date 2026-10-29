@@ -226,6 +226,8 @@ is `ANDROIDSECONDARY`. It is a development knob and is not supported: other
 device types change what LINE allows, and some lose features such as contact
 name lookup.
 
+`ENIL_WEB_ADDR` and `ENIL_WEB_KEY` turn on the web page. See [web.md](web.md).
+
 ## Build a binary
 
 A compiled daemon is optional:

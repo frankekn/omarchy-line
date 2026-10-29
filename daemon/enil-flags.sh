@@ -26,7 +26,7 @@
 #                    (watchdog.ts, suspend/resume), wl-paste (clipboard.ts),
 #                    ffmpegthumbnailer and ffmpeg (video.ts), omarchy-shell
 #                    and notify-send (notify.ts).
-#   --allow-env      The variables modules/env.ts reads, plus the two the npm
+#   --allow-env      The variables modules/env.ts and web.ts read, plus the two the npm
 #                    dependencies read through Node's process.env shim, which
 #                    throws NotCapable for an unlisted name rather than
 #                    answering undefined: Q_DEBUG (q, loaded by thrift at
@@ -43,4 +43,4 @@ ENIL_DENO_FLAGS="--allow-net \
 --allow-read \
 --allow-write=$ENIL_STATE_DIR \
 --allow-run=dbus-monitor,wl-paste,ffmpegthumbnailer,ffmpeg,omarchy-shell,notify-send \
---allow-env=HOME,XDG_STATE_HOME,ENIL_DEVICE,ENIL_INCREMENTAL,ENIL_CHAT_LIMIT,ENIL_PUSH_STALE_MS,ENIL_REQUEST_TIMEOUT_MS,Q_DEBUG,NODE_DEBUG"
+--allow-env=HOME,XDG_STATE_HOME,ENIL_DEVICE,ENIL_INCREMENTAL,ENIL_CHAT_LIMIT,ENIL_PUSH_STALE_MS,ENIL_REQUEST_TIMEOUT_MS,ENIL_WEB_ADDR,ENIL_WEB_KEY,Q_DEBUG,NODE_DEBUG"

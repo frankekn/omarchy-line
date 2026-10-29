@@ -246,6 +246,7 @@ to your other chats.
 - [docs/architecture.md](docs/architecture.md): how the panel and the daemon
   work together.
 - [docs/protocol.md](docs/protocol.md): the state files and socket commands.
+- [docs/web.md](docs/web.md): the optional web page for other devices.
 - [docs/vendoring.md](docs/vendoring.md): the vendored linejs fork.
 - [docs/development.md](docs/development.md): checks, the stub daemon, and
   CI.

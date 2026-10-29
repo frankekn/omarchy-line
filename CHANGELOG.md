@@ -4,6 +4,18 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers continue from the original omarchy-line plugin by Unayung
 Chen, so this project starts at 2.x.
 
+## [Unreleased]
+
+### Added
+
+- An optional web page served by the daemon, for using LINE from other
+  devices on your tailnet without another LINE login. Set `ENIL_WEB_ADDR` to
+  the machine's Tailscale address and `ENIL_WEB_KEY` to a sign-in key. The
+  page lists chats, shows history and media, and sends text, replies,
+  reactions, stickers, and files. It cannot read `storage.json` or use the
+  daemon machine's clipboard. `daemon/enil.plist` runs the daemon on macOS
+  under launchd. See [docs/web.md](docs/web.md).
+
 ## [2.16.0] - 2026-10-07
 
 ### Added
