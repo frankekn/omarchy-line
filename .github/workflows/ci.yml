@@ -51,6 +51,11 @@ jobs:
         run: deno run -A tests/web/run.js
       - name: web real daemon smoke
         run: deno run -A tests/web/realboot.js
+      - name: web startup and cache tests
+        run: |
+          deno test -A tests/web/boot-connection_test.js
+          deno run -A tests/web/boot-rtt.js
+          deno run -A tests/web/compiled-assets.js
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
@@ -76,4 +81,4 @@ jobs:
       - name: web browser tests
         env:
           ENIL_WEB_BROWSER: webkit
-        run: deno run -A tests/web/run.js main edge media mentions parity review a11y
+        run: deno run -A tests/web/run.js main edge media mentions parity review a11y drafts
