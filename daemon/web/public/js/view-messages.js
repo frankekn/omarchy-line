@@ -540,19 +540,22 @@ export function createMessagesView(ctx) {
     }
     rows.sort(compareMessages);
     const today = new Date().toDateString();
-    const tail = rows[rows.length - 1];
-    const lastItem = renderedDesired[renderedDesired.length - 1];
-    const tailTime = Number(tail?.time || 0), tailDate = new Date(tailTime);
-    const tailDay = Number.isNaN(tailDate.getTime())
-      ? ""
-      : tailDate.toDateString();
-    let appendOnly = deferTrim && !pendingRows.length && !model.sent.size &&
-      rows.length === renderedRows.length + 1 && tail === newest &&
-      lastItem?.type === "message" && lastItem.day &&
-      lastItem.day === tailDay &&
-      renderedToday === today && renderedUnread === model.unreadMarkId &&
-      records.has("control:older") === !model.noOlder &&
-      String(tail.id || "") !== model.unreadMarkId;
+    let appendOnly = false, tail, tailTime = 0, tailDay = "";
+    if (
+      deferTrim && !pendingRows.length && !model.sent.size &&
+      rows.length === renderedRows.length + 1 && renderedToday === today &&
+      renderedUnread === model.unreadMarkId &&
+      records.has("control:older") === !model.noOlder
+    ) {
+      tail = rows[rows.length - 1];
+      const lastItem = renderedDesired[renderedDesired.length - 1];
+      tailTime = Number(tail?.time || 0);
+      const tailDate = new Date(tailTime);
+      tailDay = Number.isNaN(tailDate.getTime()) ? "" : tailDate.toDateString();
+      appendOnly = tail === newest && lastItem?.type === "message" &&
+        !!lastItem.day && lastItem.day === tailDay &&
+        String(tail.id || "") !== model.unreadMarkId;
+    }
     if (appendOnly) {
       for (let i = 0; i < renderedRows.length; i++) {
         if (rows[i] !== renderedRows[i] || rows[i].pending) {
