@@ -63,7 +63,8 @@
               data-i18n="sync" aria-keyshortcuts="R">同步</button>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
-          <div id="chat-list" class="chat-list" aria-label="Chats"></div>
+          <div id="chat-list" class="chat-list" role="region" aria-label="Chats"
+            tabindex="0"></div>
           <div
             class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><small data-i18n="lineAccount">LINE 帳號</small></span></div><button id="line-logout" class="icon-button logout" type="button" data-i18n-title="lineLogout" aria-label="登出 LINE">↪</button></div>
         </aside>
@@ -78,7 +79,8 @@
             <header
               class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><button id="hide-chat" class="text-button" type="button"></button></header>
             <div id="messages" class="messages" role="log" aria-live="polite"
-              aria-relevant="additions text"></div>
+              aria-relevant="additions text" aria-labelledby="active-name"
+              tabindex="0"></div>
             <div id="drop-overlay" class="drop-overlay" hidden
               data-i18n="dropFiles">放開以上傳檔案</div>
             <div class="composer-area">

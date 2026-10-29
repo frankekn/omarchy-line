@@ -1,5 +1,5 @@
 // Regression coverage for parity review findings.
-import { assert, CHAT, tapSocket, until } from "./harness.js";
+import { assert, CHAT, KEY, tapSocket, until } from "./harness.js";
 
 export async function syncAccount(h) {
   const context = await h.context({ locale: "en-US" });
@@ -358,9 +358,6 @@ export async function shortcutScope(h) {
   }
   for (const selector of [".chat-row", "#messages"]) {
     const target = page.locator(selector).first();
-    if (selector === "#messages") {
-      await target.evaluate((node) => node.tabIndex = 0);
-    }
     await target.focus();
     const before = syncCount();
     await page.keyboard.press("r");
@@ -379,6 +376,12 @@ export async function shortcutScope(h) {
   await page.locator("#messages").blur();
   await page.keyboard.press("/");
   assert.equal(
+    await page.evaluate(() => document.activeElement.tagName),
+    "BODY",
+  );
+  await page.locator("#chat-list").focus();
+  await page.keyboard.press("/");
+  assert.equal(
     await page.locator("#search").evaluate((node) =>
       node === document.activeElement
     ),
@@ -386,6 +389,196 @@ export async function shortcutScope(h) {
   );
   await context.close();
   h.step("character-shortcut-focus-scope");
+}
+
+export async function shortcutFocus(h) {
+  const desktop = await h.context({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  const page = await desktop.newPage();
+  const tap = await tapSocket(page, {
+    client: (frame) => frame.cmd !== "sync",
+  });
+  await h.signIn(page);
+  await page.locator("#chat-list .chat-row").first().waitFor();
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "chat-list",
+  );
+  const selected = await page.locator(".chat-row.keyboard-selected")
+    .getAttribute("data-chat-id");
+  await page.keyboard.press("Enter");
+  await page.locator("#workspace.chat-open").waitFor({ timeout: 3000 });
+  await until(
+    () =>
+      tap.sent.some((frame) =>
+        frame.cmd === "history" && frame.chat === selected
+      ),
+    "initially selected chat",
+  );
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator("#connection.connected").waitFor();
+  await page.locator("#chat-list .chat-row").first().waitFor();
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "chat-list",
+  );
+  await page.locator(".brand").click();
+  assert.equal(
+    await page.evaluate(() => document.activeElement.tagName),
+    "BODY",
+  );
+  await page.evaluate(() => {
+    globalThis.shortcutEvents = [];
+    document.addEventListener("keydown", (event) => {
+      if (["/", "r", "j", "k"].includes(event.key)) {
+        globalThis.shortcutEvents.push({
+          key: event.key,
+          prevented: event.defaultPrevented,
+        });
+      }
+    });
+  });
+  for (const key of ["/", "r", "j", "k"]) await page.keyboard.press(key);
+  assert.deepEqual(await page.evaluate(() => globalThis.shortcutEvents), [
+    { key: "/", prevented: false },
+    { key: "r", prevented: false },
+    { key: "j", prevented: false },
+    { key: "k", prevented: false },
+  ]);
+  assert.equal(
+    await page.evaluate(() => document.activeElement.tagName),
+    "BODY",
+  );
+  assert.equal(tap.sent.filter((frame) => frame.cmd === "sync").length, 0);
+  const documentPrevented = await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", {
+      key: "r",
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(documentPrevented, false);
+  assert.equal(tap.sent.filter((frame) => frame.cmd === "sync").length, 0);
+  const state = await h.state();
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, me: { ...state.me, displayName: "Focus barrier" } },
+  }));
+  await page.getByText("Focus barrier", { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => document.activeElement.tagName),
+    "BODY",
+  );
+  await page.locator("#sync").focus();
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "chat-list",
+  );
+  assert.equal(
+    await page.locator("#chat-list").evaluate((node) =>
+      getComputedStyle(node).outlineStyle
+    ),
+    "solid",
+  );
+  await page.keyboard.press("r");
+  await until(
+    () => tap.sent.some((frame) => frame.cmd === "sync"),
+    "scoped sync",
+  );
+  const sync = tap.sent.find((frame) => frame.cmd === "sync");
+  tap.socket.send(
+    JSON.stringify({ id: sync.id, ok: false, error: "fixture sync" }),
+  );
+  await page.keyboard.press("/");
+  assert.equal(await page.evaluate(() => document.activeElement.id), "search");
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.locator("#hide-chat").focus();
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "messages",
+  );
+  assert.equal(
+    await page.locator("#messages").evaluate((node) =>
+      getComputedStyle(node).outlineStyle
+    ),
+    "solid",
+  );
+  await page.keyboard.press("/");
+  assert.equal(await page.evaluate(() => document.activeElement.id), "search");
+  await desktop.close();
+
+  const keyboardOnly = await h.context({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  const keyboardPage = await keyboardOnly.newPage();
+  await keyboardPage.addInitScript(() => {
+    const nativeMatchMedia = globalThis.matchMedia.bind(globalThis);
+    globalThis.matchMedia = (query) =>
+      query.includes("pointer")
+        ? { matches: query.includes("pointer: none") }
+        : nativeMatchMedia(query);
+  });
+  await h.signIn(keyboardPage);
+  await keyboardPage.locator("#chat-list .chat-row").first().waitFor();
+  assert.equal(
+    await keyboardPage.evaluate(() => document.activeElement.id),
+    "chat-list",
+  );
+  await keyboardOnly.close();
+
+  for (const width of [390, 1024]) {
+    const mobile = await h.context({
+      locale: "en-US",
+      viewport: { width, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const phone = await mobile.newPage();
+    await h.signIn(phone);
+    await phone.locator("#chat-list .chat-row").first().waitFor();
+    assert.equal(
+      await phone.evaluate(() => document.activeElement.tagName),
+      "BODY",
+    );
+    await mobile.close();
+  }
+
+  const preserved = await h.context({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  const otherPage = await preserved.newPage();
+  let heldState;
+  const heldTap = await tapSocket(otherPage, {
+    server(frame) {
+      if (frame.web === "state" && !heldState) {
+        heldState = frame;
+        return false;
+      }
+      return true;
+    },
+  });
+  await otherPage.goto(h.base, { waitUntil: "domcontentloaded" });
+  await otherPage.getByLabel("Web key").fill(KEY);
+  await otherPage.getByRole("button", { name: /^(登入|Sign in)$/ }).click();
+  await otherPage.locator("#app:not([hidden])").waitFor();
+  await otherPage.locator("#web-signout").focus();
+  await until(() => heldState, "delayed initial state");
+  heldTap.socket.send(JSON.stringify(heldState));
+  await otherPage.locator("#chat-list .chat-row").first().waitFor();
+  assert.equal(
+    await otherPage.evaluate(() => document.activeElement.id),
+    "web-signout",
+  );
+  await preserved.close();
+  h.step("character-shortcuts-require-focused-components");
 }
 
 export async function reactionEscape(h) {
@@ -957,6 +1150,7 @@ export async function parityFixes(h) {
   await chatPatchOrder(h);
   await lightboxModifiers(h);
   await shortcutScope(h);
+  await shortcutFocus(h);
   await reactionEscape(h);
   await lightboxUpdates(h);
   await lightboxFailure(h);

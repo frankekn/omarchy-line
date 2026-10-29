@@ -339,6 +339,7 @@ export async function parity(h) {
     true,
   );
   await input.blur();
+  await page.locator("#chat-list").focus();
   await page.keyboard.press("/");
   assert.equal(
     await page.getByLabel("Search chats").evaluate((el) =>
@@ -348,6 +349,7 @@ export async function parity(h) {
   );
   await page.getByLabel("Search chats").fill("");
   await page.getByLabel("Search chats").blur();
+  await page.locator("#chat-list").focus();
   await page.keyboard.press("j");
   assert.equal(await page.locator(".chat-row:focus").count(), 1);
   const selected = await page.locator(".chat-row:focus").getAttribute(

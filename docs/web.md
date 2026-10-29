@@ -80,16 +80,21 @@ is unknown, retrying can send the same message twice. Recent acknowledged
 sends remain visible while the page waits for their matching echo; this
 temporary cache is cleared on reload.
 
-With the image viewer closed and focus outside an input, textarea, select or
-editable element, `/` returns to the list and focuses search, and `r` syncs.
-In the list, or with focus in the sidebar, up/down or `j`/`k` select a chat.
-Enter opens the selected chat when focus is on a chat row or the page body.
-In an open chat, those keys scroll messages when focus is outside the sidebar.
-Outside inputs, Esc closes the sticker or mention picker, cancels a reply,
-returns to the list, or clears search, in that order. These shortcuts require
-the chat workspace and ignore Ctrl, Alt, Command and text composition. Use
-up/down, `j`/`k`, `/` and `r` without Shift. Esc also closes the mention
-picker from the message input.
+With the image viewer closed and focus in the chat list or message area, `/`
+returns to the list and focuses search, `r` syncs, and `j`/`k` select a chat
+or scroll messages. These character shortcuts do not run on other controls.
+On desktop, the list gets focus on first load if nothing else is focused.
+Clicking a blank area can move focus to the page body; the character shortcuts
+then stop until you focus the list or messages again.
+
+Outside inputs, up/down also navigate. When navigating the list, Enter opens
+the selected chat if focus is on the list, a chat row or the page body. Esc
+closes reaction pickers first, even from the message input. Outside inputs it
+then closes the sticker or mention picker, cancels a reply, returns to the
+list, or clears search.
+Esc also closes the mention picker from the message input. These shortcuts
+require the chat workspace and ignore Ctrl, Alt, Command and text composition.
+Use up/down, `j`/`k`, `/` and `r` without Shift.
 
 In the message input, Enter selects an open mention choice. Otherwise, Enter
 sends when the viewport is at least 701px wide and the primary pointer is

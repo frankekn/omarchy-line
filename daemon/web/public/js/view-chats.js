@@ -6,7 +6,7 @@ import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 export function createChatsView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
-  let order = [];
+  let order = [], initialFocusDone = false;
   function chatRecord(chat) {
     const mid = String(chat.mid), button = el("button", "chat-row");
     button.type = "button";
@@ -161,6 +161,14 @@ export function createChatsView(ctx) {
     );
     const title = unread ? `(${unread}) enil` : "enil";
     if (document.title !== title) document.title = title;
+    if (!initialFocusDone && !$("workspace").hidden) {
+      initialFocusDone = true;
+      if (
+        document.activeElement === document.body &&
+        globalThis.innerWidth > 700 &&
+        !globalThis.matchMedia("(pointer: coarse)").matches
+      ) list.focus({ preventScroll: true });
+    }
   }
   function renderActiveHeader() {
     const chat = model.chats.find((row) => String(row.mid) === model.active);
@@ -245,7 +253,8 @@ export function createChatsView(ctx) {
       event.preventDefault();
       return;
     }
-    if (event.key.length === 1 && target instanceof Element) {
+    if (event.key.length === 1) {
+      if (!(target instanceof Element)) return;
       const list = $("chat-list"), messages = $("messages");
       const control = target.closest(
         'a[href], button, input, select, textarea, [role="button"], ' +
@@ -256,7 +265,7 @@ export function createChatsView(ctx) {
         (list.contains(target) && target.closest(".chat-row") === control);
       const inMessages = messages.contains(target) &&
         (!control || control === messages);
-      if (target !== document.body && !inChatList && !inMessages) return;
+      if (!inChatList && !inMessages) return;
     }
     if (event.key === "/" && !event.shiftKey) {
       if (model.chatOpen) ctx.backToList();
@@ -290,7 +299,7 @@ export function createChatsView(ctx) {
     } else if (
       event.key === "Enter" && inList && model.selectedChat &&
       (!(target instanceof HTMLElement) || target === document.body ||
-        target.classList.contains("chat-row"))
+        target === $("chat-list") || target.classList.contains("chat-row"))
     ) {
       ctx.openChat(model.selectedChat);
       event.preventDefault();
