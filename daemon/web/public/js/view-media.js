@@ -7,16 +7,45 @@ export function createMediaView(ctx) {
   const displayError = (error) => ctx.displayError(error);
   let pictures = [], pictureIndex = 0, scale = 1, panX = 0, panY = 0;
   let lightboxChat = "", lightboxAccount = "";
+  let lightboxGeneration = 0, pictureGeneration = 0;
+  const downloads = new Map(), originals = new Map();
   let pinch = null, drag = null;
-  async function downloadMessage(chat, message) {
-    try {
-      const data = await command("download", {
-        chat,
-        messageId: String(message.id),
-      });
+  function originalKey(account, chat, message) {
+    return JSON.stringify([account, chat, String(message.id)]);
+  }
+  function requestOriginal(account, chat, message, session) {
+    const key = originalKey(account, chat, message);
+    const existing = downloads.get(key);
+    if (existing) return existing;
+    const promise = command("download", {
+      chat,
+      messageId: String(message.id),
+    }).then((data) => {
       if (!data?.path) throw new Error(t("mediaFailed"));
+      return String(data.path);
+    }).finally(() => {
+      if (downloads.get(key)?.promise === promise) downloads.delete(key);
+    });
+    const request = { promise, session };
+    downloads.set(key, request);
+    return request;
+  }
+  async function downloadMessage(chat, message) {
+    const account = model.account;
+    try {
+      const inViewer = $("lightbox").open && lightboxAccount === account &&
+        lightboxChat === chat;
+      const path =
+        (inViewer && originals.get(originalKey(account, chat, message))) ||
+        await requestOriginal(
+          account,
+          chat,
+          message,
+          inViewer ? lightboxGeneration : null,
+        ).promise;
+      if (model.account !== account) return;
       const link = el("a");
-      link.href = fileUrl(data.path, true);
+      link.href = fileUrl(path, true);
       link.download = String(message.fileName || "");
       link.hidden = true;
       document.body.append(link);
@@ -65,10 +94,44 @@ export function createMediaView(ctx) {
     $("lightbox-error").hidden = true;
     $("lightbox-image").src = url;
   }
+  async function loadOriginal(item) {
+    if (!item.message) return;
+    const session = lightboxGeneration, version = pictureGeneration;
+    const account = lightboxAccount, chat = lightboxChat;
+    const key = originalKey(account, chat, item.message);
+    const isCurrent = () =>
+      $("lightbox").open &&
+      lightboxGeneration === session && pictureGeneration === version &&
+      model.account === account && model.active === chat &&
+      pictures[pictureIndex]?.key === item.key;
+    const cached = originals.get(key);
+    if (cached) {
+      setPictureSource(fileUrl(cached));
+      return;
+    }
+    const previous = downloads.get(key);
+    if (previous && previous.session !== session) {
+      try {
+        await previous.promise;
+      } catch { /* A new opening can retry. */ }
+      if (!isCurrent()) return;
+    }
+    try {
+      const path = await requestOriginal(account, chat, item.message, session)
+        .promise;
+      if (
+        $("lightbox").open && lightboxGeneration === session &&
+        model.account === account && model.active === chat
+      ) originals.set(key, path);
+      if (isCurrent()) setPictureSource(fileUrl(path));
+    } catch { /* Keep the preview; a later opening can retry. */ }
+  }
   function showPicture() {
+    pictureGeneration++;
     updatePictureControls();
     setPictureSource(pictures[pictureIndex].url);
     setScale(1);
+    void loadOriginal(pictures[pictureIndex]);
   }
   function stepPicture(delta) {
     const next = pictureIndex + delta;
@@ -110,6 +173,7 @@ export function createMediaView(ctx) {
             id: String(row.id),
             url: fileUrl(path),
             name: String(row.fileName || t("image")),
+            message: row,
             download: () => downloadMessage(chat, row),
           });
         }
@@ -126,6 +190,8 @@ export function createMediaView(ctx) {
     if (pictureIndex < 0) return;
     lightboxChat = chat;
     lightboxAccount = model.account;
+    lightboxGeneration++;
+    originals.clear();
     showPicture();
     if (!$("lightbox").open) $("lightbox").showModal();
   }
@@ -150,7 +216,13 @@ export function createMediaView(ctx) {
     }
     pictureIndex = index;
     updatePictureControls();
-    if (current.url !== pictures[index].url) {
+    if (
+      current.url !== pictures[index].url &&
+      (!pictures[index].message ||
+        !originals.has(
+          originalKey(lightboxAccount, lightboxChat, pictures[index].message),
+        ))
+    ) {
       setPictureSource(pictures[index].url);
     }
   }

@@ -556,6 +556,202 @@ export async function lightboxFailure(h) {
   h.step("lightbox-decode-failure");
 }
 
+export async function lightboxOriginal(h) {
+  const now = Date.now();
+  const messages = [
+    picture(h, "original-1", "stub-shot1.png", now),
+    picture(h, "original-2", "stub-shot2.png", now + 1),
+  ];
+  const { context, page, tap, state } = await pictureFixture(h, messages, {
+    client: (frame) => frame.cmd !== "download",
+  });
+  const commands = () => tap.sent.filter((frame) => frame.cmd === "download");
+  const reply = (index, path) =>
+    tap.socket.send(JSON.stringify({
+      id: commands()[index].id,
+      ok: true,
+      data: { path },
+    }));
+  const path1 = `${h.stateDir}/media/stub-shot2.png`;
+  const path2 = `${h.stateDir}/media/stub-shot1.png`;
+  const image = page.locator("#lightbox-image");
+  const first = page.locator('article[data-message-id="original-1"] img');
+  await first.click();
+  const firstPreview = await image.getAttribute("src");
+  await until(() => commands().length === 1, "first original request");
+  assert.equal(commands()[0].messageId, "original-1");
+  const downloaded = page.waitForEvent("download");
+  await page.locator("#lightbox-download").click();
+  assert.equal(commands().length, 1);
+  await page.locator("#lightbox-next").click();
+  await until(() => commands().length === 2, "second original request");
+  const secondPreview = await image.getAttribute("src");
+  reply(0, path1);
+  await downloaded;
+  assert.equal(await image.getAttribute("src"), secondPreview);
+  await page.locator("#lightbox-zoom-in").click();
+  const zoom = await image.getAttribute("style");
+  reply(1, path2);
+  await until(async () =>
+    (await image.getAttribute("src"))?.endsWith(
+      encodeURIComponent(path2),
+    ), "second original displayed");
+  assert.equal(await image.getAttribute("style"), zoom);
+  await page.locator("#lightbox-prev").click();
+  await until(async () =>
+    (await image.getAttribute("src"))?.endsWith(
+      encodeURIComponent(path1),
+    ), "cached first original displayed");
+  assert.equal(commands().length, 2);
+
+  await page.locator("#lightbox-close").click();
+  await first.click();
+  await until(() => commands().length === 3, "reopened original request");
+  await page.locator("#lightbox-close").click();
+  await first.click();
+  assert.equal(commands().length, 3);
+  reply(2, path1);
+  await until(() => commands().length === 4, "request for new opening");
+  assert.equal(await image.getAttribute("src"), firstPreview);
+  reply(3, path1);
+  await until(async () =>
+    (await image.getAttribute("src"))?.endsWith(
+      encodeURIComponent(path1),
+    ), "new opening original displayed");
+
+  await page.locator("#lightbox-close").click();
+  await first.click();
+  await until(() => commands().length === 5, "failed original request");
+  tap.socket.send(JSON.stringify({
+    id: commands()[4].id,
+    ok: false,
+    error: "original unavailable",
+  }));
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, me: { ...state.me, displayName: "Failure barrier" } },
+  }));
+  await page.getByText("Failure barrier", { exact: true }).waitFor();
+  assert.equal(await image.getAttribute("src"), firstPreview);
+  await page.locator("#lightbox-close").click();
+  await first.click();
+  await until(() => commands().length === 6, "retry original request");
+  assert.equal(await image.getAttribute("src"), firstPreview);
+  reply(5, path1);
+  await until(async () =>
+    (await image.getAttribute("src"))?.endsWith(
+      encodeURIComponent(path1),
+    ), "retried original displayed");
+
+  await page.locator("#lightbox-close").click();
+  await first.click();
+  await until(() => commands().length === 7, "old account original request");
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, me: { mid: "u-next", displayName: "Next" } },
+  }));
+  await page.getByText("Next", { exact: true }).waitFor();
+  assert.equal(
+    await page.locator("#lightbox").evaluate((node) => node.open),
+    false,
+  );
+  const closedSrc = await image.getAttribute("src");
+  reply(6, path1);
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, me: { mid: "u-next", displayName: "Barrier" } },
+  }));
+  await page.getByText("Barrier", { exact: true }).waitFor();
+  assert.equal(await image.getAttribute("src"), closedSrc);
+  await context.close();
+
+  const fixture = await pictureFixture(
+    h,
+    [picture(h, "flex-before", "stub-shot1.png")],
+    { client: (frame) => frame.cmd !== "download" },
+  );
+  await fixture.page.route(
+    "https://example.test/image.png",
+    (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        path: `${h.stateDir}/media/stub-shot1.png`,
+      }),
+  );
+  const flex = {
+    id: "flex-image",
+    chat: CHAT,
+    from: "other",
+    fromName: "Peer",
+    time: Date.now() + 1000,
+    text: "Flex image",
+    contentType: "FLEX",
+    flexImages: [
+      "https://example.test/image.png",
+      "https://example.test/image.png",
+    ],
+  };
+  fixture.tap.socket.send(JSON.stringify({
+    event: { seq: 999999, kind: "message", chat: CHAT, message: flex },
+    boot: fixture.state.bootId,
+  }));
+  await fixture.page.locator('article[data-message-id="flex-image"] img')
+    .first()
+    .waitFor({ state: "attached" });
+  await fixture.page.locator('article[data-message-id="flex-before"] img')
+    .click();
+  await until(
+    () => fixture.tap.sent.some((frame) => frame.cmd === "download"),
+    "non-FLEX original",
+  );
+  const flexCount =
+    fixture.tap.sent.filter((frame) => frame.cmd === "download").length;
+  await fixture.page.locator("#lightbox-next").click();
+  assert.equal(
+    await fixture.page.locator("#lightbox-image").getAttribute("src"),
+    "https://example.test/image.png",
+  );
+  assert.equal(
+    fixture.tap.sent.filter((frame) => frame.cmd === "download").length,
+    flexCount,
+  );
+  await fixture.page.locator("#lightbox-next").click();
+  assert.match(
+    await fixture.page.locator("#lightbox-name").textContent(),
+    /3 \/ 3/,
+  );
+  fixture.tap.socket.send(JSON.stringify({
+    event: {
+      seq: 1000000,
+      kind: "message",
+      chat: CHAT,
+      message: {
+        ...flex,
+        id: "flex-barrier",
+        contentType: "NONE",
+        text: "Flex barrier",
+        time: Date.now() + 2000,
+      },
+    },
+    boot: fixture.state.bootId,
+  }));
+  await fixture.page.getByText("Flex barrier").waitFor({ state: "attached" });
+  assert.match(
+    await fixture.page.locator("#lightbox-name").textContent(),
+    /3 \/ 3/,
+  );
+  await fixture.page.locator("#lightbox-close").click();
+  await fixture.page.locator('article[data-message-id="flex-image"] img').last()
+    .evaluate((node) => node.click());
+  assert.match(
+    await fixture.page.locator("#lightbox-name").textContent(),
+    /3 \/ 3/,
+  );
+  await fixture.context.close();
+  h.step("lightbox-original-concurrency");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
@@ -565,4 +761,5 @@ export async function parityFixes(h) {
   await reactionEscape(h);
   await lightboxUpdates(h);
   await lightboxFailure(h);
+  await lightboxOriginal(h);
 }
