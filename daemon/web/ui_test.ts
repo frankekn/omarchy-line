@@ -994,8 +994,10 @@ function inspectContext(sources: ContextSource[]): ContextContract {
     references.set(source.name, names);
     if (
       /\bctx\s*(?:\[|\?\.)/.test(source.text) ||
-      /\b(?:const|let|var)\s*(?:\{[^}]*\}|\[[^\]]*\]|[A-Za-z_$][\w$]*)\s*=\s*ctx\s*(?:[;,]|$)/m
-        .test(source.text)
+      /(?:^|[^\w$.])\(\s*ctx\s*\)/m.test(source.text) ||
+      /\b(?:const|let|var)\s*(?:\{[^}]*\}|\[[^\]]*\]|[A-Za-z_$][\w$]*)\s*=\s*ctx\b(?!\s*\.)/m
+        .test(source.text) ||
+      /\b[A-Za-z_$][\w$]*\s*=\s*ctx\b(?!\s*\.)/m.test(source.text)
     ) {
       invalid.push(`${source.name}: untracked ctx access`);
     }
@@ -1146,6 +1148,31 @@ Deno.test("context inspection rejects untracked access and hidden factory APIs",
       "broken: unknown or unsupported factory createBroken",
     ),
   );
+});
+
+Deno.test("context inspection rejects parenthesized access and aliases", () => {
+  for (
+    const statement of [
+      "(ctx).missing();",
+      'ctx["missing"]();',
+      "const alias = ctx || {}; alias.missing();",
+      "let alias; alias = ctx; alias.missing();",
+    ]
+  ) {
+    const result = inspectContext([{
+      name: "app.js",
+      text:
+        'provide("app", { model });\nprovide("one", createOne(ctx));\nctx.model;\nctx.run;',
+    }, {
+      name: "one.js",
+      text:
+        `export function createOne(ctx) {\n  ${statement}\n  return { run };\n}`,
+    }]);
+    assert(
+      result.invalid.includes("one.js: untracked ctx access"),
+      `untracked expression accepted: ${statement}`,
+    );
+  }
 });
 
 Deno.test("registry rejects collisions and unknown reads and freezes context", () => {
