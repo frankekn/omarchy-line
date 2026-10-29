@@ -205,6 +205,119 @@ async function olderSuperseded(h) {
   h.step("sync-supersedes-older-preserves-events");
 }
 
+async function unreadSyncSupersession(h) {
+  const context = await h.context({ locale: "en-US" });
+  const page = await context.newPage();
+  const histories = [], syncs = [];
+  const tap = await tapSocket(page, {
+    client(frame) {
+      if (frame.cmd === "history" && frame.chat === CHAT) {
+        histories.push(frame);
+        return false;
+      }
+      if (frame.cmd === "sync") {
+        syncs.push(frame);
+        return false;
+      }
+      return true;
+    },
+    server(frame) {
+      if (frame.web === "state") {
+        frame.state.chats = frame.state.chats.map((row) =>
+          row.mid === CHAT ? { ...row, unread: 2 } : row
+        );
+      }
+      return true;
+    },
+  });
+  await h.signIn(page);
+  const state = await h.state();
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await until(() => histories.length === 1, "opening history");
+  const now = Date.now() - 10000;
+  const message = (id, offset) => ({
+    id,
+    chat: CHAT,
+    from: "u-other",
+    fromName: "Peer",
+    text: id,
+    time: now + offset,
+    contentType: "NONE",
+    hasMedia: false,
+    mediaState: "ok",
+  });
+  const first = message("during-opening", 3000);
+  const second = message("during-replacement", 4000);
+  let seq = 999999;
+  const push = (row) =>
+    tap.socket.send(JSON.stringify({
+      event: { seq: seq++, kind: "message", chat: CHAT, message: row },
+      boot: state.bootId,
+    }));
+  push(first);
+  await page.locator("#sync").click();
+  await until(() => syncs.length === 1, "sync during opening history");
+  tap.socket.send(JSON.stringify({
+    id: syncs[0].id,
+    ok: true,
+    data: { at: Date.now() },
+  }));
+  await until(() => histories.length === 2, "replacement opening history");
+  push(second);
+  tap.socket.send(JSON.stringify({
+    id: histories[1].id,
+    ok: true,
+    data: [
+      message("read-before", 0),
+      message("unread-first", 1000),
+      message("unread-last", 2000),
+      first,
+      second,
+    ],
+  }));
+  await page.getByText("during-replacement", { exact: true }).waitFor();
+  assert.equal(
+    await page.locator(".unread-divider").evaluate((node) =>
+      node.nextElementSibling?.dataset.messageId
+    ),
+    "unread-first",
+  );
+  await until(
+    () =>
+      tap.sent.some((frame) =>
+        frame.cmd === "markRead" && frame.upTo === second.id
+      ),
+    "replacement message read",
+  );
+  for (const row of [first, second]) {
+    assert.equal(
+      tap.sent.filter((frame) =>
+        frame.cmd === "markRead" && frame.upTo === row.id
+      ).length,
+      1,
+    );
+  }
+  tap.socket.send(JSON.stringify({
+    id: histories[0].id,
+    ok: true,
+    data: [message("stale-history", 0)],
+  }));
+  push(message("stale-response-barrier", 5000));
+  await page.getByText("stale-response-barrier", { exact: true }).waitFor();
+  assert.equal(
+    await page.getByText("stale-history", { exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.locator(".unread-divider").evaluate((node) =>
+      node.nextElementSibling?.dataset.messageId
+    ),
+    "unread-first",
+  );
+  await context.close();
+  h.step("unread-boundary-sync-supersession");
+}
+
 async function acknowledgedSend(h) {
   let sent, historyReply = null;
   const { context, page, tap, state } = await newPage(h, {
@@ -394,6 +507,7 @@ async function membersFailure(h) {
 export async function review(h) {
   await olderEvent(h);
   await olderSuperseded(h);
+  await unreadSyncSupersession(h);
   await acknowledgedSend(h);
   await membersRace(h);
   await membersFailure(h);
