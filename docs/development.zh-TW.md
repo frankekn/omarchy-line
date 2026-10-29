@@ -152,8 +152,9 @@ XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
 stub 的 socket 也接受 `{"cmd":"poke","chat":"cstub-family","text":"hello"}`，
 用來加入一則收到的文字訊息。不帶 `text` 時，`poke` 維持上面說的通知交接行為。
 
-瀏覽器測試會各自啟動 stub 和 web server，並使用暫存的 state 目錄。在 repo 根目錄安裝
-Playwright 的 Chromium 後，可以執行全部測試，或只指定要跑的 suite：
+瀏覽器測試會各自啟動 stub 和 web server，並使用暫存的 state 目錄。stub 的外部貼圖和
+FLEX 圖片網址會以本機 fixture 回覆。在 repo 根目錄安裝 Playwright 的 Chromium 後，
+可以執行全部測試，或只指定要跑的 suite：
 
 ```bash
 npx --yes playwright@1.64.1 install --with-deps chromium
@@ -166,6 +167,18 @@ port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 
 截圖和 log。每個瀏覽器頁面都不能有 console error 或 page error。
 設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
 暫存目錄。
+
+真 daemon 的 smoke test 也使用空的暫存 state 目錄，不含 LINE 帳號。它用
+`enil-run.sh` 啟動原始碼，並在暫存副本中編譯執行檔。編譯後會移除副本的網頁檔案，
+再檢查執行檔內的頁面、session、socket 和上傳，不會啟動 LINE 登入：
+
+```bash
+deno run -A tests/web/realboot.js
+```
+
+同樣可以設定 `CHROMIUM`、`ENIL_WEB_TEST_PORT` 和 `ENIL_WEB_TEST_TMPDIR`。
+原始碼測試要求 `enil-run.sh` 會選用 Deno，而不是現有且符合目前版本的 `daemon/enil`
+執行檔。成功時會刪除暫存 state；失敗時會保留 state 和 log。
 
 ## 截圖
 

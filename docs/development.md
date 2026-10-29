@@ -179,8 +179,9 @@ on its socket to add an incoming text message. Without `text`, `poke` keeps
 its notification hand-off behavior described above.
 
 The browser suites start their own stub and web server, each with a temporary
-state directory. From the repository root, install Playwright's Chromium and
-run all suites, or name only the suites you need:
+state directory. The stub's external sticker and FLEX image URLs are served
+from local fixtures. From the repository root, install Playwright's Chromium
+and run all suites, or name only the suites you need:
 
 ```bash
 npx --yes playwright@1.64.1 install --with-deps chromium
@@ -194,6 +195,21 @@ Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
 there instead of the system temporary directory.
 It removes temporary state after success and keeps it with screenshots and
 logs on failure. Every browser page must have no console or page errors.
+
+The real daemon smoke test also uses an empty temporary state directory, with
+no LINE account. It starts `enil-run.sh` from source and builds and starts a
+binary in a temporary copy. It removes the copy's web assets after building,
+then checks the embedded page, session, socket and uploads without starting a
+LINE login:
+
+```bash
+deno run -A tests/web/realboot.js
+```
+
+The same `CHROMIUM`, `ENIL_WEB_TEST_PORT` and `ENIL_WEB_TEST_TMPDIR` settings
+apply. The source run requires that `enil-run.sh` would select Deno instead of
+an existing up-to-date `daemon/enil` binary. Failed runs keep their logs and
+temporary state; successful runs remove them.
 
 ## Take screenshots
 

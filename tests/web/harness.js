@@ -198,6 +198,20 @@ export async function runSuite(name, suite) {
       async context(options = {}) {
         const context = await browser.newContext(options);
         contexts.push(context);
+        // The stub's sticker and FLEX URLs are real HTTPS URLs; keep their
+        // browser rendering deterministic without fetching external images.
+        for (
+          const [url, image] of [
+            ["https://stickershop.line-scdn.net/**", "sticker.png"],
+            ["https://placehold.co/**", "flex-status.png"],
+          ]
+        ) {
+          await context.route(
+            url,
+            (route) =>
+              route.fulfill({ path: `${root}docs/images/demo/${image}` }),
+          );
+        }
         context.on("page", (page) => {
           page.on("console", (message) => {
             if (message.type() === "error") errors.push(message.text());

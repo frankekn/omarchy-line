@@ -49,6 +49,8 @@ jobs:
         run: npx --yes playwright@1.64.1 install --with-deps chromium
       - name: web browser tests
         run: deno run -A tests/web/run.js
+      - name: web real daemon smoke
+        run: deno run -A tests/web/realboot.js
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity

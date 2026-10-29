@@ -62,7 +62,13 @@ export async function main(h) {
   h.step("reaction-reply");
   await page.getByRole("button", { name: "貼圖", exact: true }).click();
   await page.locator("#sticker-content .sticker-cell").first().click();
-  await page.locator(".message-row.own .sticker-image").first().waitFor();
+  const sticker = page.locator(".message-row.own .sticker-image").first();
+  await sticker.waitFor();
+  assert.match(
+    await sticker.getAttribute("src"),
+    /^https:\/\/stickershop\.line-scdn\.net\//,
+  );
+  await sticker.evaluate((image) => image.decode());
   assert.ok(tap.sent.some((frame) => frame.cmd === "sendSticker"));
   h.step("sticker");
   await page.locator("#file-input").setInputFiles({
