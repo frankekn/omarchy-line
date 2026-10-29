@@ -1,7 +1,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
 import { WebAuth } from "./auth.ts";
-import { sniffInline, uploadName } from "./files.ts";
+import { sniffInline, uploadName, Uploads } from "./files.ts";
 import { createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
@@ -186,6 +186,83 @@ Deno.test("/api/file serves media and the QR, never storage.json", async () => {
     assert(page.headers.get("content-disposition")?.startsWith("attachment"));
   } finally {
     web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("uploads share a quota across restarts and concurrent requests", async () => {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-quota-" });
+  const old = `${stateDir}/media/web-uploads/old`;
+  await Deno.mkdir(old, { recursive: true });
+  const sparse = await Deno.open(`${old}/large`, { write: true, create: true });
+  await sparse.truncate(1024 * 1024 * 1024 - 3);
+  sparse.close();
+  const uploads = await Uploads.open(stateDir);
+  const upload = (body: Uint8Array<ArrayBuffer>) =>
+    uploads.receive(
+      new Request("http://box/api/upload", { method: "POST", body }),
+      new URL("http://box/api/upload?name=test"),
+    );
+  try {
+    const results = await Promise.all([
+      upload(new Uint8Array([1, 2])),
+      upload(new Uint8Array([3, 4])),
+    ]);
+    assertEquals(results.map((r) => r.status).sort(), [200, 507]);
+    const success = results.find((r) => r.status === 200)!;
+    const { path } = await success.json();
+    await uploads.discard(path);
+    const retry = await upload(new Uint8Array([5, 6]));
+    assertEquals(retry.status, 200);
+    await retry.body?.cancel();
+  } finally {
+    uploads.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("uploads cap active streams and remove interrupted files", async () => {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-stream-" });
+  const uploads = await Uploads.open(stateDir);
+  const controllers: ReadableStreamDefaultController<Uint8Array>[] = [];
+  const upload = () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controllers.push(controller);
+        controller.enqueue(new Uint8Array([1]));
+      },
+    });
+    return uploads.receive(
+      new Request("http://box/api/upload", { method: "POST", body }),
+      new URL("http://box/api/upload?name=test"),
+    );
+  };
+  try {
+    const pending = Array.from({ length: 4 }, upload);
+    assertEquals((await upload()).status, 503);
+    for (const controller of controllers) controller.error(new Error("closed"));
+    assertEquals((await Promise.all(pending)).map((r) => r.status), [
+      400,
+      400,
+      400,
+      400,
+    ]);
+    const entries = [];
+    for await (const entry of Deno.readDir(uploads.dir)) {
+      entries.push(entry.name);
+    }
+    assertEquals(entries, []);
+    const declared = await uploads.receive(
+      new Request("http://box/api/upload", {
+        method: "POST",
+        body: "x",
+        headers: { "content-length": "1073741825" },
+      }),
+      new URL("http://box/api/upload?name=test"),
+    );
+    assertEquals(declared.status, 413);
+  } finally {
+    uploads.close();
     await Deno.remove(stateDir, { recursive: true });
   }
 });

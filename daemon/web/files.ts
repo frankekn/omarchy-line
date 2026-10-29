@@ -13,6 +13,7 @@
 import { FILE_CSP, json, securityHeaders, status } from "./http.ts";
 
 const UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+const UPLOAD_MAX_ACTIVE = 4;
 const UPLOAD_MAX_AGE_MS = 24 * 3600 * 1000;
 const UPLOAD_SWEEP_MS = 3600 * 1000;
 
@@ -111,6 +112,9 @@ export async function serveFile(stateDir: string, url: URL): Promise<Response> {
 export class Uploads {
   readonly dir: string;
   #timer: ReturnType<typeof setInterval> | undefined;
+  readonly #sizes = new Map<string, number>();
+  readonly #active = new Set<string>();
+  #bytes = 0;
 
   private constructor(dir: string) {
     this.dir = dir;
@@ -121,6 +125,12 @@ export class Uploads {
     await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
     const uploads = new Uploads(await Deno.realPath(dir));
     await uploads.sweep();
+    for await (const entry of Deno.readDir(uploads.dir)) {
+      const path = `${uploads.dir}/${entry.name}`;
+      const size = await storedSize(path);
+      uploads.#sizes.set(path, size);
+      uploads.#bytes += size;
+    }
     uploads.#timer = setInterval(() => void uploads.sweep(), UPLOAD_SWEEP_MS);
     return uploads;
   }
@@ -132,28 +142,45 @@ export class Uploads {
   /** POST /api/upload?name=…, body = the file's bytes. */
   async receive(req: Request, url: URL): Promise<Response> {
     if (!req.body) return status(400, "empty upload");
+    const declared = Number(req.headers.get("content-length"));
+    if (declared > UPLOAD_MAX_BYTES) {
+      return status(413, "檔案太大（超過 1 GB）");
+    }
+    if (this.#active.size >= UPLOAD_MAX_ACTIVE) return status(503);
     const dir = `${this.dir}/${crypto.randomUUID()}`;
-    await Deno.mkdir(dir, { mode: 0o700 });
+    this.#active.add(dir);
     const path = `${dir}/${uploadName(url.searchParams.get("name"))}`;
-    const file = await Deno.open(path, {
-      write: true,
-      createNew: true,
-      mode: 0o600,
-    });
+    let file: Deno.FsFile | undefined;
     let size = 0;
     try {
+      await Deno.mkdir(dir, { mode: 0o700 });
+      this.#sizes.set(dir, 0);
+      file = await Deno.open(path, {
+        write: true,
+        createNew: true,
+        mode: 0o600,
+      });
       for await (const chunk of req.body) {
         size += chunk.length;
         if (size > UPLOAD_MAX_BYTES) throw new RangeError("too large");
+        if (this.#bytes + chunk.length > UPLOAD_MAX_BYTES) {
+          throw new DOMException("upload storage full", "QuotaExceededError");
+        }
+        this.#bytes += chunk.length;
+        this.#sizes.set(dir, (this.#sizes.get(dir) ?? 0) + chunk.length);
         let off = 0;
         while (off < chunk.length) off += await file.write(chunk.subarray(off));
       }
     } catch (e) {
-      file.close();
+      file?.close();
       await this.discard(path);
       return e instanceof RangeError
         ? status(413, "檔案太大（超過 1 GB）")
+        : e instanceof DOMException && e.name === "QuotaExceededError"
+        ? status(507, "上傳空間已滿")
         : status(400, "上傳中斷");
+    } finally {
+      this.#active.delete(dir);
     }
     file.close();
     if (size === 0) {
@@ -175,19 +202,39 @@ export class Uploads {
     const rest = path.slice(this.dir.length + 1);
     const id = rest.split("/")[0];
     if (!path.startsWith(this.dir + "/") || !id) return;
-    await Deno.remove(`${this.dir}/${id}`, { recursive: true }).catch(() => {});
+    const dir = `${this.dir}/${id}`;
+    try {
+      await Deno.remove(dir, { recursive: true });
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) return;
+    }
+    this.#bytes -= this.#sizes.get(dir) ?? 0;
+    this.#sizes.delete(dir);
   }
 
   async sweep(): Promise<void> {
     try {
       for await (const entry of Deno.readDir(this.dir)) {
         const path = `${this.dir}/${entry.name}`;
+        if (this.#active.has(path)) continue;
         const info = await Deno.lstat(path).catch(() => null);
         const age = Date.now() - (info?.mtime?.getTime() ?? 0);
         if (age > UPLOAD_MAX_AGE_MS) {
-          await Deno.remove(path, { recursive: true }).catch(() => {});
+          await this.discard(`${path}/file`);
         }
       }
     } catch { /* the dir went away; nothing to sweep */ }
   }
+}
+
+/** Count persisted uploads at startup, including a file left by a crash. */
+async function storedSize(path: string): Promise<number> {
+  const info = await Deno.lstat(path);
+  if (info.isFile) return info.size;
+  if (!info.isDirectory) return 0;
+  let size = 0;
+  for await (const entry of Deno.readDir(path)) {
+    size += await storedSize(`${path}/${entry.name}`);
+  }
+  return size;
 }
