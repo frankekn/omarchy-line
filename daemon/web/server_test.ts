@@ -291,7 +291,7 @@ Deno.test("static assets revalidate against content after a restart", async () =
   }
 });
 
-Deno.test("API responses stay no-store, including authenticated media", async () => {
+Deno.test("API responses stay no-store; signed-in media is private", async () => {
   const { stateDir, web } = await fixture();
   try {
     const session = await web.handle(get("/api/session", {
@@ -319,7 +319,10 @@ Deno.test("API responses stay no-store, including authenticated media", async ()
       { headers: { cookie, "if-none-match": "*" } },
     ));
     assertEquals(media.status, 200);
-    assertEquals(media.headers.get("cache-control"), "no-store");
+    assertEquals(
+      media.headers.get("cache-control"),
+      "private, max-age=86400",
+    );
     assertEquals(
       media.headers.get("content-security-policy"),
       "default-src 'none'; sandbox",

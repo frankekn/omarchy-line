@@ -164,8 +164,9 @@ subdirectories.
 
 The server snapshots the page's assets and their content-based ETags at
 startup. Restart the web server after editing HTML, CSS or JavaScript; a
-browser reload then revalidates the cached assets. API responses, including
-media, use `Cache-Control: no-store`.
+browser reload then revalidates the cached assets. API responses use
+`Cache-Control: no-store`, except signed-in media from `/api/file`, which the
+browser may keep privately for one day.
 
 To run the page against the stub, without a LINE account:
 

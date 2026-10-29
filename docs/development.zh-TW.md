@@ -138,8 +138,8 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 `app.js` 把它們組起來。伺服器只提供 `public/js/<name>.js` 這一層，不支援子目錄。
 
 伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
-後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應（包括媒體）使用
-`Cache-Control: no-store`。
+後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應使用
+`Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體，瀏覽器可以私下保留一天。
 
 不用 LINE 帳號，接 stub 跑網頁：
 

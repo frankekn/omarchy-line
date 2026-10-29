@@ -263,11 +263,9 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       if (connections.size >= MAX_BRIDGES) return status(503);
       return bridge(req, bridgeDeps);
     }
-    if (get && path === "/api/file") {
-      const response = await serveFile(opts.stateDir, url);
-      response.headers.set("Cache-Control", "no-store");
-      return response;
-    }
+    // Media paths do not change content, so files.ts lets the browser keep
+    // them privately for a day instead of fetching them again on a phone.
+    if (get && path === "/api/file") return serveFile(opts.stateDir, url);
     if (req.method === "POST" && path === "/api/upload") {
       return uploads.receive(req, url);
     }
