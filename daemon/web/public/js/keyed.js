@@ -1,5 +1,16 @@
 // Plan keyed list changes without touching the DOM. Keys must be unique.
 export function planKeyChanges(before, after) {
+  let prefix = 0;
+  while (
+    prefix < before.length && prefix < after.length &&
+    before[prefix] === after[prefix]
+  ) prefix++;
+  if (prefix === before.length) {
+    return { removed: [], added: after.slice(prefix), moved: [] };
+  }
+  if (prefix === after.length) {
+    return { removed: before.slice(prefix), added: [], moved: [] };
+  }
   const positions = new Map(before.map((key, index) => [key, index]));
   const wanted = new Set(after);
   const removed = before.filter((key) => !wanted.has(key));
@@ -44,6 +55,15 @@ export function planKeyChanges(before, after) {
 
 // Removed nodes are disposed by the caller; records hold the current nodes.
 export function placeKeyedNodes(parent, keys, records, changes) {
+  if (
+    !changes.removed.length && !changes.moved.length && changes.added.length &&
+    changes.added.every((key, index) =>
+      key === keys[keys.length - changes.added.length + index]
+    )
+  ) {
+    for (const key of changes.added) parent.append(records.get(key).node);
+    return;
+  }
   const placements = new Set([...changes.added, ...changes.moved]);
   let next = null;
   for (let i = keys.length - 1; i >= 0; i--) {

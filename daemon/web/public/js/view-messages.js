@@ -267,17 +267,20 @@ export function createMessagesView(ctx) {
       renderedAccount = model.account;
     }
     const rows = model.messages.slice();
-    const requestIds = new Set(
-      rows.filter((m) => m.from === model.account && m.requestId).map((m) =>
-        m.requestId
-      ),
-    );
-    for (const pending of pendingFor()) {
-      if (!requestIds.has(pending.requestId)) {
-        rows.push({
-          ...pending,
-          status: pending.status === "sending" ? "uncertain" : pending.status,
-        });
+    const pendingRows = pendingFor();
+    if (pendingRows.length) {
+      const requestIds = new Set(
+        rows.filter((m) => m.from === model.account && m.requestId).map((m) =>
+          m.requestId
+        ),
+      );
+      for (const pending of pendingRows) {
+        if (!requestIds.has(pending.requestId)) {
+          rows.push({
+            ...pending,
+            status: pending.status === "sending" ? "uncertain" : pending.status,
+          });
+        }
       }
     }
     rows.sort(compareMessages);
