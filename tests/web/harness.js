@@ -139,10 +139,9 @@ export async function runSuite(name, suite) {
     dir: stateRoot,
     prefix: `web-${name}-`,
   });
-  // WebKit has no Chromium host-resolver flag. The mapped address reaches
-  // the IPv4 listener while keeping an ordinary non-secure HTTP origin.
-  const host = browserName === "webkit" ? "[::ffff:7f00:1]" : "enil.test";
-  const base = `http://${host}:${port}`;
+  // The mapped address reaches the IPv4 listener, passes the server's Host
+  // check as the same IP, and is not a secure context in either browser.
+  const base = `http://[::ffff:7f00:1]:${port}`;
   const stateDir = `${temp}/enil`;
   const children = [];
   const contexts = [];
@@ -199,7 +198,6 @@ export async function runSuite(name, suite) {
         args: [
           "--no-sandbox",
           "--no-proxy-server",
-          "--host-resolver-rules=MAP enil.test 127.0.0.1",
         ],
       });
     browser = await browserLaunch;

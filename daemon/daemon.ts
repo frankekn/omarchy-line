@@ -87,8 +87,19 @@ async function main() {
 
   await Deno.remove(SOCK_PATH).catch(() => {});
   const listener = Deno.listen({ transport: "unix", path: SOCK_PATH });
+  // A failed accept, such as EMFILE when the web page holds every descriptor,
+  // ends the iteration but not the listener. Unhandled, it would end the
+  // daemon through the rejection guard, so accept again after a pause.
   (async () => {
-    for await (const conn of listener) serve(conn).catch(() => {});
+    for (;;) {
+      try {
+        for await (const conn of listener) serve(conn).catch(() => {});
+        return;
+      } catch (e) {
+        console.error(`[sock] accept failed: ${errorLine(e)}`);
+        await new Promise((r) => setTimeout(r, 1_000));
+      }
+    }
   })();
   console.log(`enil: ${STATE_PATH} + ${SOCK_PATH}`);
   // The web page bridges onto the socket above, so it starts after it.

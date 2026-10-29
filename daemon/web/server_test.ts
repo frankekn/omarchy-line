@@ -3,12 +3,13 @@ import { TextLineStream } from "@std/streams/text-line-stream";
 import { pathToFileURL } from "node:url";
 import { WebAuth } from "./auth.ts";
 import { sniffInline, uploadName, Uploads } from "./files.ts";
-import { createWeb, parseAddr } from "./server.ts";
+import { canonicalHost, createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
 const TEST_PORT = Number(Deno.env.get("ENIL_WEB_TEST_PORT") ?? "0");
+const ADDR = "100.64.0.1:3440";
 
-async function fixture() {
+async function fixture(addr = ADDR) {
   const stateDir = await Deno.makeTempDir({ prefix: "enil-web-" });
   await Deno.mkdir(`${stateDir}/media`, { recursive: true });
   await Deno.writeTextFile(`${stateDir}/storage.json`, '{"secret":1}');
@@ -17,7 +18,7 @@ async function fixture() {
     JSON.stringify({ login: { status: "ok" }, chats: [] }),
   );
   const web = await createWeb({
-    addr: "127.0.0.1:0",
+    addr,
     key: KEY,
     stateDir,
     log: () => {},
@@ -25,19 +26,34 @@ async function fixture() {
   return { stateDir, web };
 }
 
-function get(path: string, init: RequestInit = {}): Request {
-  return new Request(`http://box:3440${path}`, init);
+/** A fixture behind a real listener, configured with the port it got. */
+async function served() {
+  let handle = (_req: Request) =>
+    Promise.resolve(new Response(null, { status: 503 }));
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
+    (req) => handle(req),
+  );
+  const addr = `127.0.0.1:${server.addr.port}`;
+  const { stateDir, web } = await fixture(addr);
+  handle = web.handle;
+  return { stateDir, web, server, addr };
+}
+
+function get(path: string, init: RequestInit = {}, addr = ADDR): Request {
+  return new Request(`http://${addr}${path}`, init);
 }
 
 async function signedInCookie(
   web: Awaited<ReturnType<typeof createWeb>>,
+  addr = ADDR,
 ): Promise<string> {
   const res = await web.handle(
     get("/api/signin", {
       method: "POST",
       body: JSON.stringify({ key: KEY }),
-      headers: { origin: "http://box:3440", host: "box:3440" },
-    }),
+      headers: { origin: `http://${addr}`, host: addr },
+    }, addr),
   );
   assertEquals(res.status, 204);
   const set = res.headers.get("set-cookie") ?? "";
@@ -46,8 +62,8 @@ async function signedInCookie(
 }
 
 Deno.test("parseAddr takes host:port and [v6]:port only", () => {
-  assertEquals(parseAddr("100.1.2.3:3440"), {
-    hostname: "100.1.2.3",
+  assertEquals(parseAddr("100.64.0.1:3440"), {
+    hostname: "100.64.0.1",
     port: 3440,
   });
   assertEquals(parseAddr("[fd7a::1]:80"), { hostname: "fd7a::1", port: 80 });
@@ -105,11 +121,7 @@ Deno.test("wrong keys age out of the cap", async () => {
 });
 
 Deno.test("linked and posted guesses share the cap across connections", async () => {
-  const { stateDir, web } = await fixture();
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
-    (req) => web.handle(req),
-  );
+  const { stateDir, web, server } = await served();
   try {
     const base = `http://127.0.0.1:${server.addr.port}`;
     const guesses = await Promise.all(
@@ -143,7 +155,7 @@ Deno.test("linked and posted guesses share the cap across connections", async ()
 Deno.test("sign-in bounds unauthenticated request bodies and waiters", async () => {
   const stateDir = await Deno.makeTempDir({ prefix: "enil-web-signin-" });
   const web = await createWeb({
-    addr: "127.0.0.1:0",
+    addr: ADDR,
     key: KEY,
     stateDir,
     signinTimeoutMs: 30,
@@ -222,7 +234,7 @@ Deno.test("static assets revalidate against content after a restart", async () =
   await Deno.writeTextFile(`${publicPath}/app.css`, "body { color: red; }");
   await Deno.writeTextFile(`${publicPath}/js/test.js`, "export const n = 1;");
   const options = {
-    addr: "127.0.0.1:0",
+    addr: ADDR,
     key: KEY,
     stateDir,
     publicDir: pathToFileURL(`${publicPath}/`),
@@ -448,7 +460,7 @@ Deno.test("a POST from another origin is refused", async () => {
     const res = await web.handle(get("/api/signin", {
       method: "POST",
       body: JSON.stringify({ key: KEY }),
-      headers: { origin: "https://evil.example", host: "box:3440" },
+      headers: { origin: "https://evil.example", host: "100.64.0.1:3440" },
     }));
     assertEquals(res.status, 403);
   } finally {
@@ -457,15 +469,158 @@ Deno.test("a POST from another origin is refused", async () => {
   }
 });
 
-Deno.test("POST and WebSocket origins include scheme and normalize host case", async () => {
+Deno.test("canonicalHost folds the forms of one address together", () => {
+  assertEquals(canonicalHost("100.64.0.1:3440"), "100.64.0.1:3440");
+  assertEquals(canonicalHost("[::ffff:7f00:1]:3440"), "127.0.0.1:3440");
+  assertEquals(canonicalHost("[::FFFF:127.0.0.1]:3440"), "127.0.0.1:3440");
+  assertEquals(canonicalHost("[FD7A:0::1]:3440"), "[fd7a::1]:3440");
+  assertEquals(canonicalHost("100.64.0.1:80"), "100.64.0.1");
+  assertEquals(canonicalHost("Box:3440"), "box:3440");
+  assertEquals(canonicalHost("evil@100.64.0.1:3440"), null);
+  assertEquals(canonicalHost("100.64.0.1:3440/x"), null);
+  assertEquals(canonicalHost("100.64.0.1:99999"), null);
+});
+
+Deno.test("only the configured Host reaches any route", async () => {
+  const { stateDir, web } = await fixture("127.0.0.1:3440");
+  try {
+    for (const host of ["127.0.0.1:3440", "[::ffff:7f00:1]:3440"]) {
+      const page = await web.handle(
+        get("/", { headers: { host } }, "127.0.0.1:3440"),
+      );
+      assertEquals(page.status, 200, host);
+      await page.body?.cancel();
+    }
+    const cookie = await signedInCookie(web, "127.0.0.1:3440");
+    for (const host of ["localhost:3440", "127.0.0.1:3441", "[::1]:3440"]) {
+      for (
+        const [method, path] of [
+          ["GET", "/"],
+          ["GET", "/app.css"],
+          ["GET", "/js/app.js"],
+          ["GET", "/api/session"],
+          ["GET", "/api/file?path=/x"],
+          ["GET", "/api/ws"],
+          ["POST", "/api/signout"],
+        ]
+      ) {
+        const res = await web.handle(
+          new Request(`http://${host}${path}`, {
+            method,
+            headers: {
+              host,
+              cookie,
+              origin: `http://${host}`,
+              upgrade: "websocket",
+            },
+          }),
+        );
+        assertEquals(res.status, 421, `${host} ${method} ${path}`);
+      }
+    }
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("a rebound or cross-site sign-in cannot lock out the key", async () => {
   const { stateDir, web } = await fixture();
   try {
-    const cookie = await signedInCookie(web);
+    const rebound = "rebind.example:3440";
+    for (let i = 0; i < 12; i++) {
+      const headers = { host: rebound, origin: `http://${rebound}` };
+      const link = await web.handle(
+        new Request(`http://${rebound}/?key=wrong`, { headers }),
+      );
+      const post = await web.handle(
+        new Request(`http://${rebound}/api/signin`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ key: "wrong" }),
+        }),
+      );
+      assertEquals([link.status, post.status], [421, 421]);
+    }
+    for (const site of ["cross-site", "same-site"]) {
+      for (let i = 0; i < 12; i++) {
+        const link = await web.handle(get("/?key=wrong", {
+          headers: { "sec-fetch-site": site },
+        }));
+        const post = await web.handle(get("/api/signin", {
+          method: "POST",
+          headers: { "sec-fetch-site": site },
+          body: JSON.stringify({ key: "wrong" }),
+        }));
+        assertEquals([link.status, post.status], [403, 403], site);
+      }
+      const right = await web.handle(get(`/?key=${KEY}`, {
+        headers: { "sec-fetch-site": site },
+      }));
+      assertEquals(right.status, 403, site);
+    }
+    for (const site of ["none", "same-origin"]) {
+      const link = await web.handle(get(`/?key=${KEY}`, {
+        headers: { "sec-fetch-site": site },
+      }));
+      assertEquals(link.status, 303, site);
+    }
+    const viaLink = await web.handle(get(`/?key=${KEY}`));
+    assertEquals(viaLink.status, 303);
+    assert((await signedInCookie(web)).startsWith("enil_web="));
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("a served request names its Host on the wire", async () => {
+  const { stateDir, web, server, addr } = await served();
+  try {
+    const exchange = async (host: string) => {
+      const conn = await Deno.connect({
+        hostname: "127.0.0.1",
+        port: server.addr.port,
+      });
+      try {
+        await conn.write(new TextEncoder().encode(
+          `GET /?key=wrong HTTP/1.1\r\nHost: ${host}\r\n` +
+            "Connection: close\r\n\r\n",
+        ));
+        const bytes = new Uint8Array(4096);
+        const size = await conn.read(bytes);
+        return new TextDecoder().decode(bytes.subarray(0, size ?? 0));
+      } finally {
+        conn.close();
+      }
+    };
+    for (let i = 0; i < 12; i++) {
+      assert((await exchange(`rebind.example:${server.addr.port}`))
+        .startsWith("HTTP/1.1 421"));
+    }
+    assert((await exchange(addr)).startsWith("HTTP/1.1 401"));
+    const right = await fetch(`http://${addr}/?key=${KEY}`, {
+      redirect: "manual",
+    });
+    await right.body?.cancel();
+    assertEquals(right.status, 303);
+  } finally {
+    web.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("POST and WebSocket origins include scheme and normalize host case", async () => {
+  const addr = "box:3440";
+  const { stateDir, web } = await fixture(addr);
+  try {
+    const cookie = await signedInCookie(web, addr);
     for (
       const [origin, host, expected] of [
         ["null", "box:3440", 403],
         ["https://box:3440", "box:3440", 403],
-        ["http://evil:3440", "evil:3440", 403],
+        ["http://evil:3440", "evil:3440", 421],
         ["http://BOX:3440", "BOX:3440", 204],
       ] as const
     ) {
@@ -473,23 +628,23 @@ Deno.test("POST and WebSocket origins include scheme and normalize host case", a
       const post = await web.handle(get("/api/signout", {
         method: "POST",
         headers,
-      }));
-      const ws = await web.handle(get("/api/ws", { headers }));
+      }, addr));
+      const ws = await web.handle(get("/api/ws", { headers }, addr));
       assertEquals(post.status, expected);
-      assertEquals(ws.status, expected === 204 ? 400 : 403);
+      assertEquals(ws.status, expected === 204 ? 400 : expected);
     }
     const withoutOrigin = { cookie, host: "box:3440" };
     assertEquals(
       (await web.handle(get("/api/signout", {
         method: "POST",
         headers: withoutOrigin,
-      }))).status,
+      }, addr))).status,
       204,
     );
     assertEquals(
       (await web.handle(get("/api/ws", {
         headers: withoutOrigin,
-      }))).status,
+      }, addr))).status,
       400,
     );
   } finally {
@@ -700,7 +855,7 @@ Deno.test("idle uploads time out and closing cancels active uploads", async () =
 });
 
 Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask", async () => {
-  const { stateDir, web } = await fixture();
+  const { stateDir, web, server, addr } = await served();
   const seen: string[] = [];
   let daemonClosed = false;
   const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
@@ -724,19 +879,15 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
       })().catch(() => {});
     }
   })().catch(() => {});
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
-    (req) => web.handle(req),
-  );
   try {
-    const cookie = await signedInCookie(web);
+    const cookie = await signedInCookie(web, addr);
     const port = server.addr.port;
     const upload = await web.handle(
       get("/api/upload?name=a.txt", {
         method: "POST",
         body: "hello",
         headers: { cookie },
-      }),
+      }, addr),
     );
     const { path } = await upload.json();
     assert(path.startsWith(await Deno.realPath(`${stateDir}/media`)));
@@ -809,19 +960,15 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
 });
 
 Deno.test("the bridge caps concurrent daemon connections and frees slots", async () => {
-  const { stateDir, web } = await fixture();
+  const { stateDir, web, server, addr } = await served();
   const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
   const peers: Deno.UnixConn[] = [];
   const accept = (async () => {
     for await (const conn of daemon) peers.push(conn);
   })().catch(() => {});
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
-    (req) => web.handle(req),
-  );
   const sockets: WebSocket[] = [];
   try {
-    const cookie = await signedInCookie(web);
+    const cookie = await signedInCookie(web, addr);
     const port = server.addr.port;
     const open = async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
@@ -871,19 +1018,15 @@ Deno.test("the bridge caps concurrent daemon connections and frees slots", async
 });
 
 Deno.test("the bridge bounds frames and the queue behind a slow daemon", async () => {
-  const { stateDir, web } = await fixture();
+  const { stateDir, web, server, addr } = await served();
   const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
   const peers: Deno.UnixConn[] = [];
   const accept = (async () => {
     for await (const conn of daemon) peers.push(conn);
   })().catch(() => {});
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
-    (req) => web.handle(req),
-  );
   const sockets: WebSocket[] = [];
   try {
-    const cookie = await signedInCookie(web);
+    const cookie = await signedInCookie(web, addr);
     const port = server.addr.port;
     const open = async () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
@@ -943,20 +1086,16 @@ Deno.test("the bridge bounds frames and the queue behind a slow daemon", async (
 });
 
 Deno.test("duplicate request IDs cannot release an upload on another reply", async () => {
-  const { stateDir, web } = await fixture();
+  const { stateDir, web, server, addr } = await served();
   const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
-  const server = Deno.serve(
-    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
-    (req) => web.handle(req),
-  );
   let peer: Deno.UnixConn | undefined;
   try {
-    const cookie = await signedInCookie(web);
+    const cookie = await signedInCookie(web, addr);
     const upload = await web.handle(get("/api/upload?name=test", {
       method: "POST",
       headers: { cookie },
       body: "hello",
-    }));
+    }, addr));
     const { path } = await upload.json();
     const port = server.addr.port;
     const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {

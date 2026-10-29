@@ -22,6 +22,9 @@ Restart=always
 # session token, decrypted media, the event ring.
 UMask=0077
 RestartSec=5
+# Each idle web connection holds a descriptor. A higher cap than the usual
+# 1024 makes running out harder; the web server survives it either way.
+LimitNOFILE=8192
 
 [Install]
 WantedBy=default.target

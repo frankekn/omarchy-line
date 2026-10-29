@@ -17,7 +17,10 @@
  *   GET  /api/file         media cache and login QR (files.ts)
  *   POST /api/upload       a file for sendFile (files.ts)
  * Everything under /api except session and signin needs the cookie, and any
- * POST or WebSocket from another origin is refused.
+ * POST or WebSocket from another origin is refused. A request whose Host is
+ * not ENIL_WEB_ADDR is refused before routing, so a rebound DNS name cannot
+ * reach the page, and a sign-in another site started is refused before it
+ * can count against the key.
  *
  * Runs inside the daemon (daemon.ts calls startWeb) or alone against a
  * running daemon or stub.py: `deno run -A web/server.ts`.
@@ -55,7 +58,7 @@ export interface WebHandler {
   close(): void;
 }
 
-/** "100.1.2.3:3440" or "[fd7a::1]:3440" into Deno.serve's hostname/port. */
+/** "100.64.0.1:3440" or "[fd7a::1]:3440" into Deno.serve's hostname/port. */
 export function parseAddr(
   addr: string,
 ): { hostname: string; port: number } | null {
@@ -65,6 +68,40 @@ export function parseAddr(
   const port = Number(m[2]);
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
   return { hostname: m[1], port };
+}
+
+/**
+ * A Host value as a browser would send it for the same address, or null.
+ * The URL parser settles case, the default port and numeric IPv4 forms; an
+ * IPv4-mapped IPv6 literal is the same IPv4 listener, so it folds to IPv4.
+ */
+export function canonicalHost(host: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(`http://${host}`);
+  } catch {
+    return null;
+  }
+  if (
+    url.username || url.password || url.pathname !== "/" || url.search ||
+    url.hash
+  ) return null;
+  const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(
+    url.hostname,
+  );
+  if (!mapped) return url.host;
+  const [high, low] = [parseInt(mapped[1], 16), parseInt(mapped[2], 16)];
+  const ipv4 = [high >> 8, high & 255, low >> 8, low & 255].join(".");
+  return url.port ? `${ipv4}:${url.port}` : ipv4;
+}
+
+/**
+ * A browser marks a request another site started. Such a sign-in is not the
+ * user's, and must not spend the wrong-key cap that locks the user out.
+ */
+function crossSite(req: Request): boolean {
+  const site = req.headers.get("sec-fetch-site");
+  return site === "cross-site" || site === "same-site";
 }
 
 interface Asset {
@@ -194,6 +231,7 @@ async function signinBody(
 export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const log = opts.log ?? ((line: string) => console.log(line));
   const publicDir = opts.publicDir ?? new URL("./public/", import.meta.url);
+  const ownHost = canonicalHost(opts.addr);
   const assets = await loadAssets(publicDir);
   const auth = await WebAuth.create(opts.key);
   const uploads = await Uploads.open(opts.stateDir);
@@ -212,6 +250,10 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   async function handle(req: Request): Promise<Response> {
     if (closed) return status(503);
     const url = new URL(req.url);
+    const host = req.headers.get("host") ?? url.host;
+    if (ownHost === null || canonicalHost(host) !== ownHost) {
+      return status(421);
+    }
     const path = url.pathname;
     const get = req.method === "GET";
     if (!get && !originAllowed(req)) return status(403);
@@ -219,6 +261,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
     if (get && path === "/") {
       const given = url.searchParams.get("key");
       if (given === null) return serveAsset(assets, "/index.html", req);
+      if (crossSite(req)) return status(403, "open the sign-in link directly");
       const result = auth.signin(given);
       if (result === "blocked") return status(429);
       return result === "ok"
@@ -230,6 +273,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       return json({ signedIn: auth.signedIn(req) });
     }
     if (req.method === "POST" && path === "/api/signin") {
+      if (crossSite(req)) return status(403);
       if (signinPending >= MAX_SIGNIN_PENDING) return status(503);
       signinPending++;
       let body: { value?: unknown; error?: number };
@@ -312,9 +356,12 @@ export async function startWeb(opts: WebOptions): Promise<void> {
   const host = where.hostname.includes(":")
     ? `[${where.hostname}]`
     : where.hostname;
+  // A failed accept, such as EMFILE when descriptors run out, ends the
+  // listener and rejects `finished`. Unhandled, that rejection would end the
+  // daemon; handled without a new serve, the page would stay down.
   for (;;) {
     try {
-      Deno.serve({
+      const server = Deno.serve({
         hostname: where.hostname,
         port: where.port,
         onListen: () =>
@@ -324,10 +371,11 @@ export async function startWeb(opts: WebOptions): Promise<void> {
           return status(500);
         },
       }, (req) => web.handle(req));
+      await server.finished;
       return;
     } catch (e) {
       console.error(
-        `[web] cannot listen on ${opts.addr} (${
+        `[web] cannot serve ${opts.addr} (${
           e instanceof Error ? e.message : String(e)
         }); retrying in ${BIND_RETRY_MS / 1000}s`,
       );

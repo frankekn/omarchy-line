@@ -11,7 +11,7 @@ const daemonDir = `${root}daemon`;
 const port = Number(Deno.env.get("ENIL_WEB_TEST_PORT") ?? "18470");
 const stateRoot = Deno.env.get("ENIL_WEB_TEST_TMPDIR");
 const key = "loadperf-key-0123456789";
-const base = `http://enil.test:${port}`;
+const base = `http://[::ffff:7f00:1]:${port}`;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -141,7 +141,7 @@ async function measure(page, cdp, latency, cache) {
     if (row) row.bytes = encodedDataLength;
   };
   const onSocket = ({ requestId, url }) => {
-    if (url === `ws://enil.test:${port}/api/ws`) socketId = requestId;
+    if (url === `ws://[::ffff:7f00:1]:${port}/api/ws`) socketId = requestId;
   };
   const onHandshake = ({ requestId, timestamp }) => {
     if (requestId === socketId) socketAt = timestamp;
@@ -387,7 +387,6 @@ try {
     args: [
       "--no-sandbox",
       "--no-proxy-server",
-      "--host-resolver-rules=MAP enil.test 127.0.0.1",
     ],
   });
   const watchDisplay = (context) =>
@@ -446,8 +445,7 @@ try {
     await context.addCookies([{
       name: cookie[0],
       value: cookie[1],
-      domain: "enil.test",
-      path: "/",
+      url: base,
       httpOnly: true,
       sameSite: "Strict",
     }]);

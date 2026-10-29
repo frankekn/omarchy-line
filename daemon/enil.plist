@@ -44,6 +44,17 @@
   <!-- 0077: the session token and decrypted media are the user's alone. -->
   <key>Umask</key>
   <integer>63</integer>
+  <!-- Like the systemd unit's LimitNOFILE; each web connection holds one. -->
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>8192</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>8192</integer>
+  </dict>
   <key>StandardOutPath</key>
   <string>@HOME@/Library/Logs/enil/enil.log</string>
   <key>StandardErrorPath</key>

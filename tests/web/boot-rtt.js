@@ -3,7 +3,6 @@
 import { assert, KEY, runSuite, until } from "./harness.js";
 
 await runSuite("boot-rtt", async (h) => {
-  const loopback = h.base.replace("enil.test", "127.0.0.1");
   async function withBootstrapPage(context, run) {
     const page = await context.newPage();
     try {
@@ -210,7 +209,7 @@ await runSuite("boot-rtt", async (h) => {
   } finally {
     connection.close();
   }
-  const unsigned = await fetch(`${loopback}/api/session`, {
+  const unsigned = await fetch(`${h.base}/api/session`, {
     headers: { Cookie: "enil_web=expired-or-rotated-cookie" },
   });
   assert.deepEqual(await unsigned.json(), { signedIn: false });
