@@ -34,9 +34,6 @@ export function createConnection(
     errorMessage = () => "Request failed",
   },
 ) {
-  // A page left open across a server downgrade can retry without the newer
-  // subprotocol when the handshake never yields a frame.
-  let tryLegacy = false;
   function command(cmd, args = {}) {
     return new Promise((resolve, reject) => {
       if (
@@ -46,7 +43,10 @@ export function createConnection(
         return;
       }
       const id = ++model.requestNumber;
-      model.requests.set(id, { resolve, reject });
+      // onReady reloads the active chat's first page after a reconnect.
+      const reloadOnResync = cmd === "history" && !("before" in args) &&
+        String(args.chat || "") === model.active;
+      model.requests.set(id, { resolve, reject, reloadOnResync });
       try {
         model.socket.send(JSON.stringify({ id, cmd, ...args }));
       } catch {
@@ -55,16 +55,24 @@ export function createConnection(
       }
     });
   }
-  function connect() {
+  function rejectPending(resync = false) {
+    for (const request of model.requests.values()) {
+      request.reject(
+        Object.assign(new Error(offlineMessage()), {
+          ambiguous: true,
+          ...(resync && request.reloadOnResync ? { resync: true } : {}),
+        }),
+      );
+    }
+    model.requests.clear();
+  }
+  function connect(quiet = false) {
     if (!model.signedIn) return;
     cancel(model.retryTimer);
-    onStatus(model.everConnected ? "reconnecting" : "connecting");
-    const negotiated = !tryLegacy;
-    const socket = negotiated
-      ? new WebSocketClass(url, "enil-state-delta-v1")
-      : new WebSocketClass(url);
+    if (!quiet) onStatus(model.everConnected ? "reconnecting" : "connecting");
+    const socket = new WebSocketClass(url, "enil-state-delta-v1");
     const decodeState = makeStateDecoder();
-    let gotFrame = false;
+    let gotFrame = false, resyncing = quiet;
     model.socket = socket;
     const reconnect = model.everConnected;
     socket.addEventListener("message", (event) => {
@@ -78,13 +86,25 @@ export function createConnection(
       if (!frame || typeof frame !== "object") return;
       const decoded = decodeState(frame);
       if (decoded.resync) {
+        // One immediate, quiet reconnect recovers the missing snapshot. If
+        // that connection also desynchronizes, use ordinary backoff.
+        if (resyncing) {
+          socket.close();
+          return;
+        }
+        // Keep the visible status while the new socket connects. Commands
+        // still check its readyState; a failed reconnect goes offline normally.
+        model.socket = null;
+        rejectPending(true);
         socket.close();
+        connect(true);
         return;
       }
       if (!decoded.frame) return;
       frame = decoded.frame;
+      const firstFrame = !gotFrame;
       gotFrame = true;
-      const firstFrame = !model.connected;
+      if (frame.web === "state") resyncing = false;
       if (firstFrame) {
         model.connected = true;
         model.everConnected = true;
@@ -105,14 +125,8 @@ export function createConnection(
     });
     socket.addEventListener("close", () => {
       if (model.socket !== socket) return;
-      tryLegacy = !gotFrame && negotiated;
       model.connected = false;
-      for (const request of model.requests.values()) {
-        request.reject(
-          Object.assign(new Error(offlineMessage()), { ambiguous: true }),
-        );
-      }
-      model.requests.clear();
+      rejectPending();
       onStatus("reconnecting");
       if (model.signedIn) {
         model.retryTimer = schedule(connect, model.retryDelay);

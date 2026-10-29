@@ -139,6 +139,9 @@ export class StateFeed {
   async add(send: Send, delta = false): Promise<void> {
     this.#subscribers.set(send, { delta, initialized: false });
     await this.#poll();
+    // The shared poll may have passed its send loop before this add. A
+    // missing or invalid file clears the key, so stale text is not sent.
+    if (this.#text && this.#fileKey) this.#sendInitial();
   }
 
   delete(send: Send): void {
@@ -189,6 +192,7 @@ export class StateFeed {
     try {
       state = JSON.parse(text);
     } catch {
+      this.#fileKey = "";
       return; // gone or mid-write: the next poll sees it
     }
     this.#fileKey = key;

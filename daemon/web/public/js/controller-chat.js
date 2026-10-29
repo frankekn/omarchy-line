@@ -155,7 +155,7 @@ export function createChatController(ctx) {
       if (generation === model.historyGeneration && model.active === chat) {
         replayHistoryEvents();
         model.historyEvents = [];
-        ctx.displayError(error);
+        if (!error?.resync) ctx.displayError(error);
       }
     } finally {
       if (generation === model.historyGeneration && model.active === chat) {

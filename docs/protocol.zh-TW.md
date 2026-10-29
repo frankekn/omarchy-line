@@ -223,13 +223,13 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
   完整快照幀小於 20 KiB、帳號或 boot 變更、清單不相容，或 patch 沒有比較小時，
   bridge 會改送完整快照。時間戳記（包括心跳）仍留在 `state` 中。
 
-沒有該子協定時，bridge 只送完整的 `{ "web": "state", "state": … }` 快照。
-網頁無法用子協定連線時，會改用沒有子協定的連線重試，因此 server 降版時保持開啟的
-網頁仍能使用舊版 bridge。
+沒有該子協定時，bridge 只送完整的 `{ "web": "state", "state": … }` 快照，
+供已開啟的舊版網頁使用。
 
 `generation` 識別共用 feed，`version` 隨每次偵測到的變更遞增。網頁將快照與即時
-聊天推播分開保存，忽略舊幀；delta 的 base 或 generation 缺失或不相容時會重新連線，
-取得完整快照。daemon 的 `bootId` 與 `chatsRevision` 仍決定快照能否取代較新的聊天
+聊天推播分開保存，忽略舊幀；delta 的 base 或 generation 缺失或不相容時會立即重新
+連線，取得完整快照。該連線失敗時套用一般重連退避。daemon 的 `bootId` 與
+`chatsRevision` 仍決定快照能否取代較新的聊天
 推播。連線時 bridge 也會送出存在的 `{ "web": "events", "events": … }`。
 指令的 `id` 必須是安全整數或最多 128 個 UTF-16 code unit 的字串；重複使用尚未
 完成的 id，或超過 256 筆未完成指令，會關閉連線。這個用來對應回覆的 `id` 和下方

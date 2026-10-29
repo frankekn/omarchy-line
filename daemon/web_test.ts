@@ -1,5 +1,5 @@
 // State snapshots and their recovery across the web bridge.
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertRejects } from "@std/assert";
 import { StateFeed } from "./web/bridge.ts";
 import { makeStateDecoder } from "./web/public/js/state-wire.js";
 import { applyChatPush, applyChatState } from "./web/public/js/protocol.js";
@@ -139,33 +139,38 @@ Deno.test("state feed sends patches, falls back to full and seeds late pages", a
   }
 });
 
-Deno.test("a rejected subprotocol retries the older bridge and upgrades on reconnect", () => {
-  class Socket extends EventTarget {
-    static OPEN = 1;
-    static instances: Socket[] = [];
-    readyState = 1;
-    constructor(_url: string, readonly protocol?: string | string[]) {
-      super();
-      Socket.instances.push(this);
-    }
-    send(_data: string | ArrayBufferLike | Blob | ArrayBufferView): void {}
-    close(): void {
-      this.readyState = 3;
-      this.dispatchEvent(new Event("close"));
-    }
-    receive(data: object): void {
-      this.dispatchEvent(
-        new MessageEvent("message", { data: JSON.stringify(data) }),
-      );
-    }
+class Socket extends EventTarget {
+  static OPEN = 1;
+  static instances: Socket[] = [];
+  readyState = 0;
+  constructor(_url: string, readonly protocol?: string | string[]) {
+    super();
+    Socket.instances.push(this);
   }
+  send(_data: string | ArrayBufferLike | Blob | ArrayBufferView): void {}
+  close(): void {
+    this.readyState = 3;
+    this.dispatchEvent(new Event("close"));
+  }
+  receive(data: object): void {
+    this.readyState = 1;
+    this.dispatchEvent(
+      new MessageEvent("message", { data: JSON.stringify(data) }),
+    );
+  }
+}
+
+Deno.test("failed connections always retry the state delta subprotocol", () => {
+  Socket.instances = [];
   const model = createModel(), callbacks: (() => void)[] = [];
+  const delays: number[] = [];
   const connection = createConnection({
     model,
     url: "ws://test",
     WebSocketClass: Socket,
-    schedule: (callback: () => void) => {
+    schedule: (callback: () => void, delay: number) => {
       callbacks.push(callback);
+      delays.push(delay);
       return callbacks.length;
     },
     cancel: () => {},
@@ -174,13 +179,104 @@ Deno.test("a rejected subprotocol retries the older bridge and upgrades on recon
   assertEquals(Socket.instances[0].protocol, "enil-state-delta-v1");
   Socket.instances[0].close();
   callbacks.shift()?.();
-  assertEquals(Socket.instances[1].protocol, undefined);
-  Socket.instances[1].receive({ web: "state", state: {} });
-  assertEquals(model.connected, true);
+  assertEquals(Socket.instances[1].protocol, "enil-state-delta-v1");
   Socket.instances[1].close();
   callbacks.shift()?.();
   assertEquals(Socket.instances[2].protocol, "enil-state-delta-v1");
+  assertEquals(delays, [1000, 2000]);
   connection.stop();
+});
+
+Deno.test("a bad delta reconnects immediately without a false offline status", async () => {
+  Socket.instances = [];
+  const model = createModel(), statuses: string[] = [], delays: number[] = [];
+  let ready = 0;
+  const connection = createConnection({
+    model,
+    url: "ws://test",
+    WebSocketClass: Socket,
+    schedule: (_callback: () => void, delay: number) => {
+      delays.push(delay);
+      return delays.length;
+    },
+    cancel: () => {},
+    onStatus: (status: string) => statuses.push(status),
+    onReady: () => ready++,
+  });
+  connection.start();
+  const full = {
+    web: "state",
+    generation: "g",
+    version: 1,
+    state: largeState(),
+  };
+  Socket.instances[0].receive(full);
+  model.active = "chat-a";
+  const outstanding = connection.command("send", { text: "pending" });
+  const rejected = assertRejects(() => outstanding, Error);
+  const history = connection.command("history", { chat: "chat-a" });
+  const historyRejected = assertRejects(() => history, Error);
+  const older = connection.command("history", { chat: "chat-a", before: "1" });
+  const olderRejected = assertRejects(() => older, Error);
+  const gap = {
+    web: "state-delta",
+    generation: "g",
+    base: 2,
+    version: 3,
+    state: {},
+    remove: [],
+    put: [],
+  };
+  Socket.instances[0].receive(gap);
+  assertEquals(Socket.instances.length, 2);
+  assertEquals(Socket.instances[1].protocol, "enil-state-delta-v1");
+  assertEquals(model.connected, true);
+  assertEquals(statuses, ["connecting", "connected"]);
+  assertEquals(delays, []);
+  const error = await rejected;
+  assertEquals((error as Error & { ambiguous?: boolean }).ambiguous, true);
+  const historyError = await historyRejected;
+  assertEquals((historyError as Error & { resync?: boolean }).resync, true);
+  const olderError = await olderRejected;
+  assertEquals((olderError as Error & { resync?: boolean }).resync, undefined);
+  const unsent = await assertRejects(() => connection.command("sync"), Error);
+  assertEquals((unsent as Error & { unsent?: boolean }).unsent, true);
+  Socket.instances[1].receive(full);
+  assertEquals(ready, 1);
+  assertEquals(statuses.includes("reconnecting"), false);
+
+  // Repeated invalid snapshots must return to ordinary backoff, not spin.
+  Socket.instances[1].receive(gap);
+  assertEquals(Socket.instances.length, 3);
+  Socket.instances[2].receive(gap);
+  assertEquals(statuses.at(-1), "reconnecting");
+  assertEquals(delays, [1000]);
+  assertEquals(model.connected, false);
+  connection.stop();
+});
+
+Deno.test("a subscriber added after a poll's send loop gets its snapshot before add resolves", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "state-wire-poll-race-" });
+  const path = `${dir}/state.json`;
+  await Deno.writeTextFile(path, JSON.stringify(largeState()));
+  const feed = new StateFeed(path), late: string[] = [];
+  let second: Promise<void> | undefined;
+  try {
+    await feed.add(() => {
+      // This microtask runs after #read's subscriber loop, but before the
+      // in-flight #poll promise settles and clears itself.
+      queueMicrotask(() =>
+        second = feed.add((frame) => late.push(frame), true)
+      );
+    }, true);
+    assert(second);
+    await second;
+    assertEquals(late.length, 1);
+    assertEquals(JSON.parse(late[0]).web, "state");
+  } finally {
+    feed.close();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("reconnecting pages receive the current account before any delta", async () => {
@@ -225,13 +321,26 @@ Deno.test("reconnecting pages receive the current account before any delta", asy
     feed.delete(second);
     await Deno.remove(path);
     const waiting: string[] = [];
-    await feed.add((frame) => waiting.push(frame), true);
+    const waitingSend = (frame: string) => waiting.push(frame);
+    await feed.add(waitingSend, true);
     assertEquals(waiting, []);
     const next = { ...switched, me: { mid: "account-c" }, chatsRevision: 3 };
     await write(next);
     await until(() => waiting.length === 1);
     assertEquals(JSON.parse(waiting[0]).web, "state");
     assertEquals(JSON.parse(waiting[0]).state, next);
+
+    // An invalid replacement must not seed a subscriber from the old cache.
+    feed.delete(waitingSend);
+    await Deno.writeTextFile(`${path}.tmp`, "{");
+    await Deno.rename(`${path}.tmp`, path);
+    const invalid: string[] = [];
+    await feed.add((frame) => invalid.push(frame), true);
+    assertEquals(invalid, []);
+    const restored = { ...next, me: { mid: "account-d" }, chatsRevision: 4 };
+    await write(restored);
+    await until(() => invalid.length === 1);
+    assertEquals(JSON.parse(invalid[0]).state, restored);
   } finally {
     feed.close();
     await Deno.remove(dir, { recursive: true });

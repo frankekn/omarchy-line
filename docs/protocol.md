@@ -264,14 +264,13 @@ connected; intermediate writes can be skipped. A browser offers the
   remain in `state`.
 
 Without that subprotocol, the bridge sends only complete
-`{ "web": "state", "state": … }` snapshots. A page that cannot connect
-with the subprotocol retries without it, so a page left open across a server
-downgrade can still use an older bridge.
+`{ "web": "state", "state": … }` snapshots for older open pages.
 
 `generation` identifies the shared feed and `version` advances with each
 observed change. A page keeps its own snapshot separately from live chat
-pushes, ignores old frames, and reconnects for a fresh snapshot if a delta's
-base or generation is missing or incompatible. The daemon's `bootId` and
+pushes, ignores old frames, and reconnects immediately for a fresh snapshot if
+a delta's base or generation is missing or incompatible. If that connection
+fails, ordinary reconnect backoff applies. The daemon's `bootId` and
 `chatsRevision` still decide whether a snapshot can replace a newer live
 chat push. The bridge also sends `{ "web": "events", "events": … }` on
 connection when present. A command's `id` must be a safe integer or a string
