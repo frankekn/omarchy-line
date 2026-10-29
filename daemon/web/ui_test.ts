@@ -751,6 +751,20 @@ Deno.test("drafts and pending sends remain isolated by account and chat", () => 
   assertEquals(restored.pendingFor("one", "a"), []);
   assertEquals(restored.chatDraft("b", "one").text, "other");
 });
+Deno.test("retained files are released with their pending rows or account", () => {
+  const model = createModel(),
+    store = createDraftStore(model, new MemoryStorage());
+  model.files.set("a1", new File(["a"], "a.txt"));
+  model.files.set("a2", new File(["a"], "b.txt"));
+  model.files.set("b1", new File(["b"], "c.txt"));
+  store.writePending("one", [{ requestId: "a1" }, { requestId: "a2" }], "a");
+  store.writePending("one", [{ requestId: "b1" }], "b");
+  store.writePending("one", [{ requestId: "a2" }], "a");
+  assertEquals([...model.files.keys()].sort(), ["a2", "b1"]);
+  store.clearLastAccount("a");
+  assertEquals([...model.files.keys()], ["b1"]);
+  assertEquals(store.pendingFor("one", "b"), [{ requestId: "b1" }]);
+});
 class FakeSocket extends EventTarget {
   static OPEN = 1;
   static instances: FakeSocket[] = [];

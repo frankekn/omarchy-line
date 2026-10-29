@@ -55,6 +55,12 @@ export function createDraftStore(
   function writePending(chat, rows, account = model.account) {
     const draft = chatDraft(account, chat);
     if (!draft) return;
+    const kept = new Set(rows.map((row) => row.requestId));
+    for (const old of Array.isArray(draft.pending) ? draft.pending : []) {
+      if (old?.requestId && !kept.has(old.requestId)) {
+        model.files.delete(old.requestId);
+      }
+    }
     draft.pending = rows;
     saveStorage();
   }
@@ -80,6 +86,11 @@ export function createDraftStore(
       account ||= storage.getItem(lastKey) || "";
     } catch { /* no durable account */ }
     if (account && model.drafts[account]) {
+      for (const chat of Object.keys(model.drafts[account])) {
+        for (const row of pendingFor(chat, account)) {
+          if (row?.requestId) model.files.delete(row.requestId);
+        }
+      }
       delete model.drafts[account];
       saveStorage();
     }
