@@ -991,12 +991,28 @@ function inspectContext(sources: ContextSource[]): ContextContract {
       const match of source.text.matchAll(/\bctx\.((?!\$\{)[A-Za-z_$][\w$]*)/g)
     ) names.add(match[1]);
     references.set(source.name, names);
+    // Factory bodies may only use ctx.name; reject bare ctx conservatively,
+    // including in comments and strings, so aliases cannot evade the scan.
+    let checked = "";
+    if (source.name === "app.js") {
+      checked = source.text
+        .replace(/\blet\s+ctx\s*=\s*assembling\s*;/g, "")
+        .replace(/\bctx\s*=\s*finish\(\s*\)\s*;/g, "")
+        .replace(
+          /(\bprovide\(\s*["'][^"']+["']\s*,\s*create\w+\(\s*)ctx(?=\s*\))/g,
+          "$1",
+        );
+    } else if (
+      /\bexport\s+function\s+create\w+\s*\(\s*ctx\s*\)/.test(source.text)
+    ) {
+      checked = source.text.replace(
+        /\bexport\s+function\s+create\w+\s*\(\s*ctx\s*\)/g,
+        "",
+      );
+    }
     if (
-      /\bctx\s*(?:\[|\?\.)/.test(source.text) ||
-      /(?:^|[^\w$.])\(\s*ctx\s*\)/m.test(source.text) ||
-      /\b(?:const|let|var)\s*(?:\{[^}]*\}|\[[^\]]*\]|[A-Za-z_$][\w$]*)\s*=\s*ctx\b(?!\s*\.)/m
-        .test(source.text) ||
-      /\b[A-Za-z_$][\w$]*\s*=\s*ctx\b(?!\s*\.)/m.test(source.text)
+      /\bctx\b(?!\.)/.test(checked) ||
+      /\bctx\s*(?:\[|\?\.)/.test(source.text)
     ) {
       invalid.push(`${source.name}: untracked ctx access`);
     }
@@ -1156,6 +1172,9 @@ Deno.test("context inspection rejects parenthesized access and aliases", () => {
       'ctx["missing"]();',
       "const alias = ctx || {}; alias.missing();",
       "let alias; alias = ctx; alias.missing();",
+      "const alias = flag ? ctx : {}; alias.missing();",
+      "const box = { target: ctx }; box.target.missing();",
+      "consume(42, ctx);",
     ]
   ) {
     const result = inspectContext([{
@@ -1172,6 +1191,12 @@ Deno.test("context inspection rejects parenthesized access and aliases", () => {
       `untracked expression accepted: ${statement}`,
     );
   }
+  const assembly = inspectContext([{
+    name: "app.js",
+    text:
+      'provide("app", { model });\nconst box = { target: ctx };\nbox.target.missing();',
+  }]);
+  assert(assembly.invalid.includes("app.js: untracked ctx access"));
 });
 
 Deno.test("registry rejects collisions and unknown reads and freezes context", () => {
