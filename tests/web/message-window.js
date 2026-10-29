@@ -406,28 +406,36 @@ export async function messageWindow(h) {
   const deferred = await page.evaluate(({ chat, now }) => {
     const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
     const list = document.getElementById("messages");
+    const edited = {
+      ...model.messages[1250],
+      text: "History edit during trim",
+    };
     ctx.onFrame({
       boot: model.boot,
       event: {
         seq: model.seq + 1,
-        kind: "message",
+        kind: "history",
         chat,
-        message: {
+        messages: [edited, {
           id: "10001300",
           chat,
           from: model.account,
           time: now + 1300 * 3_600_000,
           contentType: "NONE",
           text: "Deferred trim message",
-        },
+        }],
       },
     });
     const beforeScroll = model.messages.length;
+    const text = document.querySelector(
+      'article[data-message-id="10001250"] .message-text',
+    )?.textContent;
     list.scrollTop -= 600;
     list.dispatchEvent(new Event("scroll"));
-    return beforeScroll;
+    return { count: beforeScroll, text };
   }, { chat: CHAT, now });
-  assert.equal(deferred, 1301);
+  assert.equal(deferred.count, 1301);
+  assert.equal(deferred.text, "History edit during trim");
   await page.evaluate(() =>
     new Promise((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(resolve))
