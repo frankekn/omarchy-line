@@ -349,8 +349,8 @@ async function acknowledgedSend(h) {
   assert.equal(
     await page.evaluate(() =>
       JSON.parse(
-        localStorage.getItem("enil.web.drafts.v1"),
-      )["ustub-me-0000"]["cstub-family"].pending.length
+        localStorage.getItem("enil.web.drafts.v1") || "{}",
+      )["ustub-me-0000"]?.["cstub-family"]?.pending?.length || 0
     ),
     0,
   );

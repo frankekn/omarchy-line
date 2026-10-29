@@ -17,6 +17,7 @@ export function createDraftStore(
 ) {
   const key = "enil.web.drafts.v1", lastKey = "enil.web.lastAccount";
   model.drafts = Object.create(null);
+  let loaded = false;
   try {
     const saved = JSON.parse(storage.getItem(key) || "{}");
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
@@ -25,15 +26,43 @@ export function createDraftStore(
           model.drafts[account] = Object.assign(Object.create(null), chats);
         }
       }
+      loaded = true;
     }
   } catch { /* A missing or malformed store starts empty. */ }
-  function saveStorage() {
+  // The UI registry is still assembling while this store is constructed.
+  if (loaded && pruneEmptyDrafts()) saveStorage(true);
+  function emptyDraft(draft) {
+    return draft && typeof draft === "object" && !Array.isArray(draft) &&
+      (draft.text === "" || draft.text == null) && draft.reply == null &&
+      (draft.pending == null ||
+        (Array.isArray(draft.pending) && draft.pending.length === 0));
+  }
+  function pruneEmptyDrafts() {
+    let changed = false;
+    for (const [account, chats] of Object.entries(model.drafts)) {
+      for (const [chat, draft] of Object.entries(chats)) {
+        if (!emptyDraft(draft)) continue;
+        delete chats[chat];
+        changed = true;
+      }
+      if (Object.keys(chats).length === 0) {
+        delete model.drafts[account];
+        changed = true;
+      }
+    }
+    return changed;
+  }
+  function saveStorage(deferWarning = false) {
+    pruneEmptyDrafts();
     try {
-      storage.setItem(key, JSON.stringify(model.drafts));
+      if (Object.keys(model.drafts).length) {
+        storage.setItem(key, JSON.stringify(model.drafts));
+      } else storage.removeItem(key);
     } catch {
       if (!model.storageWarningShown) {
         model.storageWarningShown = true;
-        onError();
+        if (deferWarning) queueMicrotask(onError);
+        else onError();
       }
     }
   }

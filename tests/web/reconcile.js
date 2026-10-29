@@ -62,9 +62,9 @@ export async function reconcile(h) {
     boot: state.bootId,
   }));
   await page.waitForFunction(() =>
-    JSON.parse(
-      localStorage.getItem("enil.web.drafts.v1"),
-    )["ustub-me-0000"]["cstub-family"].pending.length === 0
+    (JSON.parse(
+      localStorage.getItem("enil.web.drafts.v1") || "{}",
+    )["ustub-me-0000"]?.["cstub-family"]?.pending?.length || 0) === 0
   );
   assert.equal(
     await page.getByRole("log").getByText("unconfirmed original", {

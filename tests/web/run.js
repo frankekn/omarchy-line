@@ -14,6 +14,7 @@ import { parityFixes } from "./parity-fixes.js";
 import { stateWire } from "./state-wire.js";
 import { stateWireResync } from "./state-wire-resync.js";
 import { previewCache } from "./preview-cache.js";
+import { drafts } from "./drafts.js";
 
 const suites = {
   main,
@@ -30,6 +31,7 @@ const suites = {
   "state-wire": stateWire,
   "state-wire-resync": stateWireResync,
   "preview-cache": previewCache,
+  drafts,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

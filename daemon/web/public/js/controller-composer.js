@@ -3,9 +3,11 @@
 export function createComposerController(ctx) {
   const model = ctx.model;
   function saveComposer() {
-    const draft = ctx.chatDraft();
-    if (!draft) return;
     const { text, cursor } = ctx.readComposer();
+    const existing = ctx.chatDraft(undefined, undefined, false);
+    if (!existing && !text && !model.reply) return;
+    const draft = existing || ctx.chatDraft();
+    if (!draft) return;
     draft.text = text;
     draft.reply = model.reply;
     draft.mentions = model.mentions;
@@ -13,7 +15,8 @@ export function createComposerController(ctx) {
     ctx.saveStorage();
   }
   function restoreComposer() {
-    const draft = ctx.chatDraft(), text = draft?.text || "";
+    const draft = ctx.chatDraft(undefined, undefined, false),
+      text = draft?.text || "";
     model.reply = draft?.reply || null;
     model.mentionText = text;
     model.mentions = Array.isArray(draft?.mentions)

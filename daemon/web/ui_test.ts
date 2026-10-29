@@ -816,6 +816,80 @@ class MemoryStorage {
     this.values.delete(key);
   }
 }
+Deno.test("loading removes only empty drafts and preserves recoverable sends", () => {
+  const storage = new MemoryStorage();
+  storage.setItem(
+    "enil.web.drafts.v1",
+    JSON.stringify({
+      a: {
+        empty: { text: "", reply: null, pending: [], mentions: [], cursor: 0 },
+        text: { text: " ", reply: null, pending: [] },
+        reply: { text: "", reply: { id: "quoted" }, pending: [] },
+        failed: {
+          text: "",
+          reply: null,
+          pending: [{ requestId: "f", status: "failed" }],
+        },
+        uncertain: {
+          text: "",
+          reply: null,
+          pending: [{ requestId: "u", status: "uncertain" }],
+        },
+        malformed: { text: "", reply: null, pending: { requestId: "keep" } },
+      },
+      b: { empty: { text: "", reply: null, pending: [] } },
+      other: { chat: { text: "other account", reply: null, pending: [] } },
+    }),
+  );
+  const model = createModel(), store = createDraftStore(model, storage);
+  assertEquals(store.chatDraft("a", "empty", false), null);
+  assertEquals(Object.hasOwn(model.drafts, "b"), false);
+  assertEquals(store.chatDraft("a", "text", false)?.text, " ");
+  assertEquals(store.chatDraft("a", "reply", false)?.reply?.id, "quoted");
+  assertEquals(store.pendingFor("failed", "a")[0].status, "failed");
+  assertEquals(store.pendingFor("uncertain", "a")[0].status, "uncertain");
+  assertEquals(store.chatDraft("a", "malformed", false)?.pending, {
+    requestId: "keep",
+  });
+  assertEquals(store.chatDraft("other", "chat", false)?.text, "other account");
+  const saved = JSON.parse(storage.getItem("enil.web.drafts.v1") || "{}");
+  assertEquals(saved.a.empty, undefined);
+  assertEquals(saved.b, undefined);
+  assertEquals(saved.a.failed.pending[0].requestId, "f");
+});
+
+Deno.test("empty composer and cleared pending rows leave no empty drafts", () => {
+  const model = createModel(), storage = new MemoryStorage();
+  model.account = "a";
+  model.active = "one";
+  const store = createDraftStore(model, storage);
+  let text = "";
+  const composer = createComposerController({
+    model,
+    ...store,
+    readComposer: () => ({ text, cursor: text.length, end: text.length }),
+    writeComposer: (value: string) => text = value,
+    updateReply: () => {},
+    resizeComposer: () => {},
+    updateMentionPicker: () => {},
+  });
+  composer.restoreComposer();
+  assertEquals(Object.hasOwn(model.drafts, "a"), false);
+  composer.saveComposer();
+  assertEquals(Object.hasOwn(model.drafts, "a"), false);
+  text = "retained";
+  composer.saveComposer();
+  assertEquals(store.chatDraft("a", "one", false)?.text, "retained");
+  store.writePending("one", [{ requestId: "f", status: "failed" }], "a");
+  text = "";
+  composer.saveComposer();
+  assertEquals(store.pendingFor("one", "a")[0].status, "failed");
+  store.forgetPending("one", "f", "a");
+  assertEquals(store.chatDraft("a", "one", false), null);
+  assertEquals(Object.hasOwn(model.drafts, "a"), false);
+  assertEquals(JSON.parse(storage.getItem("enil.web.drafts.v1") || "{}"), {});
+});
+
 Deno.test("draft keys cannot resolve to inherited properties", () => {
   const storage = new MemoryStorage();
   const model = createModel(), store = createDraftStore(model, storage);
