@@ -6,6 +6,7 @@ export function createMediaView(ctx) {
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
   let pictures = [], pictureIndex = 0, scale = 1, panX = 0, panY = 0;
+  let lightboxChat = "", lightboxAccount = "";
   let pinch = null, drag = null;
   async function downloadMessage(chat, message) {
     try {
@@ -49,17 +50,20 @@ export function createMediaView(ctx) {
     $("lightbox-zoom-out").disabled = scale <= 1;
     $("lightbox-zoom-in").disabled = scale >= 4;
   }
-  function showPicture() {
+  function updatePictureControls() {
     const item = pictures[pictureIndex];
     $("lightbox-name").textContent = `${item.name}  ${
       pictureIndex + 1
     } / ${pictures.length}`;
-    $("lightbox-image").src = item.url;
     $("lightbox-image").alt = item.name;
     $("lightbox-download").hidden = !item.download;
     $("lightbox-download").onclick = item.download;
     $("lightbox-prev").disabled = pictureIndex === 0;
     $("lightbox-next").disabled = pictureIndex === pictures.length - 1;
+  }
+  function showPicture() {
+    updatePictureControls();
+    $("lightbox-image").src = pictures[pictureIndex].url;
     setScale(1);
   }
   function stepPicture(delta) {
@@ -68,15 +72,22 @@ export function createMediaView(ctx) {
     pictureIndex = next;
     showPicture();
   }
-  function openLightbox(chat, message, url) {
-    pictures = [];
+  function flexPictureKey(id, source, occurrence) {
+    return JSON.stringify(["flex", String(id), source, occurrence]);
+  }
+  function pictureList(chat) {
+    const list = [];
     for (const row of model.messages) {
       if (row.unsent || row.pending) continue;
       if (row.contentType === "FLEX" && Array.isArray(row.flexImages)) {
+        const occurrences = new Map();
         for (const value of row.flexImages) {
           const source = httpsUrl(value);
           if (source) {
-            pictures.push({
+            const occurrence = occurrences.get(source) || 0;
+            occurrences.set(source, occurrence + 1);
+            list.push({
+              key: flexPictureKey(row.id, source, occurrence),
               id: String(row.id),
               url: source,
               name: t("image"),
@@ -90,7 +101,8 @@ export function createMediaView(ctx) {
       ) {
         const path = model.previews.get(String(row.id)) || row.mediaPath;
         if (path) {
-          pictures.push({
+          list.push({
+            key: JSON.stringify(["image", String(row.id)]),
             id: String(row.id),
             url: fileUrl(path),
             name: String(row.fileName || t("image")),
@@ -99,24 +111,59 @@ export function createMediaView(ctx) {
         }
       }
     }
+    return list;
+  }
+  function openLightbox(chat, message, url, key = "") {
+    pictures = pictureList(chat);
     pictureIndex = pictures.findIndex((item) =>
-      item.id === String(message.id) && item.url === url
+      item.id === String(message.id) && item.url === url &&
+      (!key || item.key === key)
     );
     if (pictureIndex < 0) return;
+    lightboxChat = chat;
+    lightboxAccount = model.account;
     showPicture();
     if (!$("lightbox").open) $("lightbox").showModal();
   }
-  function clickableImage(image, chat, message, url) {
+  function refreshLightbox() {
+    if (!$("lightbox").open) return;
+    if (lightboxChat !== model.active || lightboxAccount !== model.account) {
+      $("lightbox").close();
+      return;
+    }
+    const current = pictures[pictureIndex];
+    const updated = pictureList(lightboxChat);
+    if (!updated.length) {
+      $("lightbox").close();
+      return;
+    }
+    const index = updated.findIndex((item) => item.key === current.key);
+    pictures = updated;
+    if (index < 0) {
+      pictureIndex = Math.min(pictureIndex, pictures.length - 1);
+      showPicture();
+      return;
+    }
+    pictureIndex = index;
+    updatePictureControls();
+    if (current.url !== pictures[index].url) {
+      $("lightbox-image").src = pictures[index].url;
+    }
+  }
+  function clickableImage(image, chat, message, url, key = "") {
     image.tabIndex = 0;
     image.setAttribute("role", "button");
-    image.addEventListener("click", () => openLightbox(chat, message, url));
+    image.addEventListener(
+      "click",
+      () => openLightbox(chat, message, url, key),
+    );
     image.addEventListener("keydown", (event) => {
       if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
         return;
       }
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openLightbox(chat, message, url);
+        openLightbox(chat, message, url, key);
       }
     });
   }
@@ -240,13 +287,22 @@ export function createMediaView(ctx) {
       if (url) bubble.append(safeImage(url, "sticker-image", t("stickers")));
     }
     if (type === "FLEX" && Array.isArray(message.flexImages)) {
+      const occurrences = new Map();
       for (const value of message.flexImages) {
         const url = httpsUrl(value);
         if (!url) {
           continue;
         }
         const img = safeImage(url, "media-image", t("image"));
-        clickableImage(img, chat, message, url);
+        const occurrence = occurrences.get(url) || 0;
+        occurrences.set(url, occurrence + 1);
+        clickableImage(
+          img,
+          chat,
+          message,
+          url,
+          flexPictureKey(message.id, url, occurrence),
+        );
         bubble.append(img);
       }
     }
@@ -315,5 +371,5 @@ export function createMediaView(ctx) {
       previewObserver.unobserve(node);
     }
   }
-  return { addMedia, unobservePreviews };
+  return { addMedia, unobservePreviews, refreshLightbox };
 }

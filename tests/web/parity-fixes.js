@@ -457,6 +457,70 @@ export async function reactionEscape(h) {
   h.step("reaction-escape-priority");
 }
 
+export async function lightboxUpdates(h) {
+  const first = picture(h, "dynamic-1", "stub-shot1.png", Date.now() - 1000);
+  let previewRequest;
+  const { context, page, tap, state } = await pictureFixture(h, [first], {
+    client(frame) {
+      if (frame.cmd === "preview" && frame.messageId === "dynamic-2") {
+        previewRequest = frame;
+        return false;
+      }
+      return true;
+    },
+  });
+  await page.locator('article[data-message-id="dynamic-1"] img').click();
+  await page.locator("#lightbox-zoom-in").click();
+  const image = page.locator("#lightbox-image");
+  const zoom = await image.getAttribute("style");
+  const src = await image.getAttribute("src");
+  const second = picture(h, "dynamic-2", "stub-shot2.png");
+  delete second.mediaPath;
+  let seq = 999999;
+  const event = (kind, data) =>
+    tap.socket.send(JSON.stringify({
+      event: { seq: seq++, kind, chat: CHAT, ...data },
+      boot: state.bootId,
+    }));
+  event("message", { message: second });
+  await until(() => previewRequest, "new image preview request");
+  assert.match(await page.locator("#lightbox-name").textContent(), /1 \/ 1/);
+  tap.socket.send(JSON.stringify({
+    id: previewRequest.id,
+    ok: true,
+    data: { path: `${h.stateDir}/media/stub-shot2.png` },
+  }));
+  await until(
+    async () => !(await page.locator("#lightbox-next").isDisabled()),
+    "new picture in viewer",
+  );
+  assert.match(await page.locator("#lightbox-name").textContent(), /1 \/ 2/);
+  assert.equal(await image.getAttribute("style"), zoom);
+  assert.equal(await image.getAttribute("src"), src);
+  event("message", {
+    message: {
+      ...second,
+      id: "dynamic-text",
+      contentType: "NONE",
+      hasMedia: false,
+      text: "Unrelated update",
+      time: Date.now() + 1000,
+    },
+  });
+  await page.getByText("Unrelated update").waitFor({ state: "attached" });
+  assert.equal(await image.getAttribute("style"), zoom);
+  assert.equal(await image.getAttribute("src"), src);
+  await page.locator("#lightbox-next").click();
+  assert.match(await page.locator("#lightbox-name").textContent(), /2 \/ 2/);
+  event("unsend", { messageId: "dynamic-1" });
+  await until(async () =>
+    (await page.locator("#lightbox-name").textContent())
+      .includes("1 / 1"), "removed picture in viewer");
+  assert.equal(await page.locator("#lightbox-prev").isDisabled(), true);
+  await context.close();
+  h.step("lightbox-live-picture-list");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
@@ -464,4 +528,5 @@ export async function parityFixes(h) {
   await lightboxModifiers(h);
   await shortcutScope(h);
   await reactionEscape(h);
+  await lightboxUpdates(h);
 }

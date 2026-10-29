@@ -430,6 +430,7 @@ export function createMessagesView(ctx) {
     }
     placeKeyedNodes(list, keys, records, changes);
     order = keys;
+    ctx.refreshLightbox();
     if (mode === "bottom" || (mode === "follow" && nearBottom)) {
       list.scrollTop = list.scrollHeight;
     } else if (mode === "anchor") {
