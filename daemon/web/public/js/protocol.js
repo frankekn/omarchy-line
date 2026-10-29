@@ -78,6 +78,23 @@ export function compareMessages(a, b) {
   return x.length - y.length || x.localeCompare(y);
 }
 
+// The count is captured when the chat opens, before history marks it read.
+export function firstUnreadIndex(messages, unread, myMid) {
+  const rows = Array.isArray(messages) ? messages : [];
+  let left = Number(unread) || 0;
+  if (left <= 0) return -1;
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const message = rows[i];
+    if (
+      !message || message.pending ||
+      ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) ||
+      String(message.from || "") === myMid
+    ) continue;
+    if (--left === 0) return i;
+  }
+  return -1;
+}
+
 export function mergeMessage(rows, message, myMid) {
   if (!message?.id) return rows;
   const id = String(message.id), requestId = String(message.requestId || "");

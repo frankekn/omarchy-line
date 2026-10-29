@@ -1,6 +1,6 @@
 // Chat navigation and history requests. Uses protocol projections and injected
 // view actions.
-import { mergeHistory } from "./protocol.js";
+import { firstUnreadIndex, mergeHistory } from "./protocol.js";
 export function createChatController(ctx) {
   const model = ctx.model;
   function markCurrentRead() {
@@ -18,6 +18,8 @@ export function createChatController(ctx) {
     model.active = "";
     model.chatOpen = false;
     model.messages = [];
+    model.unreadMarkCount = 0;
+    model.unreadMarkId = "";
     model.reply = null;
     model.loading = false;
     model.loadingOlder = false;
@@ -30,6 +32,9 @@ export function createChatController(ctx) {
     if (model.active) ctx.saveComposer();
     model.historyGeneration++;
     model.active = chat;
+    const row = model.chats.find((item) => String(item.mid) === chat);
+    model.unreadMarkCount = Number(row?.unread || 0);
+    model.unreadMarkId = "";
     model.chatOpen = true;
     model.messages = [];
     model.loading = false;
@@ -61,6 +66,10 @@ export function createChatController(ctx) {
   function backToList() {
     ctx.saveComposer();
     model.chatOpen = false;
+    if (globalThis.innerWidth <= 700) {
+      model.unreadMarkCount = 0;
+      model.unreadMarkId = "";
+    }
     ctx.showChatList();
     ctx.renderChats();
   }
@@ -91,6 +100,17 @@ export function createChatController(ctx) {
       );
       for (const event of model.historyEvents) ctx.applyEvent(event, false);
       model.historyEvents = [];
+      if (model.unreadMarkCount > 0) {
+        const index = firstUnreadIndex(
+          model.messages,
+          model.unreadMarkCount,
+          model.account,
+        );
+        model.unreadMarkId = index < 0
+          ? ""
+          : String(model.messages[index].id || "");
+        model.unreadMarkCount = 0;
+      }
       model.noOlder = fresh.length < 50;
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {

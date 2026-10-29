@@ -5,6 +5,7 @@ import {
   applyChatPush,
   applyChatState,
   applyEvent,
+  firstUnreadIndex,
   mergeHistory,
   mergeMessage,
   reconcilePending,
@@ -17,6 +18,22 @@ import { createConnection } from "./public/js/connection.js";
 import { createModel } from "./public/js/model.js";
 import { makeRegistry } from "./public/js/registry.js";
 import { createTranslator, isEnglish } from "./public/js/i18n.js";
+
+Deno.test("unread position counts only incoming messages", () => {
+  const rows = [
+    { id: "1", from: "peer" },
+    { id: "2", from: "me" },
+    { id: "3", from: "peer", contentType: "CHATEVENT" },
+    { id: "4", from: "peer", pending: true },
+    { id: "5", from: "other" },
+    { id: "6", from: "peer", contentType: "POSTNOTIFICATION" },
+  ];
+  assertEquals(firstUnreadIndex(rows, 1, "me"), 4);
+  assertEquals(firstUnreadIndex(rows, 2, "me"), 0);
+  assertEquals(firstUnreadIndex(rows, 3, "me"), -1);
+  assertEquals(firstUnreadIndex(rows, 0, "me"), -1);
+  assertEquals(firstUnreadIndex(null, 1, "me"), -1);
+});
 
 Deno.test("message deduplication and requestId sender boundary", () => {
   const pending = {

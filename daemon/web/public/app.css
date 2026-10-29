@@ -300,6 +300,20 @@ a:focus-visible {
 .sync-button {
   margin-top: 8px;
 }
+.unread-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+  font-size: 11px;
+}
+.unread-divider::before {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.5;
+}
 .line-login {
   display: grid;
   place-items: center;

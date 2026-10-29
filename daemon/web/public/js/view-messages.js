@@ -250,6 +250,11 @@ export function createMessagesView(ctx) {
         );
         previousDay = day;
       }
+      if (
+        model.unreadMarkId && String(message.id || "") === model.unreadMarkId
+      ) {
+        nodes.push(el("div", "unread-divider", t("unreadDivider")));
+      }
       nodes.push(messageNode(message));
     }
     list.replaceChildren(...nodes);

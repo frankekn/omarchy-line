@@ -19,6 +19,8 @@ export function createModel() {
     active: "",
     chatOpen: false,
     messages: [],
+    unreadMarkCount: 0,
+    unreadMarkId: "",
     loading: false,
     loadingOlder: false,
     noOlder: false,

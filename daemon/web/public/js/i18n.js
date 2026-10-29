@@ -71,6 +71,7 @@ const strings = {
   loading: ["載入中…", "Loading…"],
   noMessages: ["還沒有訊息。", "No messages yet."],
   older: ["載入更早的訊息", "Load older messages"],
+  unreadDivider: ["未讀訊息", "Unread"],
   messageLabel: ["訊息", "Message"],
   mention: ["提及成員", "Mention members"],
   messagePlaceholder: ["輸入訊息…", "Write a message…"],
