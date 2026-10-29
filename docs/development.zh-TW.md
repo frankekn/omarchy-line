@@ -140,6 +140,8 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
 後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應使用
 `Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體，瀏覽器可以私下保留一天。
+啟動時網頁只在 `/api/session` 確認 cookie 後才開 WebSocket。session 檢查失敗時，
+登入畫面會顯示連線錯誤。
 
 不用 LINE 帳號，接 stub 跑網頁：
 
@@ -183,6 +185,11 @@ port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 
 截圖和 log。每個瀏覽器頁面都不能有 console error 或 page error。
 設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
 暫存目錄。
+啟動認證的獨立測試使用相同設定：
+
+```bash
+deno run --frozen -A tests/web/boot-rtt.js
+```
 
 要測 Safari 引擎，先安裝相同版本 Playwright 的 WebKit，再選擇瀏覽器：
 
@@ -216,8 +223,9 @@ CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
 ```
 
 腳本用 Chromium 模擬 150 和 300 毫秒延遲、5 Mbps 頻寬，量測冷、熱快取載入並
-開啟 stub 聊天室，回報回應數量、傳輸位元組和 runtime import 圖的深度。登入在計時前
-完成；回應位元組不含 WebSocket 流量。這是本機模擬，不是 Tailscale relay 的實測。
+開啟 stub 聊天室，回報回應數量、傳輸位元組和 runtime import 圖的深度。腳本會量測
+未登入的首次載入，其餘計時在登入後開始；回應位元組不含 WebSocket 流量。它也會在
+HTML 已快取時檢查登出和重新登入。這是本機模擬，不是 Tailscale relay 的實測。
 `ENIL_WEB_TEST_TMPDIR` 可指定隔離暫存 state 的上層目錄。
 
 要確認編譯後 daemon 的內容 ETag 和 304 回應，並從暫存副本移除原始網頁資源：

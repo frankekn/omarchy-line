@@ -167,6 +167,9 @@ startup. Restart the web server after editing HTML, CSS or JavaScript; a
 browser reload then revalidates the cached assets. API responses use
 `Cache-Control: no-store`, except signed-in media from `/api/file`, which the
 browser may keep privately for one day.
+At startup, the page opens the WebSocket only after `/api/session` confirms
+the cookie. A failed session check shows a connection error on the sign-in
+screen.
 
 To run the page against the stub, without a LINE account:
 
@@ -213,6 +216,11 @@ Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
 there instead of the system temporary directory.
 It removes temporary state after success and keeps it with screenshots and
 logs on failure. Every browser page must have no console or page errors.
+The separate boot authentication suite uses the same settings:
+
+```bash
+deno run --frozen -A tests/web/boot-rtt.js
+```
 
 To run the Safari engine coverage, install Playwright's matching WebKit and
 select it for the browser suites:
@@ -253,8 +261,10 @@ CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
 The script uses Chromium network emulation at 150 and 300 ms latency and
 5 Mbps. It measures cold and warm loads, opens a stub chat, reports response
 counts and transferred bytes, and calculates the runtime import graph depth.
-It signs in before timing; response bytes exclude WebSocket traffic. The
-results are a local simulation, not a measurement of a Tailscale relay.
+It measures the first signed-out load and signs in before the other timings;
+response bytes exclude WebSocket traffic. It also checks sign-out and sign-in
+with cached HTML. The results are a local simulation, not a measurement of a
+Tailscale relay.
 `ENIL_WEB_TEST_TMPDIR` sets the parent for its isolated temporary state.
 
 To check content ETags and 304 responses from a compiled daemon, with the

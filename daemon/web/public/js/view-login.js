@@ -151,11 +151,19 @@ export function createLoginView(ctx) {
   async function beginSession() {
     try {
       const response = await fetch("/api/session", { cache: "no-store" });
-      if (response.ok && (await response.json()).signedIn === true) {
-        showApp();
-        return;
+      if (response.status !== 401) {
+        if (!response.ok) throw new Error("session unavailable");
+        const { signedIn } = await response.json();
+        if (signedIn === true) {
+          showApp();
+          return;
+        }
+        if (signedIn !== false) throw new Error("invalid session response");
       }
-    } catch { /* The sign-in screen also reports connection failures. */ }
+    } catch {
+      $("signin-error").textContent = t("signinFailed");
+      $("signin-error").hidden = false;
+    }
     $("signin-screen").hidden = false;
   }
   $("signin-form").addEventListener("submit", async (event) => {
