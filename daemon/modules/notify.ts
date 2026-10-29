@@ -166,7 +166,9 @@ async function notify(
     // An undecrypted E2EE payload is just an empty text, so the placeholder
     // below covers it as well as the non-text content types.
     let body = String(msg.text ?? "") ||
-      NOTIFY_PLACEHOLDER[contentType] || "[新訊息]";
+      (Object.hasOwn(NOTIFY_PLACEHOLDER, contentType)
+        ? NOTIFY_PLACEHOLDER[contentType]
+        : "[新訊息]");
 
     const summary = await resolveName(chatMid, owner, generation);
     if (!sessionIsCurrent(owner, generation)) return;

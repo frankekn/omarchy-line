@@ -12,6 +12,11 @@
 import { assert, assertEquals } from "@std/assert";
 import { loadBlock, loadBlocks } from "./slice_test.ts";
 import { createClipboardStages } from "./clipboard.ts";
+import { nameCache } from "./modules/caches.ts";
+import { previewText } from "./modules/messages.ts";
+import { lastNotified, notify } from "./modules/notify.ts";
+import { refreshChats } from "./modules/refresh.ts";
+import { client, sessionGeneration, setClient } from "./modules/session.ts";
 
 // tagAt moved beside the container parsers (modules/video.ts); the sliced
 // mediakind block imports the real one rather than stubbing a copy.
@@ -124,6 +129,122 @@ Deno.test("a head nothing recognises falls back to the name", async () => {
   assertEquals(m.mediaKindOf(".gitignore", NOTHING), "file");
 });
 
+for (
+  const extension of [
+    "constructor",
+    "__proto__",
+    "toString",
+    "hasOwnProperty",
+  ]
+) {
+  Deno.test(`a prototype-like .${extension} name is a file`, async () => {
+    const m = await kinds();
+    const name = `picked.${extension}`;
+    assertEquals(m.mediaKindOf(name, NOTHING), "file");
+    assertEquals(m.mediaKindOf(name, PNG), "image");
+  });
+}
+
+Deno.test("externally supplied prototype keys use a text preview fallback", () => {
+  for (const type of ["constructor", "toString", "hasOwnProperty"]) {
+    assertEquals(previewText("", { contentType: type }), `[${type}]`);
+  }
+  assertEquals(previewText("", { contentType: "IMAGE" }), "[圖片]");
+});
+
+Deno.test("externally supplied prototype keys use a notification fallback", async () => {
+  const previousCommand = Object.getOwnPropertyDescriptor(Deno, "Command");
+  assert(previousCommand);
+  const previousClient = client;
+  const peer = "u-prototype-lookup-test";
+  const previousName = nameCache.get(peer);
+  const previousNotification = lastNotified.get(peer);
+  const owner = {} as NonNullable<Parameters<typeof setClient>[0]>;
+  let args: unknown[] = [];
+  class FakeCommand {
+    constructor(_name: string, options: { args: unknown[] }) {
+      args = options.args;
+    }
+    spawn() {
+      return {
+        output: () => Promise.resolve({ stdout: new Uint8Array() }),
+        kill: () => {},
+      };
+    }
+  }
+  Object.defineProperty(Deno, "Command", { value: FakeCommand });
+  setClient(owner);
+  nameCache.set(peer, "Peer");
+  try {
+    for (
+      const [contentType, expected] of [
+        ["constructor", "[新訊息]"],
+        ["toString", "[新訊息]"],
+        ["IMAGE", "[圖片]"],
+      ]
+    ) {
+      lastNotified.delete(peer);
+      args = [];
+      const message = {
+        raw: { from: peer, toType: "USER", contentType },
+        text: "",
+        isMyMessage: false,
+      } as unknown as Parameters<typeof notify>[0];
+      await notify(message, owner, sessionGeneration);
+      assertEquals(args.at(-1), expected, contentType);
+    }
+  } finally {
+    Object.defineProperty(Deno, "Command", previousCommand);
+    setClient(previousClient);
+    if (previousNotification === undefined) lastNotified.delete(peer);
+    else lastNotified.set(peer, previousNotification);
+    if (previousName === undefined) nameCache.delete(peer);
+    else nameCache.set(peer, previousName);
+  }
+});
+
+Deno.test("externally supplied prototype keys are counted in refresh logs", async () => {
+  const previousClient = client;
+  const previousLog = console.log;
+  let line = "";
+  const boxes = ["constructor", "constructor", "toString", "USER"].map(
+    (midType) => ({
+      midType,
+      get id(): string {
+        throw new Error("stop after diagnostic");
+      },
+    }),
+  );
+  const owner = {
+    base: {
+      talk: {
+        getMessageBoxes: () =>
+          Promise.resolve({
+            messageBoxes: boxes,
+            hasNext: false,
+          }),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  console.log = (...values: unknown[]) => {
+    const text = values.join(" ");
+    if (text.startsWith("[chats] boxes=")) {
+      line = text;
+      setClient(null);
+    }
+  };
+  setClient(owner);
+  try {
+    await refreshChats();
+  } finally {
+    console.log = previousLog;
+    setClient(previousClient);
+  }
+  const match = /kinds=(.*)$/.exec(line);
+  assert(match, line);
+  assertEquals(JSON.parse(match[1]), { constructor: 2, toString: 1, USER: 1 });
+});
+
 Deno.test("an ftyp brand tells a phone photo from a phone video", async () => {
   const m = await kinds();
   for (const brand of ["heic", "heix", "mif1", "avif"]) {
@@ -189,6 +310,17 @@ export {
   }
   return S;
 }
+
+Deno.test("a prototype-like extension uses the file size cap", async () => {
+  const m = await caps();
+  const kind = m.mediaKindOf("picked.constructor", NOTHING);
+  assertEquals(m.sizeRefusalText(kind, 1), null);
+  assertEquals(m.sizeRefusalText(kind, 1024 * 1024 * 1024), null);
+  assertEquals(
+    m.sizeRefusalText(kind, 1024 * 1024 * 1024 + 1),
+    "檔案太大（超過 1 GB）",
+  );
+});
 
 Deno.test("what fits is not refused, up to and including the cap", async () => {
   const m = await caps();

@@ -597,7 +597,9 @@ function previewText(
     const alt = String(meta.ALT_TEXT ?? "");
     if (alt) return alt;
   }
-  return PREVIEW_LABEL[contentType] ?? `[${contentType || "非文字"}]`;
+  return (Object.hasOwn(PREVIEW_LABEL, contentType)
+    ? PREVIEW_LABEL[contentType]
+    : undefined) ?? `[${contentType || "非文字"}]`;
 }
 
 function pushedPreviewText(

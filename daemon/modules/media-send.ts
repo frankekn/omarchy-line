@@ -178,7 +178,10 @@ function extOf(path: string): string {
  * the extension only gets a say where they say nothing we recognise.
  */
 function mediaKindOf(path: string, head: Uint8Array): MediaKind {
-  return magicKind(head) ?? KIND_BY_EXT[extOf(path)] ?? "file";
+  const magic = magicKind(head);
+  if (magic) return magic;
+  const ext = extOf(path);
+  return Object.hasOwn(KIND_BY_EXT, ext) ? KIND_BY_EXT[ext] ?? "file" : "file";
 }
 // enil:mediakind-end
 

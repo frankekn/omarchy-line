@@ -144,7 +144,7 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     {
       // One line per refresh so "are 1:1 chats missing?" is answerable from
       // the journal without a second client holding the session.
-      const kinds: Record<string, number> = {};
+      const kinds: Record<string, number> = Object.create(null);
       for (const b of boxes.messageBoxes ?? []) {
         const k = String(b.midType ?? String(b.id)[0]);
         kinds[k] = (kinds[k] ?? 0) + 1;
