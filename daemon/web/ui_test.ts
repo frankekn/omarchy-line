@@ -499,6 +499,8 @@ Deno.test("an older page must advance its cursor and can resume with new data", 
     { id: "699", from: "peer", time: 500 },
     "me",
   );
+  chat.refreshOlderAvailability();
+  assertEquals(model.noOlder, false);
   await chat.loadOlder();
   assertEquals(cursors, ["701", "699"]);
   assertEquals(model.messages[0].id, "698");

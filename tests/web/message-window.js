@@ -43,6 +43,7 @@ export async function messageWindow(h) {
   const archive = Array.from({ length: 50 }, (_, i) => row(i));
   const requests = [];
   let shortPage = false, firstPage = true, holdPage = false, heldPage;
+  let forcedPages = null;
   const tap = await tapSocket(page, {
     client(frame, connection) {
       if (frame.cmd === "markRead") {
@@ -51,6 +52,14 @@ export async function messageWindow(h) {
       }
       if (frame.cmd !== "history") return true;
       requests.push(frame);
+      if (frame.before && forcedPages) {
+        connection.socket.send(JSON.stringify({
+          id: frame.id,
+          ok: true,
+          data: forcedPages[frame.before] || [],
+        }));
+        return false;
+      }
       const end = frame.before
         ? archive.findIndex((message) => message.id === frame.before)
         : archive.length;
@@ -528,6 +537,85 @@ export async function messageWindow(h) {
   archive.splice(archiveStart);
   nextFixtureId = originalNextFixtureId;
   h.step("large trims pause while reading, resume in batches and page back");
+
+  await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel, ctx = globalThis.__windowCtx;
+    model.messages = [{
+      id: "701",
+      chat,
+      from: model.account,
+      time: now,
+      contentType: "NONE",
+      text: "Cursor 701",
+    }];
+    model.unreadMarkId = "";
+    model.noOlder = false;
+    ctx.renderMessages("bottom");
+  }, { chat: CHAT, now });
+  forcedPages = {
+    "701": [{
+      id: "701",
+      chat: CHAT,
+      from: "ume",
+      time: now,
+      contentType: "NONE",
+      text: "Cursor 701",
+    }],
+    "700": [{
+      id: "699",
+      chat: CHAT,
+      from: "ume",
+      time: now - 2000,
+      contentType: "NONE",
+      text: "Cursor 699",
+    }],
+  };
+  const beforeStalled = requests.length;
+  await page.locator("#messages > button.text-button").evaluate((node) =>
+    node.click()
+  );
+  await page.waitForFunction(() =>
+    !globalThis.__windowModel.loadingOlder && globalThis.__windowModel.noOlder
+  );
+  assert.equal(requests.length, beforeStalled + 1);
+  assert.equal(requests.at(-1).before, "701");
+  await page.evaluate(() => globalThis.__windowCtx.loadOlder());
+  assert.equal(requests.length, beforeStalled + 1);
+  await page.evaluate(({ chat, now }) => {
+    const model = globalThis.__windowModel;
+    globalThis.__windowCtx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat,
+        message: {
+          id: "700",
+          chat,
+          from: model.account,
+          time: now - 1000,
+          contentType: "NONE",
+          text: "Cursor 700",
+        },
+      },
+    });
+  }, { chat: CHAT, now });
+  assert.equal(
+    await page.evaluate(() => globalThis.__windowModel.noOlder),
+    false,
+  );
+  await page.locator("#messages > button.text-button").evaluate((node) =>
+    node.click()
+  );
+  await page.waitForFunction(() =>
+    !globalThis.__windowModel.loadingOlder &&
+    globalThis.__windowModel.messages[0]?.id === "699"
+  );
+  assert.equal(requests.length, beforeStalled + 2);
+  assert.equal(requests.at(-1).before, "700");
+  forcedPages = null;
+  seq = await page.evaluate(() => globalThis.__windowModel.seq);
+  h.step("paging resumes after a stopped cursor receives an older row");
 
   await fixture({ count: 1300 });
   await page.evaluate(({ chat, now }) => {

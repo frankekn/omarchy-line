@@ -540,7 +540,8 @@ export function createMessagesView(ctx) {
     }
     rows.sort(compareMessages);
     const today = new Date().toDateString();
-    const tail = rows.at(-1), lastItem = renderedDesired.at(-1);
+    const tail = rows[rows.length - 1];
+    const lastItem = renderedDesired[renderedDesired.length - 1];
     const tailTime = Number(tail?.time || 0), tailDate = new Date(tailTime);
     const tailDay = Number.isNaN(tailDate.getTime())
       ? ""
