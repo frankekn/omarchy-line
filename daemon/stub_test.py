@@ -1859,6 +1859,30 @@ class AvatarTest(unittest.TestCase):
 class WantedTest(unittest.TestCase):
     """state.wanted: the hand-off a clicked notification leaves behind."""
 
+    def test_poke_text_adds_an_incoming_message_without_a_hand_off(self):
+        s = Stub("--fixture", "default")
+        try:
+            mid = "cstub-work"
+            before = next(c for c in s.state()["chats"] if c["mid"] == mid)
+            res = s.call(cmd="poke", chat=mid, text="browser fixture")
+            self.assertTrue(res["ok"], res)
+            state = s.state()
+            after = next(c for c in state["chats"] if c["mid"] == mid)
+            self.assertEqual(before["unread"] + 1, after["unread"])
+            self.assertEqual("browser fixture", after["lastText"])
+            self.assertNotIn("wanted", state)
+            history = s.call(cmd="history", chat=mid, count=100)["data"]
+            message = history[-1]
+            self.assertEqual(res["data"]["messageId"], message["id"])
+            self.assertEqual("browser fixture", message["text"])
+            self.assertEqual("ustub-peer", message["from"])
+            event = state["events"][-1]
+            self.assertEqual("message", event["kind"])
+            self.assertEqual(message, event["message"])
+            self.assertFalse(s.call(cmd="poke", chat="cstub-nope", text="x")["ok"])
+        finally:
+            s.close()
+
     def test_poke_arms_a_hand_off_and_never_repeats_a_seq(self):
         s = Stub("--fixture", "default")
         try:

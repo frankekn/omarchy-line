@@ -1994,6 +1994,24 @@ def handle(req):
         return {"ok": True, "data": {"path": path}}
 
     if cmd == "poke":
+        # A text poke simulates an incoming message for browser tests.  The
+        # original notification hand-off remains the path without text.
+        if isinstance(req.get("text"), str):
+            mid = req.get("chat") or ""
+            with lock:
+                if mid not in messages:
+                    return {"ok": False, "error": "unknown chat"}
+                message = msg(mid, len(messages[mid]) + 1, "ustub-peer",
+                              "STUB Peer", req["text"], 0)
+                messages[mid].append(message)
+                for row in state["chats"]:
+                    if row["mid"] == mid:
+                        row["unread"] = row.get("unread", 0) + 1
+                refresh_chat_summary(mid)
+            push_event("message", mid, message=message)
+            write_state()
+            return {"ok": True, "data": {"messageId": message["id"]}}
+
         # Stub only. The real daemon has no such command: it writes
         # `state.wanted` from a notify-send action, which needs a notification
         # server, a toast and somebody to click it. This is the same write,
