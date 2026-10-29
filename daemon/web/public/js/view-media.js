@@ -9,7 +9,7 @@ export function createMediaView(ctx) {
   let lightboxChat = "", lightboxAccount = "";
   let lightboxGeneration = 0, pictureGeneration = 0;
   const downloads = new Map(), originals = new Map();
-  let pinch = null, drag = null;
+  let pinch = null, touchDrag = null, mouseDrag = null;
   function originalKey(account, chat, message) {
     return JSON.stringify([account, chat, String(message.id)]);
   }
@@ -128,6 +128,9 @@ export function createMediaView(ctx) {
   }
   function showPicture() {
     pictureGeneration++;
+    pinch = null;
+    touchDrag = null;
+    mouseDrag = null;
     updatePictureControls();
     setPictureSource(pictures[pictureIndex].url);
     setScale(1);
@@ -298,52 +301,86 @@ export function createMediaView(ctx) {
     if (event.pointerType !== "mouse" || event.button !== 0 || scale <= 1) {
       return;
     }
-    drag = { x: event.clientX, y: event.clientY };
+    mouseDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
     event.currentTarget.setPointerCapture(event.pointerId);
   });
   $("lightbox-stage").addEventListener("pointermove", (event) => {
-    if (event.pointerType !== "mouse" || !drag) return;
-    applyPan(panX + event.clientX - drag.x, panY + event.clientY - drag.y);
-    drag = { x: event.clientX, y: event.clientY };
-  });
-  $("lightbox-stage").addEventListener("pointerup", () => drag = null);
-  $("lightbox-stage").addEventListener("pointercancel", () => drag = null);
-  function touchDistance(touches) {
-    return Math.hypot(
-      touches[0].clientX - touches[1].clientX,
-      touches[0].clientY - touches[1].clientY,
+    if (
+      event.pointerType !== "mouse" || !mouseDrag ||
+      event.pointerId !== mouseDrag.id
+    ) return;
+    applyPan(
+      panX + event.clientX - mouseDrag.x,
+      panY + event.clientY - mouseDrag.y,
     );
+    mouseDrag = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  });
+  function endMouse(event) {
+    if (event.pointerType === "mouse" && event.pointerId === mouseDrag?.id) {
+      mouseDrag = null;
+    }
+  }
+  $("lightbox-stage").addEventListener("pointerup", endMouse);
+  $("lightbox-stage").addEventListener("pointercancel", endMouse);
+  function touchDistance(first, second) {
+    return Math.hypot(
+      first.clientX - second.clientX,
+      first.clientY - second.clientY,
+    );
+  }
+  function findTouch(touches, id) {
+    return Array.from(touches).find((touch) => touch.identifier === id);
   }
   $("lightbox-stage").addEventListener("touchstart", (event) => {
     if (event.touches.length === 2) {
-      pinch = { distance: touchDistance(event.touches), scale };
-      drag = null;
+      const first = event.touches[0], second = event.touches[1];
+      pinch = {
+        ids: [first.identifier, second.identifier],
+        distance: touchDistance(first, second),
+        scale,
+      };
+      touchDrag = null;
     } else if (event.touches.length === 1 && scale > 1) {
-      drag = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+      const touch = event.touches[0];
+      touchDrag = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
     }
   }, { passive: true });
   $("lightbox-stage").addEventListener("touchmove", (event) => {
-    if (pinch && event.touches.length === 2 && pinch.distance) {
+    const first = pinch && findTouch(event.touches, pinch.ids[0]);
+    const second = pinch && findTouch(event.touches, pinch.ids[1]);
+    const touch = touchDrag && findTouch(event.touches, touchDrag.id);
+    if (
+      pinch && first && second && event.touches.length === 2 && pinch.distance
+    ) {
       event.preventDefault();
       const point = pointInStage(
-        (event.touches[0].clientX + event.touches[1].clientX) / 2,
-        (event.touches[0].clientY + event.touches[1].clientY) / 2,
+        (first.clientX + second.clientX) / 2,
+        (first.clientY + second.clientY) / 2,
       );
       setScale(
-        pinch.scale * touchDistance(event.touches) / pinch.distance,
+        pinch.scale * touchDistance(first, second) / pinch.distance,
         point.x,
         point.y,
       );
-    } else if (drag && event.touches.length === 1) {
+    } else if (touchDrag && touch && event.touches.length === 1) {
       event.preventDefault();
-      const touch = event.touches[0];
-      applyPan(panX + touch.clientX - drag.x, panY + touch.clientY - drag.y);
-      drag = { x: touch.clientX, y: touch.clientY };
+      applyPan(
+        panX + touch.clientX - touchDrag.x,
+        panY + touch.clientY - touchDrag.y,
+      );
+      touchDrag = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
     }
   }, { passive: false });
-  function endTouch() {
-    pinch = null;
-    drag = null;
+  function endTouch(event) {
+    if (
+      pinch && (!findTouch(event.touches, pinch.ids[0]) ||
+        !findTouch(event.touches, pinch.ids[1]))
+    ) pinch = null;
+    if (touchDrag && !findTouch(event.touches, touchDrag.id)) touchDrag = null;
+    if (!pinch && !touchDrag && event.touches.length === 1 && scale > 1) {
+      const touch = event.touches[0];
+      touchDrag = { id: touch.identifier, x: touch.clientX, y: touch.clientY };
+    }
   }
   $("lightbox-stage").addEventListener("touchend", endTouch);
   $("lightbox-stage").addEventListener("touchcancel", endTouch);

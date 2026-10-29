@@ -752,6 +752,145 @@ export async function lightboxOriginal(h) {
   h.step("lightbox-original-concurrency");
 }
 
+export async function mixedGestures(h) {
+  const { context, page } = await pictureFixture(
+    h,
+    [picture(h, "gesture-image", "stub-shot1.png")],
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('article[data-message-id="gesture-image"] img').click();
+  for (let i = 0; i < 8; i++) await page.locator("#lightbox-zoom-in").click();
+  const stage = page.locator("#lightbox-stage"),
+    box = await stage.boundingBox();
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  const pan = () =>
+    page.locator("#lightbox-image").evaluate((node) =>
+      new DOMMatrix(node.style.transform).m41
+    );
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 10, y);
+  assert.equal(await pan(), 10);
+  await stage.evaluate((node, point) => {
+    const touch = new Touch({
+      identifier: 7,
+      target: node,
+      clientX: point.x + 100,
+      clientY: point.y,
+    });
+    node.dispatchEvent(
+      new TouchEvent("touchstart", { touches: [touch], bubbles: true }),
+    );
+  }, { x, y });
+  await page.mouse.move(x + 20, y);
+  assert.equal(await pan(), 20);
+  await stage.evaluate((node) => {
+    node.dispatchEvent(
+      new PointerEvent("pointerup", {
+        pointerType: "touch",
+        pointerId: 7,
+        bubbles: true,
+      }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchend", { touches: [], bubbles: true }),
+    );
+  });
+  await page.mouse.move(x + 30, y);
+  assert.equal(await pan(), 30);
+  await page.mouse.up();
+
+  await stage.dblclick();
+  for (let i = 0; i < 8; i++) await page.locator("#lightbox-zoom-in").click();
+  await stage.evaluate((node, point) => {
+    const touch = (dx) =>
+      new Touch({
+        identifier: 9,
+        target: node,
+        clientX: point.x + dx,
+        clientY: point.y,
+      });
+    node.dispatchEvent(
+      new TouchEvent("touchstart", { touches: [touch(0)], bubbles: true }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchmove", {
+        touches: [touch(10)],
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    node.dispatchEvent(
+      new PointerEvent("pointerup", {
+        pointerType: "mouse",
+        pointerId: 1,
+        bubbles: true,
+      }),
+    );
+    const move = new TouchEvent("touchmove", {
+      touches: [touch(20)],
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(move, "touches", {
+      value: { 0: touch(20), length: 1 },
+    });
+    node.dispatchEvent(move);
+    node.dispatchEvent(
+      new TouchEvent("touchend", { touches: [], bubbles: true }),
+    );
+  }, { x, y });
+  assert.equal(await pan(), 20);
+  await stage.dblclick();
+  await stage.evaluate((node, point) => {
+    const touch = (id, dx) =>
+      new Touch({
+        identifier: id,
+        target: node,
+        clientX: point.x + dx,
+        clientY: point.y,
+      });
+    node.dispatchEvent(
+      new TouchEvent("touchstart", {
+        touches: [touch(11, -50), touch(12, 50)],
+        bubbles: true,
+      }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchmove", {
+        touches: [touch(12, 100), touch(11, -100)],
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchend", {
+        touches: [touch(11, -100)],
+        bubbles: true,
+      }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchmove", {
+        touches: [touch(11, -90)],
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    node.dispatchEvent(
+      new TouchEvent("touchend", { touches: [], bubbles: true }),
+    );
+  }, { x, y });
+  assert.equal(
+    await page.locator("#lightbox-image").evaluate((node) =>
+      new DOMMatrix(node.style.transform).a
+    ),
+    2,
+  );
+  assert.equal(await pan(), 10);
+  await context.close();
+  h.step("mouse-touch-gesture-isolation");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
@@ -762,4 +901,5 @@ export async function parityFixes(h) {
   await lightboxUpdates(h);
   await lightboxFailure(h);
   await lightboxOriginal(h);
+  await mixedGestures(h);
 }
