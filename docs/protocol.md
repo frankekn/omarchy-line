@@ -259,6 +259,14 @@ Socket commands (one JSON line per request, replies
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
 
+The web server checks the request `Host` against `ENIL_WEB_ADDR` and returns
+421 for a mismatch. It normalizes URL host forms, including IPv4-mapped IPv6
+addresses, before comparing them. It returns 403 for sign-ins with
+`Sec-Fetch-Site` set to `cross-site` or `same-site`, before counting a wrong
+key. POST and WebSocket requests with an `Origin` must also match the page
+origin. Signing in needs the web key; protected API routes need a valid cookie
+even without these headers.
+
 The web bridge carries one command per WebSocket text frame and forwards
 daemon replies and pushes. After an atomic `state.json` write, the daemon
 notifies the shared feed of its built-in web server. While pages are connected,

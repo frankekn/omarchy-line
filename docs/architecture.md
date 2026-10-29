@@ -67,6 +67,11 @@ clipboard commands, and accepts `sendFile` paths only from web uploads.
 Each browser keeps its own drafts and unconfirmed sends in local storage.
 The page reconciles chat and message rows by key, retaining unchanged DOM
 nodes across updates.
+The web server checks `Host` against `ENIL_WEB_ADDR` and rejects browser
+sign-ins marked `cross-site` or `same-site` by `Sec-Fetch-Site`; see
+[web.md](web.md#known-limitations) for the HTTP limitation.
+If descriptor exhaustion stops the web listener, it retries. The daemon socket
+also retries a failed accept, so freeing descriptors allows service to resume.
 
 ## Keeping the daemon running
 
@@ -75,7 +80,8 @@ brings the daemon back after 5 seconds. Only `systemctl --user stop enil`
 keeps it down. The panel covers that case and a hung daemon: when the daemon
 looks dead, the panel runs `systemctl --user restart enil` itself, at most
 once every 45 seconds. A manual **start daemon** button in the panel does the
-same with a 3-second guard.
+same with a 3-second guard. The systemd unit sets `LimitNOFILE=8192`; the
+macOS launchd plist requests soft and hard `NumberOfFiles` limits of 8192.
 
 `daemon/enil-run.sh` is the unit's `ExecStart`. It does these steps in
 order:

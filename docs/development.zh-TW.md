@@ -194,7 +194,7 @@ deno run -A tests/web/run.js media mentions
 port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 state，失敗時會留下
 截圖和 log。每個瀏覽器頁面都不能有 console error 或 page error。
 設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
-暫存目錄。
+暫存目錄。請使用短路徑，讓測試目錄內的 Unix socket 路徑不超過系統上限。
 啟動認證的獨立測試使用相同設定：
 
 ```bash
@@ -209,7 +209,7 @@ ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions pa
 ```
 
 預設是 Chromium；`CHROMIUM` 只會改變 Chromium 的執行檔。WebKit 的手機 context
-使用 iPhone 13 設定和各 suite 指定的 viewport。WebKit 透過 IPv4-mapped IPv6
+使用 iPhone 13 設定和各 suite 指定的 viewport。兩種瀏覽器都透過 IPv4-mapped IPv6
 loopback 位址連接 IPv4 listener，因此機器必須支援該位址。在受支援的 Linux 發行版，
 Playwright 的 `install --with-deps webkit` 可以安裝所需的系統套件。
 
@@ -231,6 +231,16 @@ state，並且不登入 LINE：
 ```bash
 deno run --frozen -A tests/web/state-notify.js
 ```
+
+要檢查檔案描述符耗盡後 daemon 與 listener 的復原：
+
+```bash
+ENIL_WEB_TEST_PORT=18475 deno run --frozen -A tests/web/fd-exhaustion.js
+```
+
+測試會以空的暫存 state 啟動另一個 daemon，將描述符上限設為 256，開啟閒置連線直到
+達到上限，再關閉連線並檢查 web 和 daemon socket。不會登入 LINE。安裝用的 launchd
+和 systemd 設定將上限設為 8192。
 
 要以手機大小的 viewport 對 stub 量測網頁載入：
 
@@ -305,7 +315,7 @@ dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`
 `main` 的 commit，以及每一個 pull request（包括從 fork 來的 pull request）。它不用任何
 secret，對 repo 只有唯讀權限。它跑本機檢查，但不跑需要 Omarchy shell 的
 `omarchy plugin validate` 和 `qmllint`。它會跑 Chromium 瀏覽器測試、真 daemon
-smoke test、啟動、compiled-assets 和 state-notify 測試。另一個 job 會跑指定的
+smoke test、啟動、compiled-assets、state-notify 和描述符耗盡測試。另一個 job 會跑指定的
 WebKit 瀏覽器測試和啟動測試。另外還跑 `sh -n daemon/enil-run.sh`，以及檢查
 `manifest.json` 有沒有 `id`、`name` 和 `version`。
 

@@ -30,6 +30,12 @@ Chen, so this project starts at 2.x.
   cache is no longer overwritten by older cached history.
 - Unrecognized file types with unusual filename extensions now fall back to
   sending a file; unusual message types use a readable placeholder.
+- The web server refuses requests for a different host and sign-ins marked
+  cross-site or same-site by the browser. Open the page using the configured
+  address; see [docs/web.md](docs/web.md#known-limitations) for the limits.
+- The daemon stays running if file descriptors run out, and its listeners
+  retry and recover when descriptors become available. The supplied service
+  definitions request a limit of 8192 descriptors.
 
 ## [2.16.0] - 2026-10-07
 

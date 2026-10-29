@@ -30,7 +30,10 @@
   留在通知紀錄裡。
 - **沒開網頁版，就不會把訊息提供給網路。** 網頁版要設定 `ENIL_WEB_ADDR` 才會開啟。開啟
   之後，任何連得到那個位址、又有 web key 或有效瀏覽器 cookie 的人，都能讀你的訊息、
-  替你傳訊息。請綁在 Tailscale 位址上，不要用 `0.0.0.0`。細節見
+  替你傳訊息。請綁在 Tailscale 位址上，不要用 `0.0.0.0`，也不要在同一 IP 上執行
+  其他 HTTP 服務：瀏覽器會在不同 port 共用 cookie。登入連結也可能留在瀏覽器歷史紀錄，
+  一般 HTTP 上的跨站登入檢查也不可靠。
+  細節見
   [docs/web.zh-TW.md](docs/web.zh-TW.md)。
 - **不把憑證放進 repo。** LINE session token 與金鑰存在
   `~/.local/state/enil/storage.json`（或 `$XDG_STATE_HOME/enil/` 下）。瀏覽器

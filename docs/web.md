@@ -13,12 +13,12 @@ The page is off by default. It starts when `ENIL_WEB_ADDR` is set.
 
 | Variable | Effect |
 |---|---|
-| `ENIL_WEB_ADDR` | `host:port` to listen on. Use the machine's Tailscale IP, for example `100.64.0.1:3440`. Do not use `0.0.0.0`: the address is the only network boundary. |
+| `ENIL_WEB_ADDR` | `host:port` to listen on. Use the machine's Tailscale IP, for example `100.64.0.1:3440`. Do not use `0.0.0.0`: requests to the machine's actual IP will be refused. |
 | `ENIL_WEB_KEY` | The sign-in key: 16 or more of `A-Z a-z 0-9 - . _ ~`. If missing or invalid, each start makes a new key. |
 
-At start the daemon logs `[web] sign in: http://<addr>/?key=<key>`. Open that
-link once in each browser, or open the address and type the key. The browser
-then keeps a cookie for up to 400 days. Anyone with the key or a valid cookie
+At start the daemon logs `[web] sign in: http://<addr>/?key=<key>`. In each
+browser, open the address and type the key from the log. The browser then
+keeps a cookie for up to 400 days. Anyone with the key or a valid cookie
 and access to the address can read and send messages. Change the key and
 restart the daemon to sign out every browser. Leaving the web page clears that
 browser's cookie, but does not revoke a copy of it or log out of LINE. Change
@@ -28,9 +28,11 @@ network and keep the sign-in link private.
 
 Ten wrong keys within ten minutes temporarily block sign-in for the whole web
 server, even with the correct key, until one of those failures is more than
-ten minutes old. POST and WebSocket requests with an `Origin` must match the
-page's origin. Requests without it are also allowed, for non-browser clients;
-this check does not replace authentication.
+ten minutes old. Requests with a `Host` that does not match `ENIL_WEB_ADDR`
+receive 421. Sign-ins with `Sec-Fetch-Site: cross-site` or `same-site` receive
+403 and do not count toward the lock. POST and WebSocket requests with an
+`Origin` must match the page's origin. Requests without it are also allowed,
+for non-browser clients; this check does not replace authentication.
 The server allows up to 32 WebSocket connections at once.
 
 The browser stores drafts, reply targets, mentions and unconfirmed sends in
@@ -115,6 +117,21 @@ remain available after sign-in.
 
 ## Known limitations
 
+- The page reaches the daemon only through the exact address in
+  `ENIL_WEB_ADDR`. Open it by that IP address, not by a MagicDNS or other
+  host name; requests for any other host name are refused.
+- Do not run any other HTTP service on the same IP address. Browsers do not
+  separate cookies by port, so a page served from another port on that address
+  can read and send the enil sign-in cookie. Here, "read" means that the other
+  service receives it in HTTP requests. The cookie is `HttpOnly`, so page
+  scripts cannot read it through `document.cookie`.
+- A sign-in link with `?key=` stays in the browser history. Prefer typing the
+  key on the sign-in page. Open a sign-in link directly, from the address bar
+  or a terminal. Links opened from another site are refused when the browser
+  sends `Sec-Fetch-Site: cross-site` or `same-site`. Browsers may omit this
+  header on plain HTTP, including Tailscale IP addresses; in that case the
+  sign-in can succeed and wrong keys count toward the global lock. Do not rely
+  on this check to block links from other sites.
 - The HTTP cookie has no `Secure` attribute. Browser notifications normally
   require HTTPS or another secure context, and this page does not implement
   browser notifications. The daemon's desktop notifications are separate.
@@ -122,8 +139,11 @@ remain available after sign-in.
   cannot sign in during the lock, regardless of which browser failed.
 - Cookies cannot be revoked one at a time. Change the key and restart the
   daemon to invalidate all of them.
-- The browser may keep signed-in `/api/file` responses (media and the login
-  QR) in its private cache for one day, including after leaving the page.
+- Media from `/api/file` may stay in the browser cache for up to 24 hours.
+  Changing the web key signs every browser out, but it does not remove media
+  a browser has already cached. Login QR responses have the same cache
+  lifetime. An expired copy can remain in browser storage until it is
+  evicted or the cache is cleared.
 - A cached first history page can show an older version of an edited message
   while the LINE history response is delayed. Revalidation can also fail.
 - Browser find, including Ctrl+F, searches only currently loaded messages.
@@ -145,10 +165,16 @@ git clone --recurse-submodules \
   https://github.com/frankekn/omarchy-line.git "$HOME/omarchy-line"
 ```
 
+If the checkout already exists, update it and skip the clone. If an older
+agent is loaded, stop it with the `launchctl bootout` command below before
+replacing its plist. The commands below generate a new key, so existing web
+browsers must sign in again.
+
 Replace `100.64.0.1` below with this Mac's Tailscale IPv4 address, then run the
 commands in a terminal on the Mac. They create a new random web key and fill
 all four placeholders in the plist. The log directory and plist are private
-because both can contain the web key.
+because both can contain the web key. The plist requests a soft and hard
+`NumberOfFiles` limit of 8192.
 
 ```sh
 checkout="$HOME/omarchy-line"
@@ -175,8 +201,9 @@ launchctl bootstrap "gui/$(id -u)" "$plist"
 launchctl kickstart "gui/$(id -u)/io.github.frankekn.enil"
 ```
 
-Find the `[web] sign in:` link in the log, open it on a device in the tailnet,
-then use the QR to log in to LINE:
+Find the key in the `[web] sign in:` log line. On a device in the tailnet,
+open `http://<Tailscale-IP>:3440/` and type the key, then use the QR to log in
+to LINE:
 
 ```sh
 tail -f "$HOME/Library/Logs/enil/enil.log"
@@ -191,6 +218,11 @@ launchctl bootout "gui/$(id -u)" \
 
 The plist loads again at the next login. To start it sooner, run the bootstrap
 and kickstart commands above.
+
+The Linux systemd unit sets `LimitNOFILE=8192`. After updating the installed
+plugin, run its `daemon/install.sh` to install the updated unit and restart
+the service. If descriptors run out, the daemon stays up and its listeners
+retry; they can accept connections again once descriptors are available.
 
 The launchd setup has no native macOS notification or suspend integration.
 When `notify-send` and `dbus-monitor` are unavailable, notifications and the

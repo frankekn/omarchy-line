@@ -53,6 +53,11 @@ patch 較小時使用帶版本的聊天列差異；舊版網頁仍收到完整�
 bridge 最多同時接受 32 條 WebSocket，拒絕 daemon 主機的剪貼簿指令，`sendFile`
 也只接受網頁上傳的路徑。每個瀏覽器把自己的草稿和未確認傳送存在 local storage。
 網頁用 key 對齊聊天列和訊息列，更新時保留沒有變動的 DOM 節點。
+web server 會檢查 `Host` 是否符合 `ENIL_WEB_ADDR`，並拒絕 `Sec-Fetch-Site` 標為
+`cross-site` 或 `same-site` 的瀏覽器登入；HTTP 的限制見
+[web.zh-TW.md](web.zh-TW.md#已知限制)。檔案描述符耗盡
+導致 web listener 停止時會重試，daemon socket 接受連線失敗時也會重試；描述符釋出後
+服務可以恢復。
 
 ## 讓 daemon 一直在跑
 
@@ -60,7 +65,8 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 結束，5 秒後都會再起來。只有 `systemctl --user stop enil` 會讓它停著。面板補上這個
 情況和 daemon 卡死的情況：daemon 看起來掛了的時候，面板會自己執行
 `systemctl --user restart enil`，最多每 45 秒一次。面板上的「啟動 daemon」按鈕做同樣
-的事，防連點間隔 3 秒。
+的事，防連點間隔 3 秒。systemd unit 設有 `LimitNOFILE=8192`；macOS launchd plist
+要求 `NumberOfFiles` 的軟、硬限制都為 8192。
 
 `daemon/enil-run.sh` 是 unit 的 `ExecStart`。它依序做這些事：
 

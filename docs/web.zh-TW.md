@@ -12,19 +12,20 @@ LINE 帳號裡多出裝置。
 
 | 變數 | 作用 |
 |---|---|
-| `ENIL_WEB_ADDR` | 要監聽的 `host:port`。請用這台機器的 Tailscale IP，例如 `100.64.0.1:3440`。不要用 `0.0.0.0`：這個位址是唯一的網路邊界。 |
+| `ENIL_WEB_ADDR` | 要監聽的 `host:port`。請用這台機器的 Tailscale IP，例如 `100.64.0.1:3440`。不要用 `0.0.0.0`：對機器實際 IP 的請求會被拒絕。 |
 | `ENIL_WEB_KEY` | 登入用的 key：16 個以上的 `A-Z a-z 0-9 - . _ ~`。沒設定或格式不對時，每次啟動都會產生新的 key。 |
 
-daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏覽器開一次
-這個連結，或開位址後輸入 key。之後瀏覽器最多保留 cookie 400 天。能連到位址且持有
+daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。在每個瀏覽器開啟
+位址後，輸入 log 裡的 key。之後瀏覽器最多保留 cookie 400 天。能連到位址且持有
 key 或有效 cookie 的人都能讀取和傳送訊息。換掉 key 並重啟 daemon，會讓所有瀏覽器
 登出。「離開網頁」只清除該瀏覽器的 cookie，不會撤銷已複製的 cookie，也不會登出
 LINE。如果 cookie 或 key 可能外洩，請更換 key。網頁使用 HTTP，因此 cookie 沒有
 `Secure` 屬性。請使用可信任的 Tailscale 網路，並保護登入連結。
 
 十分鐘內輸入十次錯誤 key 會暫時阻止整個 web server 的登入，正確 key 也受阻，直到
-其中一次錯誤超過十分鐘。帶有 `Origin`
-的 POST 和 WebSocket 請求必須與網頁同源；沒有 `Origin` 的請求也會允許，以支援非
+其中一次錯誤超過十分鐘。`Host` 與 `ENIL_WEB_ADDR` 不符的請求會回 421。帶有
+`Sec-Fetch-Site: cross-site` 或 `same-site` 的登入請求會回 403，且不計入鎖定次數。
+帶有 `Origin` 的 POST 和 WebSocket 請求必須與網頁同源；沒有 `Origin` 的請求也會允許，以支援非
 瀏覽器 client。這項檢查不取代身分驗證。伺服器最多同時接受 32 條 WebSocket 連線。
 
 瀏覽器的 local storage 會存草稿、回覆目標、mention 和未確認的傳送，也可能快取媒體。
@@ -86,13 +87,25 @@ Alt、Command 及輸入法組字；上下鍵、`j`／`k`、`/` 和 `r` 不要搭
 
 ## 已知限制
 
+- 網頁只能透過 `ENIL_WEB_ADDR` 設定的位址連到 daemon。請用該 IP 開啟，不要用
+  MagicDNS 或其他主機名稱；使用其他主機名稱的請求會被拒絕。
+- 不要在同一個 IP 位址上執行其他 HTTP 服務。瀏覽器不按 port 區分 cookie，所以同一
+  位址上其他 port 提供的網頁可以讀取並送出 enil 登入 cookie。cookie 有 `HttpOnly`
+  屬性：這裡的「讀取」是指其他服務會從 HTTP 請求收到它；頁面的 script 無法透過
+  `document.cookie` 直接讀取。
+- 帶有 `?key=` 的登入連結會留在瀏覽器歷史紀錄。建議在登入頁面輸入 key。若使用登入
+  連結，請從網址列或終端機直接開啟。瀏覽器送出 `Sec-Fetch-Site: cross-site` 或
+  `same-site` 時，從其他網站開啟的連結會被拒絕。瀏覽器在一般 HTTP 上（包括
+  Tailscale IP）可能不送這個標頭，此時登入可能成功，錯誤 key 也會計入全域鎖定。
+  不要依賴這項檢查阻擋其他網站的連結。
 - HTTP cookie 沒有 `Secure` 屬性。瀏覽器通知通常需要 HTTPS 或其他安全來源，而這個
   網頁目前沒有實作瀏覽器通知。daemon 的桌面通知是另一項功能。
 - 十次錯誤 key 造成的登入鎖定適用於整個 web server。鎖定期間不論是哪個瀏覽器
   輸入錯誤 key，正確 key 也無法登入。
 - cookie 不能逐一撤銷。換 key 並重啟 daemon，會使所有 cookie 失效。
-- 瀏覽器可能將登入後的 `/api/file` 回應（媒體和登入 QR）保留在私人快取一天，
-  離開網頁後也可能留存。
+- `/api/file` 的媒體可能在瀏覽器快取保留最多 24 小時。換 web key 會讓所有瀏覽器
+  登出，但不會刪除瀏覽器已快取的媒體。登入 QR 回應有相同的快取時效；過期副本仍可能
+  留在瀏覽器儲存空間，直到被清除或淘汰。
 - 從快取載入歷史首頁時，如果 LINE 的 history 回覆較慢，可能暫時顯示編輯前的舊內容。
   背景重新驗證也可能失敗。
 - 瀏覽器的頁面搜尋（包括 Ctrl+F）只搜尋目前已載入的訊息。
@@ -112,9 +125,14 @@ git clone --recurse-submodules \
   https://github.com/frankekn/omarchy-line.git "$HOME/omarchy-line"
 ```
 
+如果 checkout 已經存在，請先更新它並跳過 clone。若舊 agent 已載入，替換 plist 前
+請先執行下方的 `launchctl bootout` 指令。下方指令會產生新的 web key，因此原有的
+瀏覽器都需要重新登入。
+
 先把下方的 `100.64.0.1` 換成這台 Mac 的 Tailscale IPv4 位址，再在 Mac 的終端機
 執行這些指令。指令會產生新的隨機 web key，並填入 plist 的四個佔位值。log 目錄和
-plist 都設為私人權限，因為兩者都可能包含 web key。
+plist 都設為私人權限，因為兩者都可能包含 web key。plist 的 `NumberOfFiles` 軟、
+硬限制都設為 8192。
 
 ```sh
 checkout="$HOME/omarchy-line"
@@ -141,7 +159,8 @@ launchctl bootstrap "gui/$(id -u)" "$plist"
 launchctl kickstart "gui/$(id -u)/io.github.frankekn.enil"
 ```
 
-在 log 找到 `[web] sign in:` 連結，在 tailnet 裡的裝置上開啟，再用 QR 登入 LINE：
+在 log 的 `[web] sign in:` 那行找到 key。在 tailnet 裡的裝置開啟
+`http://<Tailscale-IP>:3440/` 並輸入 key，再用 QR 登入 LINE：
 
 ```sh
 tail -f "$HOME/Library/Logs/enil/enil.log"
@@ -156,6 +175,10 @@ launchctl bootout "gui/$(id -u)" \
 
 下次登入時 plist 會再載入。要提早啟動，請執行上面的 bootstrap 和 kickstart
 指令。
+
+Linux systemd unit 設有 `LimitNOFILE=8192`。更新已安裝的 plugin 後，執行它的
+`daemon/install.sh`，安裝更新過的 unit 並重啟服務。檔案描述符耗盡時 daemon 會繼續
+運作，listener 會重試；描述符可用後就能再接受連線。
 
 launchd 設定沒有 macOS 原生通知或休眠整合。缺少 `notify-send` 和 `dbus-monitor`
 時，通知和休眠事件不會作用；watchdog 仍然會重建停滯的 push 連線。

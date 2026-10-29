@@ -214,6 +214,12 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
 
+web server 會檢查請求的 `Host` 是否符合 `ENIL_WEB_ADDR`，不符時回 421。比較前會將
+URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
+`Sec-Fetch-Site: cross-site` 或 `same-site` 時會回 403，不計入錯誤 key 次數。
+帶有 `Origin` 的 POST 和 WebSocket 請求也必須與網頁同源。登入需要 web key；即使
+沒有這些標頭，受保護的 API 路由仍需要有效 cookie。
+
 網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。daemon
 原子寫入 `state.json` 後，會通知其內建 web server 的共用 feed。網頁連線時，feed 也
 每 500 毫秒檢查一次檔案，作為獨立 server 和外部變動的後備；中間的寫入可能略過。

@@ -225,7 +225,8 @@ deno run -A tests/web/run.js media mentions
 Set `CHROMIUM=/usr/bin/chromium` to use a local Chromium instead. By default
 the harness chooses a free port; set `ENIL_WEB_TEST_PORT` to request one.
 Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
-there instead of the system temporary directory.
+there instead of the system temporary directory. Use a short path so the
+Unix socket paths inside its test directories fit the platform limit.
 It removes temporary state after success and keeps it with screenshots and
 logs on failure. Every browser page must have no console or page errors.
 The separate boot authentication suite uses the same settings:
@@ -243,10 +244,10 @@ ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions pa
 ```
 
 Chromium is the default; `CHROMIUM` only changes its executable. WebKit mobile
-contexts use iPhone 13 settings with the suite's viewport. WebKit connects to
-the IPv4 listener through an IPv4-mapped IPv6 loopback address, so the machine
-must support that address. On a supported Linux distribution, Playwright's
-`install --with-deps webkit` can install its system dependencies.
+contexts use iPhone 13 settings with the suite's viewport. Both browsers
+connect to the IPv4 listener through an IPv4-mapped IPv6 loopback address, so
+the machine must support that address. On a supported Linux distribution,
+Playwright's `install --with-deps webkit` can install its system dependencies.
 
 The real daemon smoke test also uses an empty temporary state directory, with
 no LINE account. It starts `enil-run.sh` from source and builds and starts a
@@ -269,6 +270,17 @@ the separate test. It uses an empty state directory and does not log in to LINE:
 ```bash
 deno run --frozen -A tests/web/state-notify.js
 ```
+
+To check that the daemon and its listeners recover from descriptor exhaustion:
+
+```bash
+ENIL_WEB_TEST_PORT=18475 deno run --frozen -A tests/web/fd-exhaustion.js
+```
+
+The test starts a separate daemon with a 256-descriptor limit and empty
+temporary state. It opens idle connections until the limit is reached, then
+closes them and checks the web and daemon sockets. It does not log in to LINE.
+The installed launchd and systemd configurations request a limit of 8192.
 
 To measure page loading against the stub on a phone-sized viewport:
 
@@ -360,10 +372,10 @@ pushes to `main` and for every pull request, including pull requests from
 forks. It uses no secrets and has read-only access to the repository. It
 runs the local checks except `omarchy plugin validate` and `qmllint`, which
 need the Omarchy shell. It runs the Chromium browser suites, real daemon smoke,
-startup, compiled-assets and state-notify tests. A separate job runs selected
-WebKit browser suites and the startup test. It also runs
-`sh -n daemon/enil-run.sh` and a check that `manifest.json` has `id`, `name`,
-and `version`.
+startup, compiled-assets, state-notify and descriptor exhaustion tests. A
+separate job runs selected WebKit browser suites and the startup test. It also
+runs `sh -n daemon/enil-run.sh` and a check that `manifest.json` has `id`,
+`name`, and `version`.
 
 ## Tuning variables
 
