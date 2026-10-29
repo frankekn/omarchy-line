@@ -19,6 +19,134 @@ import { createModel } from "./public/js/model.js";
 import { makeRegistry } from "./public/js/registry.js";
 import { createTranslator, isEnglish } from "./public/js/i18n.js";
 import { mediaKind, sizeRefusal } from "./public/js/media-kind.js";
+import { uploadName } from "./files.ts";
+import { loadBlocks } from "../slice_test.ts";
+
+type MediaKind = "image" | "gif" | "video" | "file";
+interface MediaSendBlock {
+  KIND_BY_EXT: Record<string, MediaKind | undefined>;
+  IMAGE_BRANDS: string[];
+  AUDIO_BRANDS: string[];
+  SEND_MAX_BYTES: Record<MediaKind, number>;
+  mediaKindOf(path: string, head: Uint8Array): MediaKind;
+  sizeRefusalText(kind: MediaKind, size: number): string | null;
+}
+
+Deno.test("browser media classification and refusals match daemon blocks", async () => {
+  const video = new URL("../modules/video.ts", import.meta.url).href;
+  const daemon = await loadBlocks<MediaSendBlock>(
+    ["mediakind", "sendcap"],
+    `import { tagAt } from "${video}";
+     export { KIND_BY_EXT, IMAGE_BRANDS, AUDIO_BRANDS, SEND_MAX_BYTES,
+       mediaKindOf, sizeRefusalText };`,
+  );
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  const signatures = [
+    new Uint8Array(),
+    new Uint8Array([0xff, 0xd8, 0xff]),
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 13, 10, 26, 10]),
+    bytes("GIF87a"),
+    bytes("GIF89a"),
+    bytes("RIFF....WEBP"),
+    bytes("RIFF....AVI "),
+    bytes("RIFF....WAVE"),
+    new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+    bytes("....ftyp"),
+    bytes("....ftypiso"),
+    ...Array.from(
+      new Set([
+        ...daemon.IMAGE_BRANDS,
+        ...daemon.AUDIO_BRANDS,
+        "heic",
+        "heix",
+        "hevc",
+        "hevx",
+        "heim",
+        "heis",
+        "mif1",
+        "msf1",
+        "avif",
+        "avis",
+        "M4A ",
+        "M4B ",
+        "M4P ",
+        "F4A ",
+        "F4B ",
+        "isom",
+        "mp42",
+        "avc1",
+        "qt  ",
+        "3gp4",
+      ]),
+    ).map((brand) => bytes(`....ftyp${brand}`)),
+  ];
+  const names = [
+    ...Array.from(
+      new Set([
+        ...Object.keys(daemon.KIND_BY_EXT),
+        "jpg",
+        "jpeg",
+        "png",
+        "webp",
+        "heic",
+        "heif",
+        "avif",
+        "gif",
+        "mp4",
+        "m4v",
+        "mov",
+        "webm",
+        "mkv",
+        "avi",
+      ]),
+    ).flatMap((extension) => [
+      `picked.${extension}`,
+      `picked.${extension.toUpperCase()}`,
+    ]),
+    "picked.pdf",
+    "README",
+    ".hidden",
+    "dir/shot.png",
+    "dir\\clip.mp4",
+    " padded.JPG ",
+    `${"a".repeat(200)}.png`,
+    ".",
+    "..",
+    "",
+  ];
+  for (const name of names) {
+    for (const head of signatures) {
+      assertEquals(
+        mediaKind(name, head),
+        daemon.mediaKindOf(uploadName(name || "image.png"), head),
+        `${JSON.stringify(name)} with ${Array.from(head).join(",")}`,
+      );
+    }
+  }
+
+  const zh = createTranslator("zh-TW"), en = createTranslator("en-US");
+  for (const kind of ["image", "gif", "video", "file"] as MediaKind[]) {
+    const cap = daemon.SEND_MAX_BYTES[kind];
+    for (const size of [0, cap - 1, cap, cap + 1, 2 * 1024 ** 3]) {
+      const key = sizeRefusal(kind, size);
+      assertEquals(
+        key ? zh(key) : null,
+        daemon.sizeRefusalText(kind, size),
+        `${kind} ${size}`,
+      );
+      if (key) {
+        assertEquals(
+          en(key),
+          kind === "video"
+            ? "Video too large (over 1 GB)"
+            : kind === "file"
+            ? "File too large (over 1 GB)"
+            : "Image too large (over 20 MB)",
+        );
+      }
+    }
+  }
+});
 
 Deno.test("upload kind and limits follow magic before extension", () => {
   const bytes = (s: string) => new TextEncoder().encode(s);
