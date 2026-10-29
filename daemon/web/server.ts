@@ -295,7 +295,7 @@ export async function startWeb(opts: WebOptions): Promise<void> {
 if (import.meta.main) {
   const home = Deno.env.get("HOME") ?? "";
   const stateDir = `${
-    Deno.env.get("XDG_STATE_HOME") ?? `${home}/.local/state`
+    Deno.env.get("XDG_STATE_HOME") || `${home}/.local/state`
   }/enil`;
   await startWeb({
     addr: Deno.env.get("ENIL_WEB_ADDR") ?? "127.0.0.1:3440",
