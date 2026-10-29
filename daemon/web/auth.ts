@@ -56,7 +56,12 @@ export function originAllowed(req: Request): boolean {
   const host = req.headers.get("host");
   if (!host) return false;
   try {
-    return new URL(origin).host === host;
+    const target = new URL(req.url);
+    const from = new URL(origin);
+    const header = new URL(`${target.protocol}//${host}`);
+    return from.origin === target.origin && from.href === `${from.origin}/` &&
+      header.host === target.host && !header.username && !header.password &&
+      header.pathname === "/" && !header.search && !header.hash;
   } catch {
     return false;
   }

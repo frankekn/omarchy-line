@@ -227,6 +227,47 @@ Deno.test("a POST from another origin is refused", async () => {
   }
 });
 
+Deno.test("POST and WebSocket origins include scheme and normalize host case", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    for (
+      const [origin, host, expected] of [
+        ["null", "box:3440", 403],
+        ["https://box:3440", "box:3440", 403],
+        ["http://evil:3440", "evil:3440", 403],
+        ["http://BOX:3440", "BOX:3440", 204],
+      ] as const
+    ) {
+      const headers = { cookie, origin, host };
+      const post = await web.handle(get("/api/signout", {
+        method: "POST",
+        headers,
+      }));
+      const ws = await web.handle(get("/api/ws", { headers }));
+      assertEquals(post.status, expected);
+      assertEquals(ws.status, expected === 204 ? 400 : 403);
+    }
+    const withoutOrigin = { cookie, host: "box:3440" };
+    assertEquals(
+      (await web.handle(get("/api/signout", {
+        method: "POST",
+        headers: withoutOrigin,
+      }))).status,
+      204,
+    );
+    assertEquals(
+      (await web.handle(get("/api/ws", {
+        headers: withoutOrigin,
+      }))).status,
+      400,
+    );
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("/api/file serves media and the QR, never storage.json", async () => {
   const { stateDir, web } = await fixture();
   try {
