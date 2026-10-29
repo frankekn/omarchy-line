@@ -209,9 +209,28 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
 
-網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。它也會
-在連線時送出已有的 `{ "web": "state", "state": … }`，之後每 500 毫秒檢查 state，
-偵測到變動時送出更新；連線時也會送出存在的 `{ "web": "events", "events": … }`。
+網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。網頁
+連線時，每 500 毫秒檢查 `state.json`；中間的寫入可能略過。瀏覽器提出
+`enil-state-delta-v1` WebSocket 子協定後，會收到帶版本的 state 幀：
+
+- `{ "web": "state", "generation": "…", "version": N, "state": … }`
+  是完整快照。新連線先檢查檔案再送出完整快照；檔案不存在或無效時會等待。
+- `{ "web": "state-delta", "generation": "…", "base": N,
+  "version": N+1, "state": …, "remove": [ … ], "put": [ … ] }` 更新大型
+  快照。`state` 取代除了 `chats` 以外的所有頂層欄位；已移除的欄位不會保留。
+  `remove` 列出刪除的聊天 mid。每筆 `put` 是 `{ "index": I, "chat": … }`：
+  先從舊清單移除這些 mid，再按 index 遞增順序插入其聊天列。index 以最後的清單為準。
+  完整快照幀小於 20 KiB、帳號或 boot 變更、清單不相容，或 patch 沒有比較小時，
+  bridge 會改送完整快照。時間戳記（包括心跳）仍留在 `state` 中。
+
+沒有該子協定時，bridge 只送完整的 `{ "web": "state", "state": … }` 快照。
+網頁無法用子協定連線時，會改用沒有子協定的連線重試，因此 server 降版時保持開啟的
+網頁仍能使用舊版 bridge。
+
+`generation` 識別共用 feed，`version` 隨每次偵測到的變更遞增。網頁將快照與即時
+聊天推播分開保存，忽略舊幀；delta 的 base 或 generation 缺失或不相容時會重新連線，
+取得完整快照。daemon 的 `bootId` 與 `chatsRevision` 仍決定快照能否取代較新的聊天
+推播。連線時 bridge 也會送出存在的 `{ "web": "events", "events": … }`。
 指令的 `id` 必須是安全整數或最多 128 個 UTF-16 code unit 的字串；重複使用尚未
 完成的 id，或超過 256 筆未完成指令，會關閉連線。這個用來對應回覆的 `id` 和下方
 傳送用的 `requestId` 不同。bridge 拒絕剪貼簿指令，`sendFile` 只接受 web server

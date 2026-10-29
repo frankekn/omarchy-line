@@ -1,12 +1,13 @@
 // WebSocket lifecycle, request correlation and reconnect backoff. The socket
 // and clock are injectable.
+import { makeStateDecoder } from "./state-wire.js";
 /**
  * @typedef {object} Socket
  * @property {number} readyState
  * @property {WebSocket["send"]} send
  * @property {WebSocket["close"]} close
  * @property {WebSocket["addEventListener"]} addEventListener
- * @typedef {{new(url: string): Socket, OPEN: number}} SocketFactory
+ * @typedef {{new(url: string, protocols?: string | string[]): Socket, OPEN: number}} SocketFactory
  * @param {object} options
  * @param {ReturnType<typeof import("./model.js").createModel>} options.model
  * @param {string} options.url
@@ -33,6 +34,9 @@ export function createConnection(
     errorMessage = () => "Request failed",
   },
 ) {
+  // A page left open across a server downgrade can retry without the newer
+  // subprotocol when the handshake never yields a frame.
+  let tryLegacy = false;
   function command(cmd, args = {}) {
     return new Promise((resolve, reject) => {
       if (
@@ -55,7 +59,12 @@ export function createConnection(
     if (!model.signedIn) return;
     cancel(model.retryTimer);
     onStatus(model.everConnected ? "reconnecting" : "connecting");
-    const socket = new WebSocketClass(url);
+    const negotiated = !tryLegacy;
+    const socket = negotiated
+      ? new WebSocketClass(url, "enil-state-delta-v1")
+      : new WebSocketClass(url);
+    const decodeState = makeStateDecoder();
+    let gotFrame = false;
     model.socket = socket;
     const reconnect = model.everConnected;
     socket.addEventListener("message", (event) => {
@@ -67,6 +76,14 @@ export function createConnection(
         return;
       }
       if (!frame || typeof frame !== "object") return;
+      const decoded = decodeState(frame);
+      if (decoded.resync) {
+        socket.close();
+        return;
+      }
+      if (!decoded.frame) return;
+      frame = decoded.frame;
+      gotFrame = true;
       const firstFrame = !model.connected;
       if (firstFrame) {
         model.connected = true;
@@ -88,6 +105,7 @@ export function createConnection(
     });
     socket.addEventListener("close", () => {
       if (model.socket !== socket) return;
+      tryLegacy = !gotFrame && negotiated;
       model.connected = false;
       for (const request of model.requests.values()) {
         request.reject(

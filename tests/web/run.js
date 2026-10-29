@@ -11,6 +11,7 @@ import { parity } from "./parity.js";
 import { review } from "./review.js";
 import { a11y } from "./a11y.js";
 import { parityFixes } from "./parity-fixes.js";
+import { stateWire } from "./state-wire.js";
 
 const suites = {
   main,
@@ -24,6 +25,7 @@ const suites = {
   review,
   a11y,
   "parity-fixes": parityFixes,
+  "state-wire": stateWire,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

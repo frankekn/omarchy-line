@@ -6,7 +6,8 @@
  * events.json once per connection to catch up.
  *
  * Frames to the browser: daemon lines verbatim, and
- *   {"web":"state","state":<state.json>}   on connect and on every change
+ *   {"web":"state",...,"state":<state.json>} on connect and full updates
+ *   {"web":"state-delta",...}                 for smaller large-state updates
  *   {"web":"events","events":<events.json>} on connect, when the file exists
  * Close code 4001 means the daemon is not there; the page reconnects.
  *
@@ -20,6 +21,8 @@ import { TextLineStream } from "@std/streams/text-line-stream";
 import type { Uploads } from "./files.ts";
 
 const STATE_POLL_MS = 500;
+const MIN_DELTA_STATE_BYTES = 20 * 1024;
+const STATE_DELTA_PROTOCOL = "enil-state-delta-v1";
 /** A browser this far behind is dropped; it reconnects and catches up. */
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
 const MAX_FRAME_BYTES = 1024 * 1024;
@@ -37,33 +40,105 @@ const REFUSED_CMDS = new Set([
 ]);
 
 type Send = (frame: string) => void;
+type Subscriber = { delta: boolean; initialized: boolean };
+type StateObject = Record<string, unknown>;
+type ChatRow = StateObject & { mid: string };
+
+function object(value: unknown): StateObject | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as StateObject
+    : null;
+}
+
+function chatRows(state: StateObject | null): ChatRow[] | null {
+  if (!Array.isArray(state?.chats)) return null;
+  const seen = new Set<string>(), rows: ChatRow[] = [];
+  for (const value of state.chats) {
+    const row = object(value), mid = row?.mid;
+    if (typeof mid !== "string" || !mid || seen.has(mid)) return null;
+    seen.add(mid);
+    rows.push(row as ChatRow);
+  }
+  return rows;
+}
+
+/** Produce a patch only when unchanged rows retain their relative order. */
+function stateDelta(
+  previous: unknown,
+  next: unknown,
+  generation: string,
+  base: number,
+  version: number,
+): string | null {
+  const before = object(previous), after = object(next);
+  const oldRows = chatRows(before), newRows = chatRows(after);
+  const oldAccount = object(before?.me)?.mid, account = object(after?.me)?.mid;
+  if (
+    !before || !after || !oldRows || !newRows ||
+    typeof before.bootId !== "string" || !before.bootId ||
+    before.bootId !== after.bootId || typeof account !== "string" || !account ||
+    oldAccount !== account
+  ) return null;
+  const old = new Map(oldRows.map((row) => [row.mid, row]));
+  const nextIds = new Set(newRows.map((row) => row.mid));
+  const remove = oldRows.filter((row) => !nextIds.has(row.mid))
+    .map((row) => row.mid);
+  const put: { index: number; chat: ChatRow }[] = [];
+  const changed = new Set<string>();
+  for (const [index, chat] of newRows.entries()) {
+    const prior = old.get(chat.mid);
+    if (!prior || JSON.stringify(prior) !== JSON.stringify(chat)) {
+      changed.add(chat.mid);
+      put.push({ index, chat });
+    }
+  }
+  const kept = oldRows.filter((row) =>
+    nextIds.has(row.mid) && !changed.has(row.mid)
+  );
+  const ordered = newRows.filter((row) => !changed.has(row.mid));
+  if (kept.some((row, i) => row.mid !== ordered[i]?.mid)) return null;
+  const state = { ...after };
+  delete state.chats;
+  return JSON.stringify({
+    web: "state-delta",
+    generation,
+    base,
+    version,
+    state,
+    remove,
+    put,
+  });
+}
 
 /**
  * state.json for every open page, read once per change rather than once per
- * page. The file is atomically replaced, so its mtime moves on every write.
+ * page. Atomic replacement also changes the file identity, even when two
+ * writes have the same millisecond mtime.
  */
 export class StateFeed {
   readonly #path: string;
-  readonly #subscribers = new Set<Send>();
+  readonly #subscribers = new Map<Send, Subscriber>();
+  readonly #generation = crypto.randomUUID();
+  readonly #encoder = new TextEncoder();
   #text = "";
-  #mtime = -1;
-  #polling = false;
+  #state: unknown = null;
+  #version = 0;
+  #fileKey = "";
+  #polling: Promise<void> | null = null;
   readonly #timer: ReturnType<typeof setInterval>;
 
   constructor(path: string) {
     this.#path = path;
     this.#timer = setInterval(() => {
-      if (this.#polling || this.#subscribers.size === 0) return;
-      this.#polling = true;
-      this.#poll().finally(() => this.#polling = false);
+      if (this.#subscribers.size === 0) return;
+      void this.#poll();
     }, STATE_POLL_MS);
   }
 
-  /** Subscribe, and get the current state at once. */
-  async add(send: Send): Promise<void> {
-    this.#subscribers.add(send);
-    if (this.#text) send(stateFrame(this.#text));
-    else await this.#poll();
+  /** Check the file before seeding a new subscriber with a full snapshot. */
+  async add(send: Send, delta = false): Promise<void> {
+    this.#subscribers.set(send, { delta, initialized: false });
+    await this.#poll();
   }
 
   delete(send: Send): void {
@@ -75,16 +150,76 @@ export class StateFeed {
     this.#subscribers.clear();
   }
 
-  async #poll(): Promise<void> {
+  #poll(): Promise<void> {
+    if (this.#polling) return this.#polling;
+    this.#polling = this.#read().finally(() => this.#polling = null);
+    return this.#polling;
+  }
+
+  #fullFrame(): string {
+    return `{"web":"state","generation":${JSON.stringify(this.#generation)},` +
+      `"version":${this.#version},"state":${this.#text}}`;
+  }
+
+  #legacyFrame(): string {
+    return `{"web":"state","state":${this.#text}}`;
+  }
+
+  #sendInitial(): void {
+    for (const [send, subscriber] of this.#subscribers) {
+      if (subscriber.initialized) continue;
+      subscriber.initialized = true;
+      send(subscriber.delta ? this.#fullFrame() : this.#legacyFrame());
+    }
+  }
+
+  async #read(): Promise<void> {
     const info = await Deno.stat(this.#path).catch(() => null);
-    const mtime = info?.mtime?.getTime() ?? -1;
-    if (mtime === this.#mtime) return;
+    if (!info) {
+      this.#fileKey = "";
+      return;
+    }
+    const key = `${info.dev}:${info.ino}:${info.size}:${info.mtime?.getTime()}`;
+    if (key === this.#fileKey && this.#text) {
+      this.#sendInitial();
+      return;
+    }
     const text = await Deno.readTextFile(this.#path).catch(() => "");
-    if (!isJson(text)) return; // gone or mid-write: the next poll sees it
-    this.#mtime = mtime;
+    let state: unknown;
+    try {
+      state = JSON.parse(text);
+    } catch {
+      return; // gone or mid-write: the next poll sees it
+    }
+    this.#fileKey = key;
+    if (text === this.#text) {
+      this.#sendInitial();
+      return;
+    }
+    const previous = this.#state, base = this.#version;
     this.#text = text;
-    const frame = stateFrame(text);
-    for (const send of this.#subscribers) send(frame);
+    this.#state = state;
+    this.#version++;
+    const full = this.#fullFrame();
+    const fullBytes = this.#encoder.encode(full).length;
+    const delta =
+      [...this.#subscribers.values()].some((subscriber) =>
+          subscriber.delta && subscriber.initialized
+        ) &&
+        fullBytes >= MIN_DELTA_STATE_BYTES
+        ? stateDelta(previous, state, this.#generation, base, this.#version)
+        : null;
+    const frame = delta && this.#encoder.encode(delta).length < fullBytes
+      ? delta
+      : full;
+    const legacy = this.#legacyFrame();
+    for (const [send, subscriber] of this.#subscribers) {
+      const next = subscriber.delta
+        ? subscriber.initialized ? frame : full
+        : legacy;
+      subscriber.initialized = true;
+      send(next);
+    }
   }
 }
 
@@ -97,10 +232,6 @@ function isJson(text: string): boolean {
   }
 }
 
-function stateFrame(text: string): string {
-  return `{"web":"state","state":${text}}`;
-}
-
 export interface BridgeDeps {
   sockPath: string;
   eventsPath: string;
@@ -111,8 +242,11 @@ export interface BridgeDeps {
 
 /** Upgrade `req` and bridge it; the caller has already checked who it is. */
 export function bridge(req: Request, deps: BridgeDeps): Response {
+  const delta = (req.headers.get("sec-websocket-protocol") ?? "").split(",")
+    .some((protocol) => protocol.trim() === STATE_DELTA_PROTOCOL);
   const { socket: ws, response } = Deno.upgradeWebSocket(req, {
     idleTimeout: 60,
+    ...(delta ? { protocol: STATE_DELTA_PROTOCOL } : {}),
   });
   const encoder = new TextEncoder();
   let conn: Deno.UnixConn | null = null;
@@ -237,7 +371,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
       shut(CLOSE_DAEMON_OFFLINE, "daemon offline");
       return;
     }
-    await deps.feed.add(send);
+    await deps.feed.add(send, delta);
     const events = await Deno.readTextFile(deps.eventsPath).catch(() => "");
     if (isJson(events)) send(`{"web":"events","events":${events}}`);
     ready();

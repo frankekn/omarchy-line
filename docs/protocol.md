@@ -245,14 +245,40 @@ Socket commands (one JSON line per request, replies
 | `sync` | none | `{ chats, link, at }` |
 
 The web bridge carries one command per WebSocket text frame and forwards
-daemon replies and pushes. It also sends `{ "web": "state", "state": … }`
-on connection when available and when its 500 ms poll detects a state change,
-and `{ "web": "events", "events": … }` on connection when present. A
-command's `id` must be a safe integer or a string of at most 128 UTF-16 code
-units. Duplicate outstanding ids or more than 256 outstanding commands close
-the connection. This reply-matching `id` is separate from the
-send's `requestId` below. The bridge refuses clipboard commands and accepts
-`sendFile` only for an upload owned by the web server.
+daemon replies and pushes. It checks `state.json` every 500 ms while pages are
+connected; intermediate writes can be skipped. A browser offers the
+`enil-state-delta-v1` WebSocket subprotocol to receive versioned state frames:
+
+- `{ "web": "state", "generation": "…", "version": N, "state": … }`
+  is a complete snapshot. On connection the feed checks the file before
+  sending one, and waits if the file is missing or invalid.
+- `{ "web": "state-delta", "generation": "…", "base": N,
+  "version": N+1, "state": …, "remove": [ … ], "put": [ … ] }` updates a
+  large snapshot. `state` replaces all top-level fields except `chats`;
+  removed fields stay removed. `remove` lists deleted chat mids. Each `put`
+  is `{ "index": I, "chat": … }`: remove its mid from the old list, then
+  insert the rows in ascending index order into the remaining list. Indices
+  refer to the resulting list. The bridge sends a complete snapshot when its
+  frame is below 20 KiB, on an account or boot change, for an incompatible
+  list, or when the patch is not smaller. Timestamps, including the heartbeat,
+  remain in `state`.
+
+Without that subprotocol, the bridge sends only complete
+`{ "web": "state", "state": … }` snapshots. A page that cannot connect
+with the subprotocol retries without it, so a page left open across a server
+downgrade can still use an older bridge.
+
+`generation` identifies the shared feed and `version` advances with each
+observed change. A page keeps its own snapshot separately from live chat
+pushes, ignores old frames, and reconnects for a fresh snapshot if a delta's
+base or generation is missing or incompatible. The daemon's `bootId` and
+`chatsRevision` still decide whether a snapshot can replace a newer live
+chat push. The bridge also sends `{ "web": "events", "events": … }` on
+connection when present. A command's `id` must be a safe integer or a string
+of at most 128 UTF-16 code units. Duplicate outstanding ids or more than 256
+outstanding commands close the connection. This reply-matching `id` is
+separate from the send's `requestId` below. The bridge refuses clipboard
+commands and accepts `sendFile` only for an upload owned by the web server.
 
 ## Push frames
 
