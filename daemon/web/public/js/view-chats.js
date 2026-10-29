@@ -234,6 +234,19 @@ export function createChatsView(ctx) {
       event.preventDefault();
       return;
     }
+    if (event.key.length === 1 && target instanceof Element) {
+      const list = $("chat-list"), messages = $("messages");
+      const control = target.closest(
+        'a[href], button, input, select, textarea, [role="button"], ' +
+          '[contenteditable]:not([contenteditable="false"]), [tabindex], ' +
+          "audio[controls], video[controls]",
+      );
+      const inChatList = target === list ||
+        (list.contains(target) && target.closest(".chat-row") === control);
+      const inMessages = messages.contains(target) &&
+        (!control || control === messages);
+      if (target !== document.body && !inChatList && !inMessages) return;
+    }
     if (event.key === "/" && !event.shiftKey) {
       if (model.chatOpen) ctx.backToList();
       $("search").focus();

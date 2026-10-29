@@ -324,9 +324,74 @@ export async function lightboxModifiers(h) {
   h.step("lightbox-modifiers-and-composition");
 }
 
+export async function shortcutScope(h) {
+  const { context, page, tap } = await pictureFixture(
+    h,
+    [picture(h, "scope-image", "stub-shot1.png")],
+    { client: (frame) => frame.cmd !== "sync" },
+  );
+  await page.evaluate(() => {
+    globalThis.lastShortcutPrevented = null;
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "r") {
+        globalThis.lastShortcutPrevented = event.defaultPrevented;
+      }
+    });
+  });
+  const syncCount = () =>
+    tap.sent.filter((frame) => frame.cmd === "sync").length;
+  for (
+    const selector of [
+      "#web-signout",
+      "#sync",
+      ".message-actions button",
+      'article[data-message-id="scope-image"] img',
+    ]
+  ) {
+    await page.locator(selector).first().focus();
+    await page.keyboard.press("r");
+    assert.equal(
+      await page.evaluate(() => globalThis.lastShortcutPrevented),
+      false,
+    );
+    assert.equal(syncCount(), 0);
+  }
+  for (const selector of [".chat-row", "#messages"]) {
+    const target = page.locator(selector).first();
+    if (selector === "#messages") {
+      await target.evaluate((node) => node.tabIndex = 0);
+    }
+    await target.focus();
+    const before = syncCount();
+    await page.keyboard.press("r");
+    await until(() => syncCount() === before + 1, `sync from ${selector}`);
+    assert.equal(
+      await page.evaluate(() => globalThis.lastShortcutPrevented),
+      true,
+    );
+    const id = tap.sent.filter((frame) => frame.cmd === "sync").at(-1).id;
+    tap.socket.send(JSON.stringify({ id, ok: false, error: "fixture sync" }));
+    await until(
+      async () => !(await page.locator("#sync").isDisabled()),
+      "sync idle",
+    );
+  }
+  await page.locator("#messages").blur();
+  await page.keyboard.press("/");
+  assert.equal(
+    await page.locator("#search").evaluate((node) =>
+      node === document.activeElement
+    ),
+    true,
+  );
+  await context.close();
+  h.step("character-shortcut-focus-scope");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
   await chatPatchOrder(h);
   await lightboxModifiers(h);
+  await shortcutScope(h);
 }
