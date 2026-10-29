@@ -60,15 +60,18 @@ export function applyChatPush(snapshot, row, revision, boot) {
 }
 
 export function visibleChats(chats, query) {
-  const search = String(query || "").trim().toLocaleLowerCase();
-  return chats.filter((chat) =>
-    (search || !chat.hidden) && (!search ||
-      String(chat.name || "").toLocaleLowerCase().includes(search) ||
-      String(chat.mid || "").toLocaleLowerCase().includes(search))
-  ).sort((a, b) =>
-    Number(Number(b.unread || 0) > 0) - Number(Number(a.unread || 0) > 0) ||
-    Number(b.lastTime || 0) - Number(a.lastTime || 0)
-  );
+  const search = String(query || "").trim().toLowerCase();
+  const unread = [], rest = [], hidden = [];
+  for (const chat of chats) {
+    const haystack = `${chat.name || chat.mid} ${chat.lastFrom || ""} ${
+      chat.lastText || ""
+    }`.toLowerCase();
+    if (search && !haystack.includes(search)) continue;
+    if (chat.hidden) hidden.push(chat);
+    else if (Number(chat.unread || 0) > 0) unread.push(chat);
+    else rest.push(chat);
+  }
+  return search ? unread.concat(rest, hidden) : unread.concat(rest);
 }
 
 export function compareMessages(a, b) {

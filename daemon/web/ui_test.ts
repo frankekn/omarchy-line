@@ -35,6 +35,21 @@ Deno.test("unread position counts only incoming messages", () => {
   assertEquals(firstUnreadIndex(null, 1, "me"), -1);
 });
 
+Deno.test("chat search uses the displayed name, sender and preview", () => {
+  const chats = [
+    { mid: "first-id", name: "Alice", lastFrom: "Bob", lastText: "Hello" },
+    { mid: "fallback-id", lastText: "Other" },
+    { mid: "hidden", name: "Alice", hidden: true, unread: 2 },
+  ];
+  const ids = (query: string) =>
+    visibleChats(chats, query).map((chat: { mid: string }) => chat.mid);
+  assertEquals(ids(" bob "), ["first-id"]);
+  assertEquals(ids("HELLO"), ["first-id"]);
+  assertEquals(ids("fallback-id"), ["fallback-id"]);
+  assertEquals(ids("first-id"), []);
+  assertEquals(ids("alice"), ["first-id", "hidden"]);
+});
+
 Deno.test("message deduplication and requestId sender boundary", () => {
   const pending = {
     id: "local",

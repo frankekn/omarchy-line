@@ -26,7 +26,13 @@ export function createChatsView(ctx) {
         name,
         el("time", "row-time", formatTime(chat.lastTime, english)),
       );
-      bottom.append(el("span", "row-preview", chat.lastText || ""));
+      bottom.append(
+        el(
+          "span",
+          "row-preview",
+          `${chat.lastFrom ? `${chat.lastFrom}: ` : ""}${chat.lastText || ""}`,
+        ),
+      );
       if (Number(chat.unread) > 0) {
         bottom.append(
           el("span", "badge", Number(chat.unread) > 99 ? "99+" : chat.unread),
