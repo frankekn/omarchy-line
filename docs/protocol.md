@@ -244,6 +244,16 @@ Socket commands (one JSON line per request, replies
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
 
+The web bridge carries one command per WebSocket text frame and forwards
+daemon replies and pushes. It also sends `{ "web": "state", "state": … }`
+on connection when available and when its 500 ms poll detects a state change,
+and `{ "web": "events", "events": … }` on connection when present. A
+command's `id` must be a safe integer or a string of at most 128 UTF-16 code
+units. Duplicate outstanding ids or more than 256 outstanding commands close
+the connection. This reply-matching `id` is separate from the
+send's `requestId` below. The bridge refuses clipboard commands and accepts
+`sendFile` only for an upload owned by the web server.
+
 ## Push frames
 
 While a panel holds the socket, the daemon also writes two kinds of **push
@@ -283,11 +293,12 @@ They may come back after interactive commands sent later. State-changing
 commands (send, reply, unsend, …) still run in receive order.
 
 The five send commands take an optional non-empty `requestId` string. The
-daemon puts it into the LINE message's `contentMetadata` and returns it
-verbatim in later history or message events under the same name. The panel
-creates one per send. When the socket drops after LINE accepted the message,
-the value precisely confirms the outcome, with no guessing by identical text or
-time. Other clients may omit it. History messages then carry no such field.
+daemon puts it into the LINE message's `contentMetadata`. If LINE preserves
+it, later history or message events return it under the same name. The panel
+and web page create one per send. When the socket drops after LINE accepted
+the message, a matching value precisely confirms the outcome, with no
+guessing by identical text or time. The field can be absent if the client
+omitted it or LINE did not preserve it.
 
 ## Drafts and unconfirmed sends
 
@@ -304,6 +315,12 @@ events after a disconnect. Failures and unconfirmed sends keep it.
 as logout. Only a definite `idle` or a settled non-retryable session error
 clears that account's drafts and unconfirmed sends.
 
+The web page stores its drafts and pending sends separately in the browser's
+local storage, per account and chat. It does not automatically retry an
+unconfirmed send. A successful reply clears the persisted pending row; the
+page caches up to 500 acknowledged sends in memory until their own matching
+echo or history arrives. Reloading the page clears that in-memory cache.
+
 ## Command details
 
 A reply is **always written whole**: the daemon `writeAll`s to the last byte
@@ -319,10 +336,15 @@ journal.
 it) and refetches the chat list. It always reports the round that
 finished **after** this request arrived, waiting out a round already in
 flight. `chats` is the fetched chat count, `link` is the push state **at the
-moment the sync began** (`"up"`/`"down"`; a rebuild flips it to down at once,
-so a value read after the report is always down), `at` is the completion's ms
-timestamp. A failed fetch answers `{ok:false, error:"同步失敗：…"}` with a
-human-readable reason.
+moment the sync began** (`"up"`/`"down"`; a rebuild first sets it to down),
+`at` is the completion's ms timestamp. A failed fetch answers
+`{ok:false, error:"同步失敗：…"}` with a human-readable reason.
+
+After a successful `sync`, the web page reloads the active chat, if there is
+one, using its visibility to decide `markRead`. A replacement history request
+keeps buffered events and ignores a late reply from the superseded request.
+The page's history and members generation counters are local bookkeeping, not
+fields in the socket protocol.
 
 `members` is the group member list for `@`, answerable only for groups
 (`c…`) and rooms (`r…`). 1:1 (`u…`) answers
@@ -330,7 +352,8 @@ human-readable reason.
 The daemon caches ten minutes, so re-entering the same chat only fetches
 once. Rooms usually can't produce a list. Then the reply is
 `{ok:false, error:"多人聊天室（room）拿不到成員名單"}` and the panel shows no
-banner, explaining only when the user actually types `@`.
+banner, explaining only when the user actually types `@`. The web page also
+shows the error in the mention picker.
 
 `image` fetches a **public** image into a local file: the daemon caches it in
 `media/public-images/` (merging, caps and sweeping as described in [architecture.md](architecture.md#public-images))

@@ -188,6 +188,7 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | cmd | 參數 | 成功時的 `data` |
 |---|---|---|
 | `history` | `chat`, `count`（1–200，超界夾住、非數字當 30）, `before?`（往前翻頁的訊息 id）, `markRead?` | 訊息陣列，舊的在前 |
+| `markRead` | `chat`, `upTo`（已讀到最新訊息 id 的十進位字串） | `{ "marked": bool }`。若已讀位置已涵蓋 `upTo`、該列已是 0 未讀且沒有尚未計入的訊息，或 LINE 拒絕標記，就會是 `false` |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | 無 |
 | `reply` | `chat`, `text`, `replyTo`（要回覆的訊息 id）, `mentions?`, `requestId?` | 無 |
 | `react` | `chat`, `messageId`, `type` | 無 |
@@ -207,6 +208,14 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `login` | 無 | 無 |
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
+
+網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。它也會
+在連線時送出已有的 `{ "web": "state", "state": … }`，之後每 500 毫秒檢查 state，
+偵測到變動時送出更新；連線時也會送出存在的 `{ "web": "events", "events": … }`。
+指令的 `id` 必須是安全整數或最多 128 個 UTF-16 code unit 的字串；重複使用尚未
+完成的 id，或超過 256 筆未完成指令，會關閉連線。這個用來對應回覆的 `id` 和下方
+傳送用的 `requestId` 不同。bridge 拒絕剪貼簿指令，`sendFile` 只接受 web server
+持有的上傳檔。
 
 ## 推播幀
 
@@ -238,9 +247,10 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 接收順序執行。
 
 五個傳送指令的 `requestId` 是選用的非空字串。daemon 會把它放進 LINE 訊息的
-`contentMetadata`，並在之後的 history 或 message event 以同名欄位原樣回傳。面板替每次
-傳送產生唯一值；socket 在 LINE 已接受訊息後斷線時，就能用這個值精確確認結果，不以
-相同文字或時間猜測。其他 client 可以省略，省略時 history 訊息也沒有這個欄位。
+`contentMetadata`；若 LINE 保留這個值，之後的 history 或 message event 就會以同名
+欄位回傳。面板和網頁替每次傳送產生唯一值；socket 在 LINE 已接受訊息後斷線時，可以
+用相同的值精確確認結果，不以相同文字或時間猜測。client 沒有提供，或 LINE 沒有保留
+時，這個欄位可能不存在。
 
 ## 草稿與未確認的傳送
 
@@ -252,6 +262,11 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 對應的草稿；送出失敗或尚未精確確認時仍保留。daemon 重啟期間的 `starting` 與可重試的
 網路 `error` 不會被當成登出；明確進入 `idle`，或已結束且無法重試的 session 錯誤，
 才會清除該帳號的草稿與未確認傳送。
+
+網頁的草稿和 pending 傳送另存於瀏覽器 local storage，也依帳號和聊天室分開。未確認
+的傳送不會自動重送。成功回覆會清除持久的 pending 列；網頁會在記憶體中快取最多
+500 個已確認的傳送，直到收到自己的相同 echo 或 history。重新載入頁面會清除這份
+記憶體快取。
 
 ## 指令細節
 
@@ -265,14 +280,18 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 `sync` 是手動同步：重建 push 連線（不等它完成）並重抓聊天列表。回報的一定是**收到這個
 請求之後**才跑完的那一輪，剛好有一輪在飛就先等它結束。`chats` 是抓回來的
 聊天室數量、`link` 是**同步開始當下**的 push 狀態（`"up"`／`"down"`；重建一開始就會把
-狀態設成 down，回報之後的值等於每次都說 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
+狀態設成 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
 回 `{ok:false, error:"同步失敗：…"}`，後半是給人看的原因。
+
+`sync` 成功後，網頁會重新載入目前作用中的聊天室（如果有），並依是否可見決定
+`markRead`。新 history 請求取代進行中的請求時會保留緩衝事件，並忽略舊請求的遲到
+回覆。網頁的 history 與 members generation 計數器是本機狀態，不是 socket 協定欄位。
 
 `members` 是 @ 用的群組成員名單，只有群組（`c…`）和 room（`r…`）能問；1:1（`u…`）回
 `{ok:false, error:"這不是群組，沒有成員名單"}`。名單裡不含自己。daemon 快取十分鐘，
 所以同一間聊天室來回開關只會真的抓一次。room 的名單多半拿不到，那時回
 `{ok:false, error:"多人聊天室（room）拿不到成員名單"}`。面板不跳橫幅，等使用者真的
-打了 `@` 才在選單裡說原因。
+打了 `@` 才在選單裡說原因。網頁也會在 mention 選單裡顯示錯誤。
 
 `image` 拿的是一張**公開**圖片的本機檔：daemon 抓進 `media/public-images/`（合併、
 上限與清掃見 [architecture.zh-TW.md](architecture.zh-TW.md#公開圖片)），回 `{ "path": "…" }`，面板只讀 `file://`。只收
