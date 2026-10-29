@@ -56,6 +56,7 @@ jobs:
           deno test -A tests/web/boot-connection_test.js
           deno run -A tests/web/boot-rtt.js
           deno run -A tests/web/compiled-assets.js
+          deno run -A tests/web/state-notify.js
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
