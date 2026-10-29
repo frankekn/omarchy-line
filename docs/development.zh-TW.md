@@ -149,6 +149,24 @@ XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
 然後開 `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`。
 `deno task test` 會連同 `web/server_test.ts` 和 `web/ui_test.ts` 一起跑。
 
+stub 的 socket 也接受 `{"cmd":"poke","chat":"cstub-family","text":"hello"}`，
+用來加入一則收到的文字訊息。不帶 `text` 時，`poke` 維持上面說的通知交接行為。
+
+瀏覽器測試會各自啟動 stub 和 web server，並使用暫存的 state 目錄。在 repo 根目錄安裝
+Playwright 的 Chromium 後，可以執行全部測試，或只指定要跑的 suite：
+
+```bash
+npx --yes playwright@1.64.1 install --with-deps chromium
+deno run -A tests/web/run.js
+deno run -A tests/web/run.js media mentions
+```
+
+設定 `CHROMIUM=/usr/bin/chromium` 可以改用本機 Chromium。harness 預設選一個空的
+port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 state，失敗時會留下
+截圖和 log。每個瀏覽器頁面都不能有 console error 或 page error。
+設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
+暫存目錄。
+
 ## 截圖
 
 文件用的截圖一律對著 stub 拍，不要用真的帳號。真實截圖會拍到沒同意公開的人的名字、

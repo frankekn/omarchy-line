@@ -174,6 +174,27 @@ XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
 Then open `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`.
 `deno task test` runs `web/server_test.ts` and `web/ui_test.ts` with the rest.
 
+The stub also accepts `{"cmd":"poke","chat":"cstub-family","text":"hello"}`
+on its socket to add an incoming text message. Without `text`, `poke` keeps
+its notification hand-off behavior described above.
+
+The browser suites start their own stub and web server, each with a temporary
+state directory. From the repository root, install Playwright's Chromium and
+run all suites, or name only the suites you need:
+
+```bash
+npx --yes playwright@1.64.1 install --with-deps chromium
+deno run -A tests/web/run.js
+deno run -A tests/web/run.js media mentions
+```
+
+Set `CHROMIUM=/usr/bin/chromium` to use a local Chromium instead. By default
+the harness chooses a free port; set `ENIL_WEB_TEST_PORT` to request one.
+Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
+there instead of the system temporary directory.
+It removes temporary state after success and keeps it with screenshots and
+logs on failure. Every browser page must have no console or page errors.
+
 ## Take screenshots
 
 Take screenshots for the docs against the stub, never against a real
