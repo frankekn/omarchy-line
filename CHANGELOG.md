@@ -21,6 +21,11 @@ Chen, so this project starts at 2.x.
 - A launchd agent, `daemon/enil.plist`, for running the daemon and web page
   on macOS. See [docs/web.md](docs/web.md#run-it-on-a-mac).
 
+### Fixed
+
+- An edit or unsend arriving while the daemon opens a chat's local message
+  cache is no longer overwritten by older cached history.
+
 ## [2.16.0] - 2026-10-07
 
 ### Added
