@@ -609,7 +609,7 @@ textarea::placeholder {
   min-width: 0;
   flex: 1;
 }
-.chat-heading h2 {
+.chat-heading h1 {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
