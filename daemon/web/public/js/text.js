@@ -1,5 +1,19 @@
 // Split message text into safe link, mention and plain segments. No DOM
 // dependencies.
+const graphemes = typeof Intl.Segmenter === "function"
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : null;
+
+/** The first visible character, including an emoji sequence when supported. */
+export function avatarInitial(value, segmenter = graphemes) {
+  const name = String(value || "?").trim();
+  if (!name) return "?";
+  const first = segmenter
+    ? segmenter.segment(name)[Symbol.iterator]().next().value?.segment
+    : Array.from(name)[0];
+  return (first || "?").toUpperCase();
+}
+
 export function splitText(input, mentions) {
   const text = String(input || ""), links = [];
   for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {

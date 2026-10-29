@@ -12,7 +12,7 @@ import {
   resetBoot,
   visibleChats,
 } from "./public/js/protocol.js";
-import { splitText } from "./public/js/text.js";
+import { avatarInitial, splitText } from "./public/js/text.js";
 import { createDraftStore } from "./public/js/drafts.js";
 import { createConnection } from "./public/js/connection.js";
 import { createModel } from "./public/js/model.js";
@@ -724,6 +724,12 @@ Deno.test("safe link splitting, trailing punctuation and UTF-16 mention", () => 
     splitText("javascript:alert(1)", []).some((s: { url: string }) => !!s.url),
     false,
   );
+});
+Deno.test("avatar initials preserve graphemes or a complete code point", () => {
+  assertEquals(avatarInitial("👩‍👩‍👧‍👦 Family"), "👩‍👩‍👧‍👦");
+  assertEquals(avatarInitial("😀 Family", null), "😀");
+  assertEquals(avatarInitial(" alpha"), "A");
+  assertEquals(avatarInitial("  "), "?");
 });
 class MemoryStorage {
   values = new Map<string, string>();

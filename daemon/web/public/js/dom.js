@@ -1,5 +1,5 @@
 // Small DOM and display helpers; depends on the pure text segmenter.
-import { splitText } from "./text.js";
+import { avatarInitial, splitText } from "./text.js";
 export const $ = (id) => document.getElementById(id);
 export function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -24,14 +24,11 @@ export function httpsUrl(value) {
 const avatars = new WeakMap();
 export function setAvatar(node, path, name) {
   const source = path ? String(path) : "";
-  const initial = (value) =>
-    String(value || "?").trim().slice(0, 1)
-      .toUpperCase() || "?";
   const previous = avatars.get(node);
   if (previous?.source === source) {
     previous.name = name;
     if (!previous.image || previous.image.parentNode !== node) {
-      node.textContent = initial(name);
+      node.textContent = avatarInitial(name);
     }
     return;
   }
@@ -47,11 +44,11 @@ export function setAvatar(node, path, name) {
     image.addEventListener("error", () => {
       if (avatars.get(node) !== current) return;
       node.replaceChildren(
-        document.createTextNode(initial(current.name)),
+        document.createTextNode(avatarInitial(current.name)),
       );
     }, { once: true });
     node.append(image);
-  } else node.textContent = initial(name);
+  } else node.textContent = avatarInitial(name);
 }
 export function formatTime(ms, english) {
   if (!Number(ms)) return "";
