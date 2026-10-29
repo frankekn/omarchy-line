@@ -151,7 +151,8 @@ export function createChatController(ctx) {
       }
       replayHistoryEvents();
       model.historyEvents = [];
-      model.noOlder = fresh.length < 50;
+      // The store can answer a short head page before revalidation too.
+      model.noOlder = fresh.length === 0;
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {
         replayHistoryEvents();

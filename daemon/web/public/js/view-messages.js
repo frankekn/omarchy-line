@@ -9,6 +9,7 @@ export function createMessagesView(ctx) {
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let followedTop = null;
   let followFrame = 0;
+  let suppressPaging = false, pagingTimer = 0, touchY = null;
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
   const pendingFor = (...args) => ctx.pendingFor(...args);
@@ -30,6 +31,8 @@ export function createMessagesView(ctx) {
       ctx.toast(t("missingOrigin"));
       return;
     }
+    // A quote jump can pass the paging threshold without the reader scrolling.
+    suspendPaging(1000);
     target.scrollIntoView({ block: "center", behavior: "smooth" });
     target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
@@ -334,10 +337,25 @@ export function createMessagesView(ctx) {
     }
     followFrame = requestAnimationFrame(settle);
   }
+  function suspendPaging(delay) {
+    suppressPaging = true;
+    clearTimeout(pagingTimer);
+    pagingTimer = setTimeout(() => suppressPaging = false, delay);
+  }
   function renderMessages(mode = "preserve") {
     const list = $("messages"),
       oldHeight = list.scrollHeight,
       oldTop = list.scrollTop;
+    let anchor, anchorTop;
+    if (mode === "anchor") {
+      suspendPaging(200);
+      const area = list.getBoundingClientRect();
+      anchor = [...list.querySelectorAll(".message-row")].find((row) => {
+        const rect = row.getBoundingClientRect();
+        return rect.bottom > area.top && rect.top < area.bottom;
+      });
+      anchorTop = anchor?.getBoundingClientRect().top;
+    }
     const atBottom = oldHeight - oldTop - list.clientHeight <= 2;
     // Deferred layout can grow the list without moving its scroll position.
     // A user who moved away from the last pinned position is reading history.
@@ -346,6 +364,8 @@ export function createMessagesView(ctx) {
     const chatChanged = renderedChat !== model.active ||
       renderedAccount !== model.account;
     if (chatChanged) {
+      suppressPaging = false;
+      clearTimeout(pagingTimer);
       if (followFrame) cancelAnimationFrame(followFrame);
       followFrame = 0;
       ctx.resetReactionPickers();
@@ -543,14 +563,82 @@ export function createMessagesView(ctx) {
     if (mode === "bottom" || (mode === "follow" && following)) {
       followBottom(list);
     } else if (mode === "anchor") {
-      list.scrollTop = oldTop + list.scrollHeight - oldHeight;
+      if (!anchor?.isConnected) {
+        list.scrollTop = oldTop + list.scrollHeight - oldHeight;
+      } else {
+        const chat = renderedChat, account = renderedAccount;
+        let expectedTop = list.scrollTop, frames = 3;
+        const settleAnchor = () => {
+          if (
+            chat !== renderedChat || account !== renderedAccount ||
+            !anchor.isConnected || Math.abs(list.scrollTop - expectedTop) > 2
+          ) return;
+          list.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+          expectedTop = list.scrollTop;
+          if (--frames) requestAnimationFrame(settleAnchor);
+        };
+        settleAnchor();
+      }
     } else list.scrollTop = oldTop;
   }
-  $("messages").addEventListener("scroll", () => {
-    const list = $("messages");
+  const list = $("messages");
+  function loadNearTop() {
     if (list.scrollTop < 150 && list.scrollHeight > list.clientHeight + 10) {
       ctx.loadOlder();
     }
+  }
+  function resumePaging(up) {
+    suppressPaging = false;
+    clearTimeout(pagingTimer);
+    // A gesture at the top may not produce a scroll event at all.
+    if (up) loadNearTop();
+  }
+  list.addEventListener("scroll", () => {
+    if (suppressPaging) {
+      suspendPaging(200);
+      return;
+    }
+    loadNearTop();
   });
+  list.addEventListener("wheel", (event) => resumePaging(event.deltaY < 0), {
+    passive: true,
+  });
+  list.addEventListener("touchstart", (event) => {
+    touchY = event.touches[0]?.clientY ?? null;
+  }, { passive: true });
+  list.addEventListener("touchmove", (event) => {
+    const y = event.touches[0]?.clientY;
+    resumePaging(touchY !== null && y > touchY);
+    touchY = y ?? null;
+  }, { passive: true });
+  list.addEventListener("pointerdown", (event) => {
+    if (event.target === list && event.pointerType === "mouse") {
+      resumePaging(false);
+    }
+  });
+  document.addEventListener("keydown", (event) => {
+    if (
+      !ctx.isViewingChat() || $("lightbox").open || event.isComposing ||
+      event.ctrlKey || event.metaKey || event.altKey || event.shiftKey ||
+      !(event.target === document.body || list.contains(event.target))
+    ) return;
+    const target = event.target;
+    if (
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(
+        target.tagName,
+      ))
+    ) return;
+    if (
+      (event.key === "j" || event.key === "k") &&
+      target instanceof Element && target !== list &&
+      target.closest('button, a[href], [role="button"], [tabindex]')
+    ) return;
+    if (["ArrowUp", "PageUp", "Home", "k"].includes(event.key)) {
+      resumePaging(true);
+    } else if (["ArrowDown", "PageDown", "End", "j"].includes(event.key)) {
+      resumePaging(false);
+    }
+  }, true);
   return { renderMessages, closeOpenReactions };
 }

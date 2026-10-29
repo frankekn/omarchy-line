@@ -282,6 +282,11 @@ export async function parity(h) {
   );
   const historyBefore =
     tap.sent.filter((frame) => frame.cmd === "history").length;
+  await page.waitForTimeout(1000);
+  assert.equal(
+    tap.sent.filter((frame) => frame.cmd === "history").length,
+    historyBefore,
+  );
   await page.locator('article[data-message-id="parity7"] .quote').click();
   await page.getByText(/The original isn't in this page/).waitFor();
   assert.equal(

@@ -1,5 +1,5 @@
 // Exercise trimming, paging and protected interactions in the real page.
-import { assert, CHAT, tapSocket } from "./harness.js";
+import { assert, CHAT, tapSocket, until } from "./harness.js";
 
 export async function messageWindow(h) {
   const context = await h.context({
@@ -35,12 +35,14 @@ export async function messageWindow(h) {
     from: "u-window-peer",
     fromName: "Peer",
     time: now + i * 1000,
-    text: `Window message ${i}`,
+    text: `Window message ${i}${
+      i >= 50 && i % 3 === 0 ? " long".repeat(50) : ""
+    }`,
     contentType: "NONE",
   });
   const archive = Array.from({ length: 50 }, (_, i) => row(i));
   const requests = [];
-  let shortPage = false;
+  let shortPage = false, firstPage = true, holdPage = false, heldPage;
   const tap = await tapSocket(page, {
     client(frame, connection) {
       if (frame.cmd === "markRead") {
@@ -53,13 +55,18 @@ export async function messageWindow(h) {
         ? archive.findIndex((message) => message.id === frame.before)
         : archive.length;
       if (end < 0) throw new Error(`Unknown history cursor ${frame.before}`);
-      const count = frame.before && shortPage ? 10 : 50;
+      const count = firstPage ? 20 : frame.before && shortPage ? 10 : 50;
+      firstPage = false;
       shortPage = false;
-      connection.socket.send(JSON.stringify({
+      const reply = JSON.stringify({
         id: frame.id,
         ok: true,
         data: archive.slice(Math.max(0, end - count), end),
-      }));
+      });
+      if (holdPage) {
+        holdPage = false;
+        heldPage = () => connection.socket.send(reply);
+      } else connection.socket.send(reply);
       return false;
     },
   });
@@ -67,6 +74,12 @@ export async function messageWindow(h) {
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
   await page.getByText("Window message 49", { exact: true }).waitFor();
   await page.waitForFunction(() => !globalThis.__windowModel.loading);
+  assert.equal(requests.length, 1);
+  assert.equal(
+    await page.evaluate(() => globalThis.__windowModel.noOlder),
+    false,
+  );
+  assert.equal(await page.locator(".message-row").count(), 20);
   await page.evaluate(() => {
     globalThis.__windowModel.unreadMarkId = "";
     globalThis.__windowCtx.renderMessages("bottom");
@@ -105,6 +118,14 @@ export async function messageWindow(h) {
         noOlder: model.noOlder,
       };
     });
+  }
+  async function userPageUp() {
+    await page.locator("#messages").evaluate((list) => {
+      list.scrollTop = 250;
+      list.focus({ preventScroll: true });
+    });
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ArrowUp");
   }
   async function fixture(options = {}) {
     await page.evaluate(({ now, chat, options, stateDir }) => {
@@ -156,24 +177,65 @@ export async function messageWindow(h) {
     return message.id;
   }
 
+  shortPage = true;
+  await userPageUp();
+  await until(() => requests.length === 2, "short older page");
+  await page.waitForFunction(() => !globalThis.__windowModel.loadingOlder);
+  assert.equal(requests[1].before, row(30).id);
+  assert.equal((await current()).ids[0], row(20).id);
+  assert.equal((await current()).noOlder, false);
+  await userPageUp();
+  await until(() => requests.length === 3, "older page after short page");
+  await page.waitForFunction(() => !globalThis.__windowModel.loadingOlder);
+  assert.equal(requests[2].before, row(20).id);
+  assert.equal((await current()).ids[0], row(0).id);
+  assert.equal((await current()).noOlder, false);
+  await userPageUp();
+  await until(() => requests.length === 4, "empty older page");
+  await page.waitForFunction(() => !globalThis.__windowModel.loadingOlder);
+  assert.equal(requests[3].before, row(0).id);
+  assert.equal((await current()).noOlder, true);
+  h.step("short initial and older pages remain pageable until an empty page");
+
+  const features = await page.locator("#messages").evaluate((list) => {
+    list.style.overflowAnchor = "none";
+    return {
+      userAgent: navigator.userAgent,
+      overflowAnchor: CSS.supports("overflow-anchor", "none"),
+      computedAnchor: getComputedStyle(list).overflowAnchor,
+      contentVisibility: CSS.supports("content-visibility", "auto"),
+    };
+  });
+  console.log(`  browser features ${JSON.stringify(features)}`);
+  if (features.overflowAnchor) assert.equal(features.computedAnchor, "none");
   await atBottom();
   assert.ok((await current()).bottom <= 2);
-  assert.equal(
-    await page.evaluate(() =>
-      globalThis.find("Window message 0", false, false, true)
-    ),
-    true,
-  );
+  if (await page.evaluate(() => typeof globalThis.find === "function")) {
+    assert.equal(
+      await page.evaluate(() =>
+        globalThis.find("Window message 0", false, false, true)
+      ),
+      true,
+    );
+    h.step("browser find reaches loaded offscreen messages");
+  } else console.log("  browser find API unavailable");
   await page.evaluate(() => getSelection().removeAllRanges());
   await atBottom();
-  h.step("browser find reaches loaded offscreen messages");
-  assert.equal(
-    await page.locator(".message-row").last().evaluate((node) =>
-      getComputedStyle(node).contentVisibility
-    ),
-    "auto",
-  );
+  if (features.contentVisibility) {
+    assert.equal(
+      await page.locator(".message-row").last().evaluate((node) =>
+        getComputedStyle(node).contentVisibility
+      ),
+      "auto",
+    );
+  }
+  let beforeTrim;
   for (let i = 50; i < 750; i += 25) {
+    if (i === 725) {
+      beforeTrim = await page.locator(".message-row").last().evaluate((node) =>
+        node.getBoundingClientRect().bottom
+      );
+    }
     await deliver(Array.from({ length: 25 }, (_, j) => row(i + j)));
   }
   await page.evaluate(() =>
@@ -187,6 +249,13 @@ export async function messageWindow(h) {
   assert.equal(state.ids[0], row(250).id);
   assert.equal(state.noOlder, false);
   assert.ok(state.bottom <= 2, `bottom distance ${state.bottom}`);
+  const afterTrim = await page.locator(".message-row").last().evaluate((node) =>
+    node.getBoundingClientRect().bottom
+  );
+  assert.ok(
+    Math.abs(afterTrim - beforeTrim) <= 2,
+    `last row moved ${afterTrim - beforeTrim}px after trim`,
+  );
   assert.deepEqual(
     await page.locator(".message-row").evaluateAll((rows) =>
       rows.map((row) => row.dataset.messageId)
@@ -195,11 +264,26 @@ export async function messageWindow(h) {
   );
   h.step("bottom follow caps the history and keeps the viewport at the bottom");
 
-  const beforeScroll = await page.locator("#messages").evaluate((list) => {
-    list.scrollTop = list.scrollHeight - list.clientHeight - 80;
-    list.dispatchEvent(new Event("scroll"));
-    return list.scrollTop;
+  await page.locator("#messages").evaluate((list) =>
+    list.focus({ preventScroll: true })
+  );
+  await page.keyboard.press("ArrowUp");
+  const beforeScroll = await page.locator("#messages").evaluate((list) =>
+    list.scrollTop
+  );
+  const readingAnchor = await page.evaluate(() => {
+    const list = document.getElementById("messages");
+    const area = list.getBoundingClientRect();
+    const node = [...list.querySelectorAll(".message-row")].find((row) => {
+      const rect = row.getBoundingClientRect();
+      return rect.top >= area.top && rect.bottom <= area.bottom;
+    });
+    return {
+      id: node.dataset.messageId,
+      top: node.getBoundingClientRect().top,
+    };
   });
+  assert.ok((await current()).bottom > 2);
   await deliver([row(750), row(751)]);
   state = await current();
   assert.equal(state.ids.length, 502);
@@ -209,14 +293,34 @@ export async function messageWindow(h) {
     list.scrollTop
   );
   assert.ok(Math.abs(afterScroll - beforeScroll) <= 2);
+  const readingAfter = await page.locator(
+    `article[data-message-id="${readingAnchor.id}"]`,
+  ).evaluate((node) => node.getBoundingClientRect().top);
+  assert.ok(
+    Math.abs(readingAfter - readingAnchor.top) <= 2,
+    `reading position moved ${readingAfter - readingAnchor.top}px`,
+  );
   h.step("reading above the bottom never trims or follows incoming messages");
 
   const oldRequests = requests.length;
   shortPage = true;
-  await page.locator("#messages").evaluate((list) => {
-    list.scrollTop = 0;
-    list.dispatchEvent(new Event("scroll"));
+  holdPage = true;
+  await userPageUp();
+  await until(() => typeof heldPage === "function", "held older page");
+  const anchor = await page.evaluate(() => {
+    const list = document.getElementById("messages"),
+      area = list.getBoundingClientRect();
+    const node = [...list.querySelectorAll(".message-row")].find((row) => {
+      const rect = row.getBoundingClientRect();
+      return rect.top >= area.top && rect.bottom <= area.bottom;
+    });
+    return {
+      id: node.dataset.messageId,
+      top: node.getBoundingClientRect().top,
+    };
   });
+  heldPage();
+  heldPage = null;
   await page.waitForFunction(() =>
     !globalThis.__windowModel.loadingOlder &&
     globalThis.__windowModel.messages.some((message) =>
@@ -228,10 +332,20 @@ export async function messageWindow(h) {
   state = await current();
   assert.equal(state.noOlder, false);
   assert.equal(state.ids[0], row(240).id);
-  await page.locator("#messages").evaluate((list) => {
-    list.scrollTop = 0;
-    list.dispatchEvent(new Event("scroll"));
-  });
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  const anchorAfter = await page.locator(
+    `article[data-message-id="${anchor.id}"]`,
+  )
+    .evaluate((node) => node.getBoundingClientRect().top);
+  assert.ok(
+    Math.abs(anchorAfter - anchor.top) <= 2,
+    `older-page anchor moved ${anchorAfter - anchor.top}px`,
+  );
+  await userPageUp();
   await page.waitForFunction(() =>
     !globalThis.__windowModel.loadingOlder &&
     globalThis.__windowModel.messages.some((message) =>
@@ -296,10 +410,7 @@ export async function messageWindow(h) {
     1,
   );
   const pendingRequests = requests.length;
-  await page.locator("#messages").evaluate((list) => {
-    list.scrollTop = 0;
-    list.dispatchEvent(new Event("scroll"));
-  });
+  await userPageUp();
   await page.waitForFunction(() =>
     !globalThis.__windowModel.loadingOlder &&
     globalThis.__windowModel.messages.some((message) =>
@@ -513,6 +624,7 @@ export async function messageWindow(h) {
     await page.locator("#lightbox").evaluate((node) => node.open),
     true,
   );
+  await atBottom();
   assert.ok((await current()).bottom <= 2);
   await fixtureMessage();
   assert.equal((await current()).ids.length, 501);
@@ -531,6 +643,27 @@ export async function messageWindow(h) {
   h.step("the current lightbox image is not trimmed");
 
   await fixture({ quote: true });
+  await page.evaluate(() => globalThis.__windowModel.noOlder = false);
+  const beforeQuote = requests.length;
+  await page.locator('article[data-message-id="10000499"] .quote').click();
+  await page.waitForFunction(() =>
+    document.getElementById("messages").scrollTop < 150
+  );
+  await page.waitForTimeout(400);
+  assert.equal(requests.length, beforeQuote);
+  await page.locator("#messages").evaluate((list) =>
+    list.focus({ preventScroll: true })
+  );
+  await page.keyboard.press("ArrowUp");
+  await until(
+    () => requests.length > beforeQuote,
+    "user paging after quote jump",
+  );
+  assert.equal(requests[beforeQuote].before, "10000000");
+  await page.waitForFunction(() => !globalThis.__windowModel.loadingOlder);
+  h.step("quote jumps do not page; a subsequent user scroll still pages");
+
+  await fixture({ quote: true });
   await fixtureMessage();
   assert.equal(
     await page.locator('article[data-message-id="10000000"]').count(),
@@ -541,4 +674,37 @@ export async function messageWindow(h) {
   ) => node.click());
   await page.getByText(/The original isn't in this page/).waitFor();
   h.step("a quote to trimmed history keeps the existing missing-origin notice");
+
+  if (h.browserName === "webkit") {
+    // Playwright does not implement wheel input in mobile WebKit. A separate
+    // desktop WebKit context exercises actual wheel input at the same width.
+    const wheelContext = await h.context({
+      locale: "en-US",
+      viewport: { width: 390, height: 844 },
+    });
+    const wheelPage = await wheelContext.newPage();
+    const wheelRequests = [];
+    await tapSocket(wheelPage, {
+      client(frame, connection) {
+        if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+        wheelRequests.push(frame);
+        connection.socket.send(JSON.stringify({
+          id: frame.id,
+          ok: true,
+          data: frame.before ? archive.slice(20, 30) : archive.slice(30, 50),
+        }));
+        return false;
+      },
+    });
+    await h.signIn(wheelPage);
+    await wheelPage.getByRole("button", { name: /STUB 家庭群組/ }).click();
+    await wheelPage.getByText("Window message 49", { exact: true }).waitFor();
+    const box = await wheelPage.locator("#messages").boundingBox();
+    await wheelPage.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await wheelPage.mouse.wheel(0, -5000);
+    await until(() => wheelRequests.length > 1, "WebKit wheel paging");
+    assert.equal(wheelRequests[1].before, row(30).id);
+    await wheelPage.getByText("Window message 20", { exact: true }).waitFor();
+    h.step("desktop WebKit wheel scroll loads the older page");
+  }
 }

@@ -388,7 +388,7 @@ Deno.test("short cached history pages do not end pagination", async () => {
   model.account = "me";
   model.active = "c";
   const pages: Row[][] = [
-    Array.from({ length: 50 }, (_, i) => ({
+    Array.from({ length: 5 }, (_, i) => ({
       id: String(100 + i),
       from: "peer",
       time: 100 + i,
@@ -420,8 +420,21 @@ Deno.test("short cached history pages do not end pagination", async () => {
   assertEquals(model.messages.map((row) => row.id), [
     "98",
     "99",
-    ...Array.from({ length: 50 }, (_, i) => String(100 + i)),
+    ...Array.from({ length: 5 }, (_, i) => String(100 + i)),
   ]);
+});
+
+Deno.test("an empty initial history ends pagination", async () => {
+  const model = createModel();
+  model.active = "c";
+  const chat = createChatController({
+    model,
+    command: () => Promise.resolve([]),
+    reconcilePending: () => {},
+    renderMessages: () => {},
+  });
+  await chat.loadHistory("c", false);
+  assertEquals(model.noOlder, true);
 });
 
 Deno.test("events received during an older page update that page too", async () => {

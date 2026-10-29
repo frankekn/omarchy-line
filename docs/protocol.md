@@ -310,6 +310,10 @@ refuse. Both are **idempotent** (hiding an already-hidden chat still returns
 `{ok:true}`, just without a write), and an empty `chat` answers
 `{ok:false, error:"沒有指定是哪一間聊天室"}`.
 
+`history` may answer from a non-empty local cache page, including one shorter
+than `count`; that length does not prove that older messages do not exist.
+For a head page, the daemon revalidates the cache in the background.
+
 `history` answers text and message fields without waiting for image
 downloads. The `preview` request only goes out when a ListView delegate nears
 the screen. `image`, `preview` and original `download` share one background
