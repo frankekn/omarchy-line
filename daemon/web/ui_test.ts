@@ -742,6 +742,43 @@ class MemoryStorage {
     this.values.delete(key);
   }
 }
+Deno.test("draft keys cannot resolve to inherited properties", () => {
+  const storage = new MemoryStorage();
+  const model = createModel(), store = createDraftStore(model, storage);
+  const accounts = ["constructor", "__proto__", "toString", "ordinary"];
+  const chats = ["constructor", "__proto__", "toString", "ordinary"];
+  for (const account of accounts) {
+    for (const chat of chats) {
+      assertEquals(store.chatDraft(account, chat, false), null);
+      const draft = store.chatDraft(account, chat);
+      assert(draft && typeof draft === "object");
+      draft.text = `${account}/${chat}`;
+      store.writePending(chat, [{ requestId: `${account}/${chat}` }], account);
+    }
+  }
+  const restoredModel = createModel();
+  const restored = createDraftStore(restoredModel, storage);
+  for (const account of accounts) {
+    for (const chat of chats) {
+      assertEquals(
+        restored.chatDraft(account, chat, false)?.text,
+        `${account}/${chat}`,
+      );
+      assertEquals(restored.pendingFor(chat, account), [{
+        requestId: `${account}/${chat}`,
+      }]);
+    }
+  }
+  restored.clearLastAccount("__proto__");
+  assertEquals(restored.chatDraft("__proto__", "constructor", false), null);
+  assertEquals(
+    restored.chatDraft("constructor", "__proto__", false)?.text,
+    "constructor/__proto__",
+  );
+  assertEquals(Object.getPrototypeOf(model.drafts), null);
+  assertEquals(Object.getPrototypeOf(restoredModel.drafts), null);
+  assertEquals(Object.getPrototypeOf(restoredModel.drafts.constructor), null);
+});
 Deno.test("acknowledged sends stay visible until their own echo", async () => {
   for (const echoFirst of [false, true]) {
     const model = createModel();

@@ -16,14 +16,17 @@ export function createDraftStore(
   onError = () => {},
 ) {
   const key = "enil.web.drafts.v1", lastKey = "enil.web.lastAccount";
+  model.drafts = Object.create(null);
   try {
     const saved = JSON.parse(storage.getItem(key) || "{}");
     if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-      model.drafts = saved;
+      for (const [account, chats] of Object.entries(saved)) {
+        if (chats && typeof chats === "object" && !Array.isArray(chats)) {
+          model.drafts[account] = Object.assign(Object.create(null), chats);
+        }
+      }
     }
-  } catch {
-    model.drafts = {};
-  }
+  } catch { /* A missing or malformed store starts empty. */ }
   function saveStorage() {
     try {
       storage.setItem(key, JSON.stringify(model.drafts));
@@ -40,7 +43,9 @@ export function createDraftStore(
     create = true,
   ) {
     if (!account || !chat) return null;
-    if (!model.drafts[account] && create) model.drafts[account] = {};
+    if (!model.drafts[account] && create) {
+      model.drafts[account] = Object.create(null);
+    }
     const chats = model.drafts[account];
     if (!chats || typeof chats !== "object") return null;
     if (!chats[chat] && create) {
