@@ -13,9 +13,41 @@ export async function main(h) {
   const page = await desktop.newPage();
   const tap = await tapSocket(page, {
     client: (frame) => !blocked || frame.text !== blocked,
+    server(frame) {
+      if (frame.web === "state" && frame.state.me?.mid) {
+        frame.state.me.displayName = "👩‍👧‍👦 Family";
+        frame.state.chats.push(...Array.from({ length: 36 }, (_, i) => ({
+          mid: `c-visibility-${i}`,
+          name: `Visibility fixture ${i}`,
+          lastTime: 0,
+        })));
+      }
+      return true;
+    },
   });
   await h.signIn(page);
   assert.equal(await page.evaluate(() => globalThis.isSecureContext), false);
+  const grapheme = await page.evaluate(() =>
+    typeof Intl.Segmenter === "function" ? "👩‍👧‍👦" : "👩"
+  );
+  await until(
+    async () =>
+      await page.locator("#account-avatar").textContent() === grapheme,
+    "account avatar grapheme",
+  );
+  h.step("account-avatar-grapheme");
+  const lastChat = page.getByRole("button", { name: /Visibility fixture 35/ });
+  await lastChat.scrollIntoViewIfNeeded();
+  assert.equal(
+    await lastChat.evaluate((row) => {
+      const rect = row.getBoundingClientRect();
+      const list = document.getElementById("chat-list").getBoundingClientRect();
+      return rect.bottom > list.top && rect.top < list.bottom;
+    }),
+    true,
+  );
+  await page.locator("#chat-list").evaluate((list) => list.scrollTop = 0);
+  h.step("offscreen-chat-row");
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
   const log = page.getByRole("log");
   const input = page.getByLabel("訊息", { exact: true });
@@ -145,14 +177,35 @@ export async function main(h) {
   const phone = await mobile.newPage();
   const phoneTap = await tapSocket(phone);
   await h.signIn(phone);
-  await phone.getByRole("button", { name: /STUB 工作/ }).click();
+  assert.ok(await phone.evaluate(() => navigator.maxTouchPoints > 0));
+  if (h.browserName === "webkit") {
+    assert.match(await phone.evaluate(() => navigator.userAgent), /iPhone/);
+  }
+  await phone.getByRole("button", { name: /STUB 工作/ }).tap();
   await phone.getByText("STUB deploy #4821 succeeded").first().waitFor();
   assert.equal(await phone.locator("#sidebar").isVisible(), false);
-  await phone.getByRole("button", { name: "返回" }).click();
+  await phone.getByRole("button", { name: "返回" }).tap();
   assert.equal(await phone.locator("#sidebar").isVisible(), true);
   h.step("mobile-navigation");
   await phone.getByRole("button", { name: /STUB 家庭群組/ }).click();
   await phone.getByRole("log").getByText("晚上回來吃飯嗎？").waitFor();
+  const composer = phone.getByLabel("訊息", { exact: true });
+  await composer.focus();
+  assert.ok(await phone.evaluate(() => !!globalThis.visualViewport));
+  await phone.setViewportSize({ width: 390, height: 600 });
+  await until(
+    () =>
+      phone.evaluate(() => {
+        const viewport = globalThis.visualViewport;
+        const input = document.getElementById("message-input");
+        return input.getBoundingClientRect().bottom <=
+          viewport.offsetTop + viewport.height + 1;
+      }),
+    "composer inside resized visual viewport",
+  );
+  await phone.setViewportSize({ width: 390, height: 844 });
+  await composer.blur();
+  h.step("mobile-visual-viewport");
   await phone.getByRole("button", { name: "返回" }).click();
   const start = phoneTap.sent.length;
   await h.request({ id: 3, cmd: "poke", chat: CHAT, text: "未開啟時的訊息" });

@@ -3,13 +3,17 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { chromium } from "npm:playwright@1.64.1";
+import { chromium, devices, webkit } from "npm:playwright@1.64.1";
 
 export { assert };
 export const CHAT = "cstub-family";
 export const KEY = "devkey-0123456789abcdef";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const daemonDir = `${root}daemon`;
+const browserName = Deno.env.get("ENIL_WEB_BROWSER") ?? "chromium";
+if (browserName !== "chromium" && browserName !== "webkit") {
+  throw new Error("ENIL_WEB_BROWSER must be chromium or webkit");
+}
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let activeCleanup;
 
@@ -131,19 +135,23 @@ export async function runSuite(name, suite) {
     dir: stateRoot,
     prefix: `web-${name}-`,
   });
-  const base = `http://enil.test:${port}`;
+  // WebKit has no Chromium host-resolver flag. The mapped address reaches
+  // the IPv4 listener while keeping an ordinary non-secure HTTP origin.
+  const host = browserName === "webkit" ? "[::ffff:7f00:1]" : "enil.test";
+  const base = `http://${host}:${port}`;
   const stateDir = `${temp}/enil`;
   const children = [];
   const contexts = [];
   const errors = [];
   const dialogs = [];
-  let browser;
+  let browser, browserLaunch;
   let failed = false;
   let cleanupPromise;
   const cleanup = () =>
     cleanupPromise ??= (async () => {
       for (const context of contexts) await context.close().catch(() => {});
-      await browser?.close().catch(() => {});
+      const launched = browser ?? await browserLaunch?.catch(() => null);
+      await launched?.close().catch(() => {});
       for (const child of children.reverse()) await stop(child);
     })();
   activeCleanup = cleanup;
@@ -179,24 +187,30 @@ export async function runSuite(name, suite) {
       const log = await Deno.readTextFile(`${temp}/server.log`).catch(() => "");
       return log.includes(`[web] sign in: http://127.0.0.1:${port}/`);
     }, "web server bind");
-    const executablePath = Deno.env.get("CHROMIUM") || undefined;
-    browser = await chromium.launch({
-      executablePath,
-      args: [
-        "--no-sandbox",
-        "--no-proxy-server",
-        "--host-resolver-rules=MAP enil.test 127.0.0.1",
-      ],
-    });
+    browserLaunch = browserName === "webkit"
+      ? webkit.launch()
+      : chromium.launch({
+        executablePath: Deno.env.get("CHROMIUM") || undefined,
+        args: [
+          "--no-sandbox",
+          "--no-proxy-server",
+          "--host-resolver-rules=MAP enil.test 127.0.0.1",
+        ],
+      });
+    browser = await browserLaunch;
     const harness = {
       base,
+      browserName,
       stateDir,
       dialogs,
       step(name) {
         console.log(`  PASS ${name}`);
       },
       async context(options = {}) {
-        const context = await browser.newContext(options);
+        const device = browserName === "webkit" && options.isMobile
+          ? devices["iPhone 13"]
+          : {};
+        const context = await browser.newContext({ ...device, ...options });
         contexts.push(context);
         // The stub's sticker and FLEX URLs are real HTTPS URLs; keep their
         // browser rendering deterministic without fetching external images.
