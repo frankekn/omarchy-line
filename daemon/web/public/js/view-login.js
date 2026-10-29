@@ -4,6 +4,7 @@ import { $, el, fileUrl, setAvatar } from "./dom.js";
 
 export function createLoginView(ctx) {
   const model = ctx.model, t = ctx.t;
+  let noticeSignature = "";
   function toast(message) {
     $("toast").textContent = String(message || t("genericError"));
     $("toast").hidden = false;
@@ -16,11 +17,25 @@ export function createLoginView(ctx) {
   }
   function renderNotices() {
     const notices = [], state = model.state;
-    if (
-      !model.connected ||
-      (state?.updatedAt && Date.now() - Number(state.updatedAt) > 180000)
-    ) notices.push(t("daemonOffline"));
-    if (state?.link?.reason === "restricted") {
+    const offline = !model.connected ||
+      Boolean(
+        state?.updatedAt && Date.now() - Number(state.updatedAt) > 180000,
+      );
+    const restricted = state?.link?.reason === "restricted";
+    const pushDown = !restricted && state?.link?.push === "down";
+    const stale = Number(state?.refresh?.failures || 0) >= 2;
+    const signature = JSON.stringify([
+      offline,
+      restricted,
+      restricted ? state?.link?.code : "",
+      pushDown,
+      stale,
+      model.syncing,
+    ]);
+    if (signature === noticeSignature) return;
+    noticeSignature = signature;
+    if (offline) notices.push(t("daemonOffline"));
+    if (restricted) {
       const button = el(
         "button",
         "notice notice-action",
@@ -32,7 +47,7 @@ export function createLoginView(ctx) {
       button.disabled = model.syncing;
       button.addEventListener("click", syncNow);
       notices.push(button);
-    } else if (state?.link?.push === "down") {
+    } else if (pushDown) {
       const button = el(
         "button",
         "notice notice-action",
@@ -43,7 +58,7 @@ export function createLoginView(ctx) {
       button.addEventListener("click", syncNow);
       notices.push(button);
     }
-    if (Number(state?.refresh?.failures || 0) >= 2) notices.push(t("stale"));
+    if (stale) notices.push(t("stale"));
     $("notices").replaceChildren(
       ...notices.map((s) => typeof s === "string" ? el("div", "notice", s) : s),
     );
@@ -84,8 +99,8 @@ export function createLoginView(ctx) {
   function renderLogin(state) {
     const login = state.login || { status: "idle" },
       loggedIn = login.status === "ok";
-    $("workspace").hidden = !loggedIn;
-    $("line-login").hidden = loggedIn;
+    if ($("workspace").hidden === loggedIn) $("workspace").hidden = !loggedIn;
+    if ($("line-login").hidden !== loggedIn) $("line-login").hidden = loggedIn;
     if (loggedIn) return;
     const text = login.status === "qr"
       ? t("lineQr")
@@ -107,7 +122,10 @@ export function createLoginView(ctx) {
     $("login-pin").textContent = String(login.pin || "");
   }
   function renderAccount(me, account) {
-    $("account-name").textContent = String(me?.displayName || account);
+    const name = String(me?.displayName || account);
+    if ($("account-name").textContent !== name) {
+      $("account-name").textContent = name;
+    }
     setAvatar($("account-avatar"), "", me?.displayName || account);
   }
   function showApp() {

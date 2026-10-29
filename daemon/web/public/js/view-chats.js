@@ -165,13 +165,22 @@ export function createChatsView(ctx) {
   function renderActiveHeader() {
     const chat = model.chats.find((row) => String(row.mid) === model.active);
     if (!chat) return;
-    $("active-name").textContent = String(chat.name || chat.mid);
-    $("active-subtitle").textContent =
+    const name = String(chat.name || chat.mid);
+    const subtitle =
       model.active.startsWith("c") || model.active.startsWith("r")
         ? t("group")
         : t("direct");
+    if ($("active-name").textContent !== name) {
+      $("active-name").textContent = name;
+    }
+    if ($("active-subtitle").textContent !== subtitle) {
+      $("active-subtitle").textContent = subtitle;
+    }
     setAvatar($("active-avatar"), chat.avatarPath, chat.name);
-    $("hide-chat").textContent = chat.hidden ? t("unhide") : t("hide");
+    const action = chat.hidden ? t("unhide") : t("hide");
+    if ($("hide-chat").textContent !== action) {
+      $("hide-chat").textContent = action;
+    }
   }
   function isViewingChat() {
     return !!model.active && !document.hidden &&
