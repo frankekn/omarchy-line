@@ -43,9 +43,12 @@ daemon 在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）寫三樣東�
 
 網頁版（[web.zh-TW.md](web.zh-TW.md)）也是讀同一組檔案，不算第三半。有設
 `ENIL_WEB_ADDR` 時，daemon 會同時提供 `daemon/web/`。每條瀏覽器 WebSocket 各自
-連一條 `sock`。`state.json` 每次變動都會轉送；`events.json` 只在連線時送一次，
-用來補上斷線期間的事件。所以網頁拿到的
-回覆和推送跟面板一樣，daemon 處理請求的程式完全不知道有網頁。
+連一條 `sock`。網頁連著時，共用的 feed 每 500 毫秒檢查 `state.json` 並轉送變動
+後的快照；中間的快照可能略過。`events.json` 只在連線時送一次，用來補上斷線期間的
+事件。網頁拿到的回覆和推送跟面板一樣，daemon 處理請求的程式完全不知道有網頁。
+bridge 最多同時接受 32 條 WebSocket，拒絕 daemon 主機的剪貼簿指令，`sendFile`
+也只接受網頁上傳的路徑。每個瀏覽器把自己的草稿和未確認傳送存在 local storage。
+網頁用 key 對齊聊天列和訊息列，更新時保留沒有變動的 DOM 節點。
 
 ## 讓 daemon 一直在跑
 
@@ -210,13 +213,16 @@ push 活著的時候不需要等這些：新訊息、已讀、表情和收回都
 
 ## 公開圖片
 
-貼圖、貼圖選單和 FLEX 圖片（含燈箱）都由 daemon 下載到
+面板的貼圖、貼圖選單和 FLEX 圖片（含燈箱）都由 daemon 下載到
 `~/.local/state/enil/media/public-images/`。QML 只讀本機檔案，所以這些圖片請求不會
 進到 shell 的 Qt TLS。同一個網址的下載會合併，最多同時 4 個，每個上限 10 MiB、逾時
 20 秒。這個快取跟 `media/` 用同一套清理規則。下載失敗不會退回用 QML 走 HTTPS。
 
 daemon 只接受 `https://` 圖片網址，並拒絕解析到私有位址的主機。請求不帶 cookie，
 也不帶 LINE token。
+
+網頁版的貼圖和 FLEX 圖片則由瀏覽器直接載入；見
+[web.zh-TW.md](web.zh-TW.md#網頁版能做和不能做的事)。
 
 ## 媒體流程
 

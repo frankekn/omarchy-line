@@ -31,14 +31,17 @@ This project uses the name only to say which service the plugin works with.
   phone. The daemon registers as a secondary device, so it shows up in your
   phone's list of logged-in devices. It never uses the account-transfer flow,
   so your phone stays the main device.
-- **It keeps your session and your messages on disk.** Everything lives in
-  `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`), mode `0700`.
+- **It keeps your session and your messages on disk.** The daemon's data lives
+  in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`), mode `0700`.
   `storage.json` (mode `0600`) holds the login token and the E2EE keys.
   `messages/` keeps every message the daemon has seen, and `media/` keeps
   downloaded files and thumbnails. The plugin does not encrypt these files.
-- **You can remove what it stores on this machine.** Log out in the panel to
-  end the session and delete the login token. To remove everything else too,
-  follow [Uninstall](#uninstall).
+  Browsers using the web page also keep site data, including drafts.
+- **You can remove what it stores on this machine.** Log out of LINE in the
+  panel or web page to end the session and delete the login token. To remove
+  the daemon's other data, follow [Uninstall](#uninstall) on Omarchy, or the
+  Mac steps in [SAFETY.md](SAFETY.md#remove-your-data). Clear the site's data
+  and cache on each browser too.
 - **You are responsible for how you use it.** Follow LINE's terms of use.
   The messages stored on your disk include other people's messages, so keep
   them as private as the people who sent them would expect.
@@ -67,6 +70,8 @@ network requests it makes.
 - A Traditional Chinese or English interface.
 - History stays on disk, so chats open without waiting for LINE after a
   restart.
+- An optional web page for other devices, with a macOS launchd setup. See
+  [docs/web.md](docs/web.md).
 
 [docs/usage.md](docs/usage.md) covers the keyboard, settings, and sending
 files.

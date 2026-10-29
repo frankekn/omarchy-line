@@ -34,18 +34,19 @@ of them must update this page in the same commit.
   not stop the daemon. [When LINE restricts the
   account](docs/architecture.md#when-line-restricts-the-account) has the
   details.
-- **It does not send your data to any server except LINE's.** The daemon uses
-  your login token only with LINE's servers, and sends your messages and
-  files only to LINE. On your own computer, desktop notifications pass the
-  chat name, the sender, and a message preview to your notification daemon,
-  which may keep them in its history.
+- **The daemon does not send your LINE token with public image requests.** It
+  uses the token for LINE and sends messages and files to LINE. A web browser
+  sends your actions and uploads to the daemon first. On your own computer,
+  desktop notifications pass the chat name, the sender, and a message preview
+  to your notification daemon, which may keep them in its history.
 - **It does not serve your messages to the network unless you turn the web
   page on.** The web page is off until you set `ENIL_WEB_ADDR`. When it is
-  on, any browser that can reach that address and has the web key can read
-  and send your messages. Bind it to a Tailscale address, not `0.0.0.0`.
-  [docs/web.md](docs/web.md) has the details.
-- **It does not put credentials in the repository.** The session token and
-  keys live only in `~/.local/state/enil/storage.json`.
+  on, anyone who can reach that address and has the web key or a valid
+  browser cookie can read and send your messages. Bind it to a Tailscale
+  address, not `0.0.0.0`. [docs/web.md](docs/web.md) has the details.
+- **It does not put credentials in the repository.** The LINE session token
+  and keys live in `~/.local/state/enil/storage.json` (or under
+  `$XDG_STATE_HOME/enil/`). The browser also holds a separate web cookie.
 
 ## What the daemon is allowed to do
 
@@ -62,7 +63,7 @@ applies to `deno run` and to a compiled binary.
 | Environment variables | `HOME`, `XDG_STATE_HOME`, the `ENIL_*` variables, `Q_DEBUG`, and `NODE_DEBUG` | The daemon's settings, plus two names that dependencies read at startup. |
 | System information | None | |
 
-## Network requests that carry none of your data
+## Other network requests
 
 - Stickers, profile pictures, and media come from LINE's hosts or from
   addresses that LINE gives the daemon.
@@ -71,6 +72,9 @@ applies to `deno run` and to a compiled binary.
   and roughly when the image was fetched. The request is a plain `GET` with
   no cookies and no LINE token. The daemon refuses `http:` addresses and
   hosts that resolve to private addresses.
+- The web page loads stickers and FLEX images directly from their HTTPS
+  URLs. Their hosts can see the browser's IP address and the requested URL;
+  the browser's own third-party cookie settings also apply.
 - `daemon/install.sh` downloads the linejs fork from GitHub as a git
   submodule.
 - The first time the daemon starts from source, Deno downloads the JSR and
@@ -84,9 +88,10 @@ applies to `deno run` and to a compiled binary.
 
 ## What is stored on disk
 
-Everything lives in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`). The
-daemon creates this directory with mode `0700`. Each time it starts, it sets
-the directory back to `0700` and `storage.json` back to `0600`. These modes
+The daemon's files below live in `~/.local/state/enil/` (or
+`$XDG_STATE_HOME/enil/`). The daemon creates this directory with mode `0700`.
+Each time it starts, it sets the directory back to `0700` and `storage.json`
+back to `0600`. These modes
 keep other users on the computer out. They do not protect the files from
 programs that run as you.
 
@@ -97,7 +102,7 @@ programs that run as you.
 | `messages/<your-mid>/<chat-mid>.jsonl` | Every message the daemon has seen, one file per chat. It is never cleaned up automatically. |
 | `media/` | Decrypted originals of files and images you opened, thumbnails, and `clipboard-*` images waiting to be sent. |
 | `media/avatars/` | Profile pictures. |
-| `media/web-uploads/` | Files uploaded from the web page, until the daemon answers the send. If no answer arrives, files older than 24 hours are swept at startup and hourly. |
+| `media/web-uploads/` | Files uploaded from the web page. The bridge tries to remove each after the daemon answers the send; leftovers over 24 hours old are swept at startup and hourly. They can remain longer if the daemon is stopped or deletion fails. |
 | `media/public-images/` | Stickers and FLEX images. |
 | `state.json` | The chat list and the last message preview of each chat. |
 | `events.json` | The newest 200 live events, including full recent messages. |
@@ -108,6 +113,13 @@ programs that run as you.
 | `sock` | The socket the panel talks to. |
 | `lock` | An empty file that stops a second daemon from starting. |
 | `qr-<time>.png` | The login QR code. The last one stays after you log in. |
+
+Each browser also stores its web sign-in cookie and local drafts, reply
+targets, mentions and unconfirmed sends, and may cache media. Leaving the web
+page clears its cookie but does not clear those drafts or revoke copied
+cookies. Clear the site's data and browser cache on each device to remove its
+browser data. Change the web key and restart the daemon to revoke copied
+cookies.
 
 How messages are stored:
 
@@ -136,16 +148,20 @@ session keys able to fetch it.
 
 ## Remove your data
 
-- **Log out** in the panel to end the session. The daemon asks LINE to end
-  the session and deletes the login token fields (`.auth`, `refreshToken`,
-  and `expire`) from `storage.json`. It keeps the E2EE keys, the login
-  certificate, the message history, and the media on disk.
+- **Log out of LINE** in the panel or web page to end the session. The daemon
+  asks LINE to end the session and deletes the login token fields (`.auth`,
+  `refreshToken`, and `expire`) from `storage.json`. It keeps the E2EE keys,
+  the login certificate, the message history, and the media on disk.
 - **To remove everything**, log out, then follow
-  [Uninstall](README.md#uninstall). It stops the daemon and deletes the state
-  directory. Then remove this device from the list of logged-in devices in
-  LINE on your phone.
+  [Uninstall](README.md#uninstall) on Omarchy. On a Mac, stop the launchd
+  agent as described in [docs/web.md](docs/web.md#run-it-on-a-mac), then
+  remove `~/Library/LaunchAgents/io.github.frankekn.enil.plist`,
+  `~/Library/Logs/enil/`, and the agent's state directory. Clear the site's
+  data and browser cache on each device, and remove this device from the list
+  of logged-in devices in LINE on your phone.
 - **To drop only the message history**, stop the daemon first. The daemon
-  keeps recent chats in memory and may write them back.
+  keeps recent chats in memory and may write them back. On Omarchy with the
+  default state directory:
 
   ```bash
   systemctl --user stop enil
@@ -153,4 +169,7 @@ session keys able to fetch it.
   systemctl --user start enil
   ```
 
-  The daemon fetches history from LINE again and starts a new local copy.
+  On a Mac, stop the launchd agent as described in
+  [docs/web.md](docs/web.md#run-it-on-a-mac), remove `messages/` from its
+  state directory, then bootstrap and kickstart the agent again. The daemon
+  fetches history from LINE again and starts a new local copy.

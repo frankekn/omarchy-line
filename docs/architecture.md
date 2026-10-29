@@ -50,10 +50,17 @@ When `state.json`'s `updatedAt` has not moved for 3 minutes, the panel shows
 
 The web page ([web.md](web.md)) is one more reader of the same files, not a
 third half. When `ENIL_WEB_ADDR` is set, the daemon also serves
-`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. The
-page also gets `state.json` each time it changes, and `events.json` once when
-it connects, to catch up. So the page gets the same replies and pushes as a
-panel, and nothing in the daemon's request handling knows the page exists.
+`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. A
+shared feed checks `state.json` every 500 ms while pages are connected and
+forwards changed snapshots; intermediate snapshots may be skipped. The page
+also gets `events.json` once on connection to catch up. It gets the same
+replies and pushes as a panel, and the daemon's request handling does not know
+the page exists.
+The bridge caps concurrent WebSockets at 32, refuses the daemon host's
+clipboard commands, and accepts `sendFile` paths only from web uploads.
+Each browser keeps its own drafts and unconfirmed sends in local storage.
+The page reconciles chat and message rows by key, retaining unchanged DOM
+nodes across updates.
 
 ## Keeping the daemon running
 
@@ -269,8 +276,9 @@ fast path, not the only path.
 
 ## Public images
 
-Stickers, the sticker picker, and FLEX images (including the lightbox) are
-downloaded by the daemon into `~/.local/state/enil/media/public-images/`.
+For the panel, stickers, the sticker picker, and FLEX images (including the
+lightbox) are downloaded by the daemon into
+`~/.local/state/enil/media/public-images/`.
 QML only ever reads local files, so those image requests never enter the
 shell's Qt TLS stack. Downloads of the same URL merge, at most 4 run at once,
 and each is capped at 10 MiB with a 20-second timeout. The cache shares the
@@ -280,6 +288,9 @@ QML.
 The daemon accepts only `https://` image addresses and refuses hosts that
 resolve to private addresses. The request carries no cookies and no LINE
 token.
+
+The web page loads stickers and FLEX images directly in the browser; see
+[web.md](web.md#what-the-page-can-and-cannot-do).
 
 ## Media pipeline
 
