@@ -22,8 +22,13 @@ import type { Uploads } from "./files.ts";
 const STATE_POLL_MS = 500;
 /** A browser this far behind is dropped; it reconnects and catches up. */
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
+const MAX_FRAME_BYTES = 1024 * 1024;
+const MAX_INBOUND_QUEUE = 128;
+const MAX_INBOUND_BYTES = 4 * 1024 * 1024;
 export const CLOSE_DAEMON_OFFLINE = 4001;
 const CLOSE_TOO_SLOW = 4002;
+const CLOSE_BAD_FRAME = 4003;
+const CLOSE_INBOUND_OVERLOAD = 4004;
 const REFUSED_CMDS = new Set([
   "probeClipboardImage",
   "sendClipboardImage",
@@ -126,6 +131,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   const shut = (code: number, reason: string) => {
     if (closed) return;
     closed = true;
+    ready();
     deps.connections.delete(close);
     deps.feed.delete(send);
     try {
@@ -146,6 +152,8 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   // order: a sendFile resolving its path must not let a later command pass it.
   let ready!: () => void;
   let inbound = new Promise<void>((resolve) => ready = resolve);
+  let queued = 0;
+  let queuedBytes = 0;
 
   const toDaemon = async (line: string) => {
     const c = conn;
@@ -227,9 +235,28 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
     shut(CLOSE_DAEMON_OFFLINE, "daemon offline");
   };
   ws.onmessage = (ev) => {
+    if (closed || typeof ev.data !== "string") return;
+    const bytes = ev.data.length > MAX_FRAME_BYTES
+      ? MAX_FRAME_BYTES + 1
+      : encoder.encode(ev.data).length;
+    if (bytes > MAX_FRAME_BYTES) {
+      shut(CLOSE_BAD_FRAME, "frame too large");
+      return;
+    }
+    if (
+      queued >= MAX_INBOUND_QUEUE || queuedBytes + bytes > MAX_INBOUND_BYTES
+    ) {
+      shut(CLOSE_INBOUND_OVERLOAD, "too many requests");
+      return;
+    }
+    queued++;
+    queuedBytes += bytes;
     inbound = inbound.then(() => relay(ev.data)).catch(() =>
       shut(CLOSE_DAEMON_OFFLINE, "daemon offline")
-    );
+    ).finally(() => {
+      queued--;
+      queuedBytes -= bytes;
+    });
   };
   ws.onclose = () => shut(1000, "");
   ws.onerror = () => shut(1011, "");
