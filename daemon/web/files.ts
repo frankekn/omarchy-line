@@ -14,6 +14,8 @@ import { FILE_CSP, json, securityHeaders, status } from "./http.ts";
 
 const UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
 const UPLOAD_MAX_ACTIVE = 4;
+const UPLOAD_IDLE_MS = 30_000;
+const UPLOAD_MAX_MS = 60 * 60 * 1000;
 const UPLOAD_MAX_AGE_MS = 24 * 3600 * 1000;
 const UPLOAD_SWEEP_MS = 3600 * 1000;
 
@@ -114,16 +116,26 @@ export class Uploads {
   #timer: ReturnType<typeof setInterval> | undefined;
   readonly #sizes = new Map<string, number>();
   readonly #active = new Set<string>();
+  readonly #readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+  readonly #idleMs: number;
+  readonly #maxMs: number;
   #bytes = 0;
+  #closed = false;
 
-  private constructor(dir: string) {
+  private constructor(dir: string, idleMs: number, maxMs: number) {
     this.dir = dir;
+    this.#idleMs = idleMs;
+    this.#maxMs = maxMs;
   }
 
-  static async open(stateDir: string): Promise<Uploads> {
+  static async open(
+    stateDir: string,
+    idleMs = UPLOAD_IDLE_MS,
+    maxMs = UPLOAD_MAX_MS,
+  ): Promise<Uploads> {
     const dir = `${stateDir}/media/web-uploads`;
     await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
-    const uploads = new Uploads(await Deno.realPath(dir));
+    const uploads = new Uploads(await Deno.realPath(dir), idleMs, maxMs);
     await uploads.sweep();
     for await (const entry of Deno.readDir(uploads.dir)) {
       const path = `${uploads.dir}/${entry.name}`;
@@ -137,10 +149,13 @@ export class Uploads {
 
   close(): void {
     clearInterval(this.#timer);
+    this.#closed = true;
+    for (const reader of this.#readers) void reader.cancel().catch(() => {});
   }
 
   /** POST /api/upload?name=…, body = the file's bytes. */
   async receive(req: Request, url: URL): Promise<Response> {
+    if (this.#closed) return status(503);
     if (!req.body) return status(400, "empty upload");
     const declared = Number(req.headers.get("content-length"));
     if (declared > UPLOAD_MAX_BYTES) {
@@ -151,7 +166,10 @@ export class Uploads {
     this.#active.add(dir);
     const path = `${dir}/${uploadName(url.searchParams.get("name"))}`;
     let file: Deno.FsFile | undefined;
+    const reader = req.body.getReader();
+    this.#readers.add(reader);
     let size = 0;
+    const deadline = performance.now() + this.#maxMs;
     try {
       await Deno.mkdir(dir, { mode: 0o700 });
       this.#sizes.set(dir, 0);
@@ -160,7 +178,18 @@ export class Uploads {
         createNew: true,
         mode: 0o600,
       });
-      for await (const chunk of req.body) {
+      for (;;) {
+        const remaining = Math.ceil(deadline - performance.now());
+        if (remaining <= 0) {
+          throw new DOMException("upload timed out", "TimeoutError");
+        }
+        const result = await readUploadChunk(
+          reader,
+          Math.min(this.#idleMs, remaining),
+        );
+        if (this.#closed) throw new Error("server stopped");
+        if (result.done) break;
+        const chunk = result.value;
         size += chunk.length;
         if (size > UPLOAD_MAX_BYTES) throw new RangeError("too large");
         if (this.#bytes + chunk.length > UPLOAD_MAX_BYTES) {
@@ -172,15 +201,20 @@ export class Uploads {
         while (off < chunk.length) off += await file.write(chunk.subarray(off));
       }
     } catch (e) {
+      void reader.cancel().catch(() => {});
       file?.close();
       await this.discard(path);
       return e instanceof RangeError
         ? status(413, "檔案太大（超過 1 GB）")
         : e instanceof DOMException && e.name === "QuotaExceededError"
         ? status(507, "上傳空間已滿")
+        : e instanceof DOMException && e.name === "TimeoutError"
+        ? status(408, "上傳逾時")
         : status(400, "上傳中斷");
     } finally {
       this.#active.delete(dir);
+      this.#readers.delete(reader);
+      reader.releaseLock();
     }
     file.close();
     if (size === 0) {
@@ -224,6 +258,26 @@ export class Uploads {
         }
       }
     } catch { /* the dir went away; nothing to sweep */ }
+  }
+}
+
+async function readUploadChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new DOMException("upload timed out", "TimeoutError")),
+          idleMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -267,6 +267,53 @@ Deno.test("uploads cap active streams and remove interrupted files", async () =>
   }
 });
 
+Deno.test("idle uploads time out and closing cancels active uploads", async () => {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-idle-" });
+  const uploads = await Uploads.open(stateDir, 20, 60);
+  const upload = () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+    });
+    return uploads.receive(
+      new Request("http://box/api/upload", { method: "POST", body }),
+      new URL("http://box/api/upload?name=test"),
+    );
+  };
+  try {
+    assertEquals((await upload()).status, 408);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const trickle = new ReadableStream<Uint8Array>({
+      start(controller) {
+        timer = setInterval(() => controller.enqueue(new Uint8Array([1])), 5);
+      },
+      cancel() {
+        clearInterval(timer);
+      },
+    });
+    assertEquals(
+      (await uploads.receive(
+        new Request("http://box/api/upload", { method: "POST", body: trickle }),
+        new URL("http://box/api/upload?name=test"),
+      )).status,
+      408,
+    );
+    clearInterval(timer);
+    const pending = upload();
+    uploads.close();
+    assertEquals((await pending).status, 400);
+    const entries = [];
+    for await (const entry of Deno.readDir(uploads.dir)) {
+      entries.push(entry.name);
+    }
+    assertEquals(entries, []);
+  } finally {
+    uploads.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask", async () => {
   const { stateDir, web } = await fixture();
   const seen: string[] = [];
