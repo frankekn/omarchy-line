@@ -1,7 +1,76 @@
 // Exercise trimming, paging and protected interactions in the real page.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
 
+async function reactDuringEmptyPage(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 360, height: 780 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const now = Date.now();
+  const messages = Array.from({ length: 20 }, (_, index) => ({
+    id: String(100 + index),
+    chat: CHAT,
+    from: "u-window-peer",
+    fromName: "Peer",
+    time: now + index * 1000,
+    text: `Race message ${index}`,
+    contentType: "NONE",
+  }));
+  let release;
+  await tapSocket(page, {
+    client(frame, connection) {
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      const reply = JSON.stringify({
+        id: frame.id,
+        ok: true,
+        data: frame.before ? [] : messages,
+      });
+      if (frame.before) release = () => connection.socket.send(reply);
+      else connection.socket.send(reply);
+      return false;
+    },
+  });
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.getByText("Race message 19", { exact: true }).waitFor();
+  await page.locator("#messages").evaluate((list) => {
+    list.scrollTop = 0;
+    list.dispatchEvent(new Event("scroll"));
+  });
+  await until(() => release, "held empty older page");
+  const row = page.locator('article[data-message-id="100"]');
+  const react = row.getByRole("button", { name: "React", exact: true });
+  await react.scrollIntoViewIfNeeded();
+  const before = await react.boundingBox();
+  await page.mouse.move(
+    before.x + before.width / 2,
+    before.y + before.height / 2,
+  );
+  await page.mouse.down();
+  release();
+  await page.getByRole("button", { name: "Load older messages" }).waitFor({
+    state: "hidden",
+  });
+  await page.evaluate(() => new Promise(requestAnimationFrame));
+  const after = await react.boundingBox();
+  await page.mouse.up();
+  assert.ok(Math.abs(after.y - before.y) <= 1, "React moves during the press");
+  await row.getByRole("button", { name: "NICE", exact: true }).waitFor();
+  await react.tap();
+  await row.getByRole("button", { name: "NICE", exact: true }).waitFor({
+    state: "hidden",
+  });
+  await react.tap();
+  await row.getByRole("button", { name: "NICE", exact: true }).waitFor();
+  await context.close();
+  h.step("empty older page keeps React stable during pointer and touch input");
+}
+
 export async function messageWindow(h) {
+  await reactDuringEmptyPage(h);
   const context = await h.context({
     locale: "en-US",
     viewport: { width: 390, height: 844 },
@@ -264,6 +333,13 @@ export async function messageWindow(h) {
         maxBottom = Math.max(maxBottom, Math.abs(sample.bottom));
         maxTailMove = Math.max(maxTailMove, Math.abs(sample.tail - beforeTrim));
       }
+    } else if (i === 500) {
+      await deliver([row(i)]);
+      const older = page.getByRole("button", { name: "Load older messages" });
+      assert.equal((await current()).noOlder, false);
+      assert.equal(await older.isVisible(), true);
+      assert.equal(await older.isEnabled(), true);
+      await deliver(Array.from({ length: 24 }, (_, j) => row(i + j + 1)));
     } else await deliver(Array.from({ length: 25 }, (_, j) => row(i + j)));
   }
   await page.evaluate(() =>

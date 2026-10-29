@@ -584,8 +584,137 @@ async function reactionPickerAfterUpdates(h) {
   h.step("reaction-picker-after-edit-reaction-read");
 }
 
+async function reactionPickerDuringUpdates(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 360, height: 780 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const state = await h.state();
+  const message = {
+    ...row("reaction-update", "First caption", Date.now()),
+    contentType: "IMAGE",
+    hasMedia: true,
+    previewable: true,
+    mediaPath: `${h.stateDir}/media/stub-shot1.png`,
+  };
+  const transition = {
+    ...row("reaction-transition", "System event", message.time - 1000),
+    contentType: "CHATEVENT",
+  };
+  const tap = await tapSocket(page, {
+    client(frame, channel) {
+      if (frame.cmd === "react" && frame.messageId === message.id) {
+        channel.socket.send(JSON.stringify({ id: frame.id, ok: true }));
+        return false;
+      }
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      channel.socket.send(
+        JSON.stringify({ id: frame.id, ok: true, data: [transition, message] }),
+      );
+      return false;
+    },
+  });
+  await h.signIn(page);
+  await page.getByRole("button", { name: family }).click();
+  const messageRow = page.locator('article[data-message-id="reaction-update"]');
+  await messageRow.getByText("First caption").waitFor();
+  const react = messageRow.getByRole("button", { name: "React", exact: true });
+  const originalReact = await react.elementHandle();
+  const originalRow = await messageRow.elementHandle();
+  let seq = Math.max(0, ...(state.events || []).map((event) => event.seq)) + 1;
+  const push = (event) =>
+    tap.socket.send(JSON.stringify({
+      boot: state.bootId,
+      event: { seq: seq++, chat: CHAT, ...event },
+    }));
+
+  await react.tap();
+  const nice = messageRow.getByRole("button", { name: "NICE", exact: true });
+  await nice.waitFor();
+  await nice.focus();
+  const originalPicker = await messageRow.locator(".reaction-picker")
+    .elementHandle();
+  push({ kind: "edit", message: { ...message, text: "Other caption" } });
+  await messageRow.getByText("Other caption").waitFor();
+  assert.equal(await originalPicker.evaluate((node) => node.isConnected), true);
+  assert.equal(
+    await nice.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  assert.equal(await originalReact.evaluate((node) => node.isConnected), true);
+  await nice.click();
+  await until(
+    () =>
+      tap.sent.some((frame) =>
+        frame.cmd === "react" && frame.messageId === message.id &&
+        frame.type === "NICE"
+      ),
+    "reaction after an edit",
+  );
+
+  const box = await react.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  push({ kind: "edit", message: { ...message, text: "Later caption" } });
+  await messageRow.getByText("Later caption").waitFor();
+  assert.equal(await originalReact.evaluate((node) => node.isConnected), true);
+  await page.mouse.up();
+  await nice.waitFor();
+
+  const oldImage = await messageRow.locator("img.media-image").elementHandle();
+  push({
+    kind: "edit",
+    message: {
+      ...message,
+      text: "Later caption",
+      mediaPath: `${h.stateDir}/media/stub-shot2.png`,
+    },
+  });
+  await page.waitForFunction((node) => !node.isConnected, oldImage);
+  await messageRow.locator("img.media-image").waitFor();
+  assert.equal(await originalRow.evaluate((node) => node.isConnected), true);
+  assert.equal(await nice.isVisible(), true);
+
+  await react.tap();
+  await messageRow.getByRole("button", { name: "Reply", exact: true }).tap();
+  assert.match(
+    await page.locator("#reply-label").textContent(),
+    /Later caption/,
+  );
+  await react.tap();
+  await nice.waitFor();
+  push({ kind: "unsend", messageId: message.id });
+  await messageRow.getByText("Message unsent").waitFor();
+  assert.equal(await messageRow.locator(".reaction-picker").count(), 0);
+  assert.equal(
+    await messageRow.getByRole("button", { name: "React" }).count(),
+    0,
+  );
+  const transitionRow = page.locator(
+    'article[data-message-id="reaction-transition"]',
+  );
+  push({
+    kind: "edit",
+    message: { ...transition, contentType: "NONE", text: "First text" },
+  });
+  await transitionRow.getByText("First text").waitFor();
+  push({
+    kind: "edit",
+    message: { ...transition, contentType: "NONE", text: "Latest text" },
+  });
+  await transitionRow.getByText("Latest text").waitFor();
+  await transitionRow.getByRole("button", { name: "Reply", exact: true }).tap();
+  assert.match(await page.locator("#reply-label").textContent(), /Latest text/);
+  await context.close();
+  h.step("reaction controls survive edits until the message is unsent");
+}
+
 export async function review(h) {
   await reactionPickerAfterUpdates(h);
+  await reactionPickerDuringUpdates(h);
   await olderEvent(h);
   await olderSuperseded(h);
   await unreadSyncSupersession(h);

@@ -7,6 +7,7 @@ const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
+  const rowMessages = new WeakMap();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let renderedRows = [], renderedDesired = [], renderedToday = "";
   let renderedUnread = "";
@@ -57,6 +58,7 @@ export function createMessagesView(ctx) {
       own = message.from === model.account,
       row = el("article", `message-row${own ? " own" : ""}`),
       column = el("div", "message-column");
+    rowMessages.set(row, message);
     row.dataset.messageId = String(message.id || "");
     if (
       !own && (chat.startsWith("c") || chat.startsWith("r")) && message.fromName
@@ -179,7 +181,8 @@ export function createMessagesView(ctx) {
       const reply = el("button", "", t("reply"));
       reply.type = "button";
       reply.addEventListener("click", () => {
-        ctx.startReply(message);
+        const current = rowMessages.get(reply.closest(".message-row"));
+        if (current) ctx.startReply(current);
       });
       actions.append(reply);
       const react = el("button", "", t("reaction"));
@@ -244,32 +247,57 @@ export function createMessagesView(ctx) {
     row.append(column);
     return row;
   }
-  // Keep media connected when an edit, reaction or read receipt only changes
-  // the rest of the message. A playing video must not be removed from the DOM.
-  function updateMessageParts(oldRow, newRow) {
+  // Keep unchanged media and message actions connected across updates.
+  function updateMessageParts(oldRow, newRow, keepMedia, id) {
     const oldColumn = oldRow.firstElementChild;
     const newColumn = newRow.firstElementChild;
     const oldBubble = oldColumn.querySelector(":scope > .bubble");
     const newBubble = newColumn.querySelector(":scope > .bubble");
     const media = oldBubble.querySelector(":scope > .message-media");
+    const oldMeta = oldColumn.querySelector(":scope > .message-meta");
+    const newMeta = newColumn.querySelector(":scope > .message-meta");
+    const oldActions = oldMeta.querySelector(":scope > .message-actions");
+    const newActions = newMeta.querySelector(":scope > .message-actions");
+    const keepActions = oldActions && newActions &&
+      oldActions.children.length === newActions.children.length &&
+      [...oldActions.children].every((button, index) =>
+        button.textContent === newActions.children[index].textContent
+      );
+    const picker = oldColumn.querySelector(":scope > .reaction-picker");
+    if (!keepActions) {
+      ctx.closeReactionPicker(id);
+      picker?.remove();
+    }
     oldRow.className = newRow.className;
     oldBubble.className = newBubble.className;
     for (const child of [...oldBubble.children]) {
-      if (child !== media) child.remove();
+      if (!keepMedia || child !== media) child.remove();
     }
     for (const child of [...newBubble.children]) {
-      if (!child.classList.contains("message-media")) {
-        oldBubble.insertBefore(child, media);
+      if (keepMedia && child.classList.contains("message-media")) continue;
+      oldBubble.insertBefore(child, keepMedia ? media : null);
+    }
+    if (keepActions) {
+      for (const child of [...oldMeta.children]) {
+        if (child !== oldActions) child.remove();
       }
+      for (const child of [...newMeta.children]) {
+        if (child !== newActions) oldMeta.insertBefore(child, oldActions);
+      }
+    } else {
+      oldMeta.replaceWith(newMeta);
     }
     for (const child of [...oldColumn.children]) {
-      if (child !== oldBubble) child.remove();
+      if (
+        child !== oldBubble && child !== (keepActions ? oldMeta : newMeta) &&
+        (!keepActions || child !== picker)
+      ) child.remove();
     }
     for (const child of [...newColumn.children]) {
-      if (child === newBubble) continue;
+      if (child === newBubble || child === newMeta) continue;
       if (child.classList.contains("sender")) {
         oldColumn.insertBefore(child, oldBubble);
-      } else oldColumn.append(child);
+      } else oldColumn.insertBefore(child, keepActions ? oldMeta : newMeta);
     }
   }
   function protectedMessageIds(list) {
@@ -350,6 +378,10 @@ export function createMessagesView(ctx) {
     record.node.remove();
     records.delete(key);
   }
+  function setOlderAvailable(node, available) {
+    node.disabled = !available;
+    node.style.visibility = available ? "" : "hidden";
+  }
   function interruptFollowing() {
     followedTop = null;
     if (followFrame) cancelAnimationFrame(followFrame);
@@ -421,7 +453,7 @@ export function createMessagesView(ctx) {
         records.set("control:older", { node });
         order.unshift("control:older");
         renderedDesired.unshift({ key: "control:older", type: "older" });
-      }
+      } else setOlderAvailable(records.get("control:older").node, true);
       // Let the browser clamp the scroll position after the removals. Read
       // and correct it in the next frame, after layout has caught up.
       trimFrame = requestAnimationFrame(() => {
@@ -521,6 +553,8 @@ export function createMessagesView(ctx) {
         }
       }
     }
+    const olderControl = records.get("control:older");
+    if (olderControl) setOlderAvailable(olderControl.node, !model.noOlder);
     const rows = model.messages.slice();
     const pendingRows = pendingFor();
     if (pendingRows.length) {
@@ -545,7 +579,7 @@ export function createMessagesView(ctx) {
       deferTrim && !pendingRows.length && !model.sent.size &&
       rows.length === renderedRows.length + 1 && renderedToday === today &&
       renderedUnread === model.unreadMarkId &&
-      records.has("control:older") === !model.noOlder
+      (model.noOlder || records.has("control:older"))
     ) {
       tail = rows[rows.length - 1];
       const lastItem = renderedDesired[renderedDesired.length - 1];
@@ -577,7 +611,12 @@ export function createMessagesView(ctx) {
       });
     } else {
       desired = [];
-      if (!model.noOlder && rows.some((m) => !m.pending)) {
+      // Keep the control's space after an empty page: removing it at the top
+      // can move a message between pointer down and pointer up.
+      if (
+        rows.some((m) => !m.pending) &&
+        (!model.noOlder || records.has("control:older"))
+      ) {
         desired.push({ key: "control:older", type: "older" });
       }
       if (!rows.length) {
@@ -664,14 +703,10 @@ export function createMessagesView(ctx) {
         const keepMedia = prior?.mediaSignature === mediaSignature;
         let node = messageNode(item.message, !keepMedia);
         if (prior) {
-          ctx.closeReactionPicker(id);
-          if (keepMedia) {
-            updateMessageParts(prior.node, node);
-            node = prior.node;
-          } else {
-            ctx.unobservePreviews(prior.node);
-            prior.node.replaceWith(node);
-          }
+          if (!keepMedia) ctx.unobservePreviews(prior.node);
+          updateMessageParts(prior.node, node, keepMedia, id);
+          rowMessages.set(prior.node, item.message);
+          node = prior.node;
         }
         records.set(item.key, {
           node,
