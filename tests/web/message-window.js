@@ -703,6 +703,10 @@ export async function messageWindow(h) {
   );
   await page.waitForTimeout(400);
   assert.equal(requests.length, beforeQuote);
+  await page.evaluate(() => document.activeElement.blur());
+  await page.keyboard.press("k");
+  await page.waitForTimeout(200);
+  assert.equal(requests.length, beforeQuote, "body must not enable k shortcut");
   await page.locator("#messages").evaluate((list) =>
     list.focus({ preventScroll: true })
   );

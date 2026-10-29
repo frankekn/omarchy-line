@@ -622,8 +622,9 @@ export function createMessagesView(ctx) {
   });
   document.addEventListener("keydown", (event) => {
     if (
-      !ctx.isViewingChat() || $("lightbox").open || event.isComposing ||
-      event.ctrlKey || event.metaKey || event.altKey || event.shiftKey ||
+      !ctx.isViewingChat() || $("lightbox").open || event.defaultPrevented ||
+      event.isComposing || event.ctrlKey || event.metaKey || event.altKey ||
+      event.shiftKey ||
       !(event.target === document.body || list.contains(event.target))
     ) return;
     const target = event.target;
@@ -633,11 +634,15 @@ export function createMessagesView(ctx) {
         target.tagName,
       ))
     ) return;
-    if (
-      (event.key === "j" || event.key === "k") &&
-      target instanceof Element && target !== list &&
-      target.closest('button, a[href], [role="button"], [tabindex]')
-    ) return;
+    if (event.key === "j" || event.key === "k") {
+      if (!(target instanceof Element) || !list.contains(target)) return;
+      const control = target.closest(
+        'a[href], button, input, select, textarea, [role="button"], ' +
+          '[contenteditable]:not([contenteditable="false"]), [tabindex], ' +
+          "audio[controls], video[controls]",
+      );
+      if (control && control !== list) return;
+    }
     if (["ArrowUp", "PageUp", "Home", "k"].includes(event.key)) {
       resumePaging(true);
     } else if (["ArrowDown", "PageDown", "End", "j"].includes(event.key)) {
