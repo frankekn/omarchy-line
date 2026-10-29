@@ -2,73 +2,165 @@
 // to the controller.
 import { $, el, formatTime, setAvatar } from "./dom.js";
 import { visibleChats } from "./protocol.js";
+import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 export function createChatsView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
+  const records = new Map();
+  let order = [];
+  function chatRecord(chat) {
+    const mid = String(chat.mid), button = el("button", "chat-row");
+    button.type = "button";
+    button.dataset.chatId = mid;
+    button.addEventListener("focus", () => {
+      model.selectedChat = mid;
+      for (const record of records.values()) {
+        if (!record.mid) continue;
+        const selected = record.mid === mid;
+        if (record.selected !== selected) {
+          record.node.classList.toggle("keyboard-selected", selected);
+          record.selected = selected;
+        }
+      }
+    });
+    const avatar = el("span", "avatar");
+    const content = el("span", "row-content"),
+      top = el("span", "row-top"),
+      bottom = el("span", "row-bottom");
+    const name = el("span", "row-name"),
+      time = el("time", "row-time"),
+      preview = el("span", "row-preview"),
+      badge = el("span", "badge");
+    const timeText = document.createTextNode("");
+    time.append(timeText);
+    top.append(name, time);
+    bottom.append(preview);
+    content.append(top, bottom);
+    button.append(avatar, content);
+    button.addEventListener("click", () => ctx.openChat(mid));
+    return {
+      node: button,
+      mid,
+      avatar,
+      name,
+      timeText,
+      preview,
+      badge,
+      bottom,
+    };
+  }
+  function updateChat(record, chat, today, times) {
+    const unread = Number(chat.unread);
+    const values = {
+      label: `${chat.name || chat.mid}${
+        chat.hidden ? ` · ${t("hidden")}` : ""
+      }`,
+      avatarPath: chat.avatarPath || "",
+      avatarName: chat.name || "",
+      lastTime: Number(chat.lastTime || 0),
+      today,
+      preview: `${chat.lastFrom ? `${chat.lastFrom}: ` : ""}${
+        chat.lastText || ""
+      }`,
+      unread: unread > 0 ? unread : 0,
+    };
+    const previous = record.values;
+    if (!previous || previous.label !== values.label) {
+      record.name.textContent = values.label;
+    }
+    if (
+      !previous || previous.avatarPath !== values.avatarPath ||
+      previous.avatarName !== values.avatarName
+    ) {
+      setAvatar(record.avatar, values.avatarPath, values.avatarName);
+    }
+    if (
+      !previous || previous.lastTime !== values.lastTime ||
+      previous.today !== today
+    ) {
+      const minute = values.lastTime ? Math.floor(values.lastTime / 60000) : "";
+      if (!times.has(minute)) {
+        times.set(minute, formatTime(values.lastTime, english));
+      }
+      const label = times.get(minute);
+      if (record.timeText.data !== label) record.timeText.data = label;
+    }
+    if (!previous || previous.preview !== values.preview) {
+      record.preview.textContent = values.preview;
+    }
+    if (!previous || previous.unread !== values.unread) {
+      if (values.unread) {
+        record.badge.textContent = values.unread > 99 ? "99+" : values.unread;
+        if (!record.badge.parentNode) record.bottom.append(record.badge);
+      } else record.badge.remove();
+    }
+    record.values = values;
+    const active = record.mid === model.active;
+    if (record.active !== active) {
+      record.node.classList.toggle("active", active);
+      record.active = active;
+    }
+    const selected = record.mid === model.selectedChat;
+    if (record.selected !== selected) {
+      record.node.classList.toggle("keyboard-selected", selected);
+      record.selected = selected;
+    }
+  }
   function renderChats() {
-    const rows = visibleChats(model.chats, $("search").value);
+    const list = $("chat-list"),
+      rows = visibleChats(model.chats, $("search").value);
     if (!rows.some((chat) => String(chat.mid) === model.selectedChat)) {
       model.selectedChat = String(rows[0]?.mid || "");
     }
-    const nodes = rows.map((chat) => {
-      const button = el(
-        "button",
-        `chat-row${String(chat.mid) === model.active ? " active" : ""}`,
-      );
-      button.type = "button";
-      button.dataset.chatId = String(chat.mid);
-      button.classList.toggle(
-        "keyboard-selected",
-        String(chat.mid) === model.selectedChat,
-      );
-      button.addEventListener("focus", () => {
-        model.selectedChat = String(chat.mid);
-        for (const row of $("chat-list").querySelectorAll(".chat-row")) {
-          row.classList.toggle("keyboard-selected", row === button);
-        }
-      });
-      const avatar = el("span", "avatar");
-      setAvatar(avatar, chat.avatarPath, chat.name);
-      const content = el("span", "row-content"),
-        top = el("span", "row-top"),
-        bottom = el("span", "row-bottom");
-      const name = el(
-        "span",
-        "row-name",
-        `${chat.name || chat.mid}${chat.hidden ? ` · ${t("hidden")}` : ""}`,
-      );
-      top.append(
-        name,
-        el("time", "row-time", formatTime(chat.lastTime, english)),
-      );
-      bottom.append(
-        el(
-          "span",
-          "row-preview",
-          `${chat.lastFrom ? `${chat.lastFrom}: ` : ""}${chat.lastText || ""}`,
-        ),
-      );
-      if (Number(chat.unread) > 0) {
-        bottom.append(
-          el("span", "badge", Number(chat.unread) > 99 ? "99+" : chat.unread),
-        );
-      }
-      content.append(top, bottom);
-      button.append(avatar, content);
-      button.addEventListener("click", () => ctx.openChat(String(chat.mid)));
-      return button;
+    const counts = new Map();
+    const desired = rows.map((chat) => {
+      const mid = String(chat.mid), count = counts.get(mid) || 0;
+      counts.set(mid, count + 1);
+      return { key: `chat:${mid}:${count}`, chat };
     });
-    $("chat-list").replaceChildren(
-      ...(nodes.length ? nodes : [el("div", "empty-list", t("noChats"))]),
-    );
-    $("chat-count").textContent = String(rows.length).padStart(2, "0");
+    if (!desired.length) desired.push({ key: "control:empty", chat: null });
+    const keys = desired.map((item) => item.key);
+    const changes = planKeyChanges(order, keys);
+    const focused = list.contains(document.activeElement)
+      ? document.activeElement
+      : null;
+    for (const key of changes.removed) {
+      records.get(key).node.remove();
+      records.delete(key);
+    }
+    const today = new Date().toDateString(), times = new Map();
+    for (const { key, chat } of desired) {
+      let record = records.get(key);
+      if (!record) {
+        record = chat
+          ? chatRecord(chat)
+          : { node: el("div", "empty-list", t("noChats")) };
+        records.set(key, record);
+      }
+      if (chat) updateChat(record, chat, today, times);
+    }
+    placeKeyedNodes(list, keys, records, changes);
+    order = keys;
+    if (focused?.isConnected && document.activeElement !== focused) {
+      focused.focus({ preventScroll: true });
+    }
+    const count = String(rows.length).padStart(2, "0");
+    if ($("chat-count").textContent !== count) {
+      $("chat-count").textContent = count;
+    }
     const incomplete = model.chatList?.complete === false;
-    $("list-warning").hidden = !incomplete;
-    $("list-warning").textContent = incomplete ? t("incomplete") : "";
+    const warning = incomplete ? t("incomplete") : "";
+    if ($("list-warning").hidden === incomplete) {
+      $("list-warning").hidden = !incomplete;
+    }
+    if ($("list-warning").textContent !== warning) {
+      $("list-warning").textContent = warning;
+    }
     const unread = model.chats.filter((c) => !c.hidden).reduce(
       (sum, c) => sum + Math.max(0, Number(c.unread) || 0),
       0,
     );
-    document.title = unread ? `(${unread}) enil` : "enil";
+    const title = unread ? `(${unread}) enil` : "enil";
+    if (document.title !== title) document.title = title;
   }
   function renderActiveHeader() {
     const chat = model.chats.find((row) => String(row.mid) === model.active);

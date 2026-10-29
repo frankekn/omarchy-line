@@ -420,11 +420,14 @@ textarea::placeholder {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  contain: layout paint;
   padding: 0 10px;
 }
 .chat-row {
   width: 100%;
   display: flex;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
   align-items: center;
   gap: 12px;
   text-align: left;

@@ -63,10 +63,12 @@ export function visibleChats(chats, query) {
   const search = String(query || "").trim().toLowerCase();
   const unread = [], rest = [], hidden = [];
   for (const chat of chats) {
-    const haystack = `${chat.name || chat.mid} ${chat.lastFrom || ""} ${
-      chat.lastText || ""
-    }`.toLowerCase();
-    if (search && !haystack.includes(search)) continue;
+    if (search) {
+      const haystack = `${chat.name || chat.mid} ${chat.lastFrom || ""} ${
+        chat.lastText || ""
+      }`.toLowerCase();
+      if (!haystack.includes(search)) continue;
+    }
     if (chat.hidden) hidden.push(chat);
     else if (Number(chat.unread || 0) > 0) unread.push(chat);
     else rest.push(chat);

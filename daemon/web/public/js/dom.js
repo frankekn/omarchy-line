@@ -21,22 +21,37 @@ export function httpsUrl(value) {
     return "";
   }
 }
+const avatars = new WeakMap();
 export function setAvatar(node, path, name) {
+  const source = path ? String(path) : "";
+  const initial = (value) =>
+    String(value || "?").trim().slice(0, 1)
+      .toUpperCase() || "?";
+  const previous = avatars.get(node);
+  if (previous?.source === source) {
+    previous.name = name;
+    if (!previous.image || previous.image.parentNode !== node) {
+      node.textContent = initial(name);
+    }
+    return;
+  }
+  const current = { source, name, image: null };
+  avatars.set(node, current);
   node.replaceChildren();
-  if (path) {
+  if (source) {
     const image = el("img");
+    current.image = image;
     image.alt = "";
-    image.src = fileUrl(path);
+    image.loading = "lazy";
+    image.src = fileUrl(source);
     image.addEventListener("error", () => {
+      if (avatars.get(node) !== current) return;
       node.replaceChildren(
-        document.createTextNode(
-          String(name || "?").trim().slice(0, 1).toUpperCase() || "?",
-        ),
+        document.createTextNode(initial(current.name)),
       );
     }, { once: true });
     node.append(image);
-  } else {node.textContent =
-      String(name || "?").trim().slice(0, 1).toUpperCase() || "?";}
+  } else node.textContent = initial(name);
 }
 export function formatTime(ms, english) {
   if (!Number(ms)) return "";
