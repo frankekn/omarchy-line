@@ -32,6 +32,9 @@ import { json, securityHeaders, status } from "./http.ts";
 
 const BIND_RETRY_MS = 10_000;
 const MAX_BRIDGES = 32;
+const MAX_SIGNIN_BODY = 8192;
+const MAX_SIGNIN_PENDING = 16;
+const SIGNIN_BODY_TIMEOUT_MS = 10_000;
 const ASSET_RE = /^\/(?:app\.css|js\/[a-z][a-z0-9-]*\.js)$/;
 
 export interface WebOptions {
@@ -41,6 +44,8 @@ export interface WebOptions {
   /** Where the page's files are; tests point it elsewhere. */
   publicDir?: URL;
   log?: (line: string) => void;
+  /** Override the body deadline in tests. */
+  signinTimeoutMs?: number;
 }
 
 export interface WebHandler {
@@ -96,6 +101,55 @@ function withCookie(cookie: string): Response {
   });
 }
 
+async function signinBody(
+  req: Request,
+  timeoutMs: number,
+  readers: Set<ReadableStreamDefaultReader<Uint8Array>>,
+): Promise<{ value?: unknown; error?: number }> {
+  if (Number(req.headers.get("content-length")) > MAX_SIGNIN_BODY) {
+    return { error: 413 };
+  }
+  if (!req.body) return {};
+  const reader = req.body.getReader();
+  readers.add(reader);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let complete = false;
+  try {
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new DOMException("sign-in timed out", "TimeoutError")),
+        timeoutMs,
+      );
+    });
+    const decoder = new TextDecoder();
+    let text = "";
+    let size = 0;
+    for (;;) {
+      const part = await Promise.race([reader.read(), deadline]);
+      if (part.done) break;
+      size += part.value.length;
+      if (size > MAX_SIGNIN_BODY) return { error: 413 };
+      text += decoder.decode(part.value, { stream: true });
+    }
+    complete = true;
+    text += decoder.decode();
+    try {
+      return { value: JSON.parse(text) };
+    } catch {
+      return {};
+    }
+  } catch (error) {
+    return error instanceof DOMException && error.name === "TimeoutError"
+      ? { error: 408 }
+      : {};
+  } finally {
+    clearTimeout(timer);
+    if (!complete) void reader.cancel().catch(() => {});
+    readers.delete(reader);
+    reader.releaseLock();
+  }
+}
+
 export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const log = opts.log ?? ((line: string) => console.log(line));
   const publicDir = opts.publicDir ?? new URL("./public/", import.meta.url);
@@ -103,6 +157,8 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const uploads = await Uploads.open(opts.stateDir);
   const feed = new StateFeed(`${opts.stateDir}/state.json`);
   const connections = new Set<() => void>();
+  const signinReaders = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+  let signinPending = 0;
   const bridgeDeps = {
     sockPath: `${opts.stateDir}/sock`,
     eventsPath: `${opts.stateDir}/events.json`,
@@ -132,8 +188,25 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       return json({ signedIn: auth.signedIn(req) });
     }
     if (req.method === "POST" && path === "/api/signin") {
-      const body = await req.json().catch(() => null);
-      const result = auth.signin(body?.key);
+      if (signinPending >= MAX_SIGNIN_PENDING) return status(503);
+      signinPending++;
+      let body: { value?: unknown; error?: number };
+      try {
+        body = await signinBody(
+          req,
+          opts.signinTimeoutMs ?? SIGNIN_BODY_TIMEOUT_MS,
+          signinReaders,
+        );
+      } finally {
+        signinPending--;
+      }
+      if (closed) return status(503);
+      if (body.error) return status(body.error);
+      const value = body.value;
+      const key = value && typeof value === "object" && "key" in value
+        ? value.key
+        : undefined;
+      const result = auth.signin(key);
       if (result === "blocked") return status(429);
       return result === "ok" ? withCookie(auth.signinCookie()) : status(401);
     }
@@ -166,6 +239,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       if (closed) return;
       closed = true;
       for (const close of connections) close();
+      for (const reader of signinReaders) void reader.cancel().catch(() => {});
       feed.close();
       uploads.close();
       log("[web] stopped");

@@ -103,6 +103,86 @@ Deno.test("wrong keys age out of the cap", async () => {
   assertEquals(auth.signin(KEY), "ok");
 });
 
+Deno.test("linked and posted guesses share the cap across connections", async () => {
+  const { stateDir, web } = await fixture();
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
+    (req) => web.handle(req),
+  );
+  try {
+    const base = `http://127.0.0.1:${server.addr.port}`;
+    const guesses = await Promise.all(
+      Array.from(
+        { length: 10 },
+        (_, i) =>
+          i % 2 === 0
+            ? fetch(`${base}/?key=wrong`, { headers: { connection: "close" } })
+            : fetch(`${base}/api/signin`, {
+              method: "POST",
+              headers: { connection: "close" },
+              body: JSON.stringify({ key: "wrong" }),
+            }),
+      ),
+    );
+    assertEquals(guesses.map((r) => r.status), Array(10).fill(401));
+    for (const response of guesses) await response.body?.cancel();
+    const link = await fetch(`${base}/?key=${KEY}`);
+    const post = await fetch(`${base}/api/signin`, {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+    });
+    assertEquals([link.status, post.status], [429, 429]);
+  } finally {
+    web.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("sign-in bounds unauthenticated request bodies and waiters", async () => {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-signin-" });
+  const web = await createWeb({
+    addr: "127.0.0.1:0",
+    key: KEY,
+    stateDir,
+    signinTimeoutMs: 30,
+    log: () => {},
+  });
+  try {
+    const large = await web.handle(get("/api/signin", {
+      method: "POST",
+      body: "x".repeat(8193),
+    }));
+    assertEquals(large.status, 413);
+    const pending = Array.from(
+      { length: 16 },
+      () =>
+        web.handle(get("/api/signin", {
+          method: "POST",
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"key":"'));
+            },
+          }),
+        })),
+    );
+    const extra = await web.handle(get("/api/signin", {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+    }));
+    assertEquals(extra.status, 503);
+    assertEquals(
+      (await Promise.all(pending)).map((r) => r.status),
+      Array(16).fill(408),
+    );
+    const cookie = await signedInCookie(web);
+    assert(cookie.startsWith("enil_web="));
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("an unusable key is replaced by a minted one", async () => {
   const auth = await WebAuth.create("short");
   assert(auth.key !== "short" && auth.key.length >= 16);
