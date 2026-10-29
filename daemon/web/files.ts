@@ -80,6 +80,12 @@ export async function serveFile(stateDir: string, url: URL): Promise<Response> {
   const isQr = real.slice(0, slash) === realState &&
     /^qr-[0-9]+\.png$/.test(name);
   if (!isQr && !inside(realMedia, real)) return status(404);
+  const expected = await Deno.stat(real).catch(() => null);
+  if (
+    !expected?.isFile || expected.nlink !== 1 || expected.dev === null ||
+    expected.ino === null
+  ) return status(404);
+  if (await realOrNull(real) !== real) return status(404);
   let file: Deno.FsFile;
   try {
     file = await Deno.open(real, { read: true });
@@ -87,7 +93,10 @@ export async function serveFile(stateDir: string, url: URL): Promise<Response> {
     return status(404);
   }
   const info = await file.stat();
-  if (!info.isFile) {
+  if (
+    !info.isFile || info.nlink !== 1 || info.dev !== expected.dev ||
+    info.ino !== expected.ino || await realOrNull(real) !== real
+  ) {
     file.close();
     return status(404);
   }

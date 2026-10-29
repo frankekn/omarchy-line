@@ -270,6 +270,40 @@ Deno.test("/api/file serves media and the QR, never storage.json", async () => {
   }
 });
 
+Deno.test("file reads reject hard links and a file swapped before open", async () => {
+  const { stateDir, web } = await fixture();
+  const secret = `${stateDir}/storage.json`;
+  const linked = `${stateDir}/media/hard-link`;
+  const target = `${stateDir}/media/race`;
+  const open = Deno.open;
+  try {
+    const cookie = await signedInCookie(web);
+    const request = (path: string) =>
+      web.handle(get(`/api/file?path=${encodeURIComponent(path)}`, {
+        headers: { cookie },
+      }));
+    await Deno.link(secret, linked);
+    assertEquals((await request(linked)).status, 404);
+    await Deno.remove(linked);
+    await Deno.writeTextFile(target, "public media");
+    Object.defineProperty(Deno, "open", {
+      configurable: true,
+      value: async (path: string | URL, options?: Deno.OpenOptions) => {
+        if (path === target) {
+          await Deno.remove(target);
+          await Deno.symlink(secret, target);
+        }
+        return await open(path, options);
+      },
+    });
+    assertEquals((await request(target)).status, 404);
+  } finally {
+    Object.defineProperty(Deno, "open", { configurable: true, value: open });
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("uploads share a quota across restarts and concurrent requests", async () => {
   const stateDir = await Deno.makeTempDir({ prefix: "enil-web-quota-" });
   const old = `${stateDir}/media/web-uploads/old`;
