@@ -47,6 +47,13 @@ The daemon writes three things into `~/.local/state/enil/` (or
 When `state.json`'s `updatedAt` has not moved for 3 minutes, the panel shows
 `DAEMON OFFLINE`.
 
+The web page ([web.md](web.md)) is one more reader of the same files, not a
+third half. When `ENIL_WEB_ADDR` is set, the daemon also serves
+`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. The
+page also gets `state.json` each time it changes, and `events.json` once when
+it connects, to catch up. So the page gets the same replies and pushes as a
+panel, and nothing in the daemon's request handling knows the page exists.
+
 ## Keeping the daemon running
 
 The systemd user unit `daemon/enil.service` uses `Restart=always`, so any exit

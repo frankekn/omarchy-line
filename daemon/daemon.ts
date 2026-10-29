@@ -47,7 +47,7 @@ import {
 } from "./modules/watchdog.ts";
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
 import { claimInstance } from "./modules/instance.ts";
-import { startWeb } from "./web.ts";
+import { startWeb } from "./web/server.ts";
 
 /** Held for the life of the process: closing it would release the gate. */
 let instanceLock: Deno.FsFile | null = null;

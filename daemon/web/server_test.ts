@@ -1,6 +1,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
-import { createWeb, parseAddr, sniffInline, uploadName } from "./web.ts";
+import { WebAuth } from "./auth.ts";
+import { sniffInline, uploadName } from "./files.ts";
+import { createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
 
@@ -69,7 +71,9 @@ Deno.test("only images and mp4 are served inline", () => {
 Deno.test("sign-in: wrong key, right key, then too many tries", async () => {
   const { stateDir, web } = await fixture();
   try {
-    assertEquals((await web.handle(get("/api/session"))).status, 401);
+    const session = async (init: RequestInit = {}) =>
+      (await (await web.handle(get("/api/session", init))).json()).signedIn;
+    assertEquals(await session(), false);
     assertEquals((await web.handle(get("/api/file?path=/x"))).status, 401);
     const wrong = () =>
       web.handle(get("/api/signin", {
@@ -78,14 +82,49 @@ Deno.test("sign-in: wrong key, right key, then too many tries", async () => {
       }));
     assertEquals((await wrong()).status, 401);
     const cookie = await signedInCookie(web);
-    assertEquals(
-      (await web.handle(get("/api/session", { headers: { cookie } }))).status,
-      204,
-    );
+    assertEquals(await session({ headers: { cookie } }), true);
     const viaLink = await web.handle(get(`/?key=${KEY}`));
     assertEquals(viaLink.status, 303);
     for (let i = 0; i < 9; i++) await wrong();
     assertEquals((await wrong()).status, 429);
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("wrong keys age out of the cap", async () => {
+  let now = 0;
+  const auth = await WebAuth.create(KEY, () => now);
+  for (let i = 0; i < 10; i++) assertEquals(auth.signin("nope"), "wrong");
+  assertEquals(auth.signin(KEY), "blocked");
+  now += 10 * 60 * 1000 + 1;
+  assertEquals(auth.signin(KEY), "ok");
+});
+
+Deno.test("an unusable key is replaced by a minted one", async () => {
+  const auth = await WebAuth.create("short");
+  assert(auth.key !== "short" && auth.key.length >= 16);
+});
+
+Deno.test("only the page's own files are served", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const page = await web.handle(get("/"));
+    assertEquals(page.status, 200);
+    assert(page.headers.get("content-security-policy")?.includes("'self'"));
+    await page.body?.cancel();
+    const js = await web.handle(get("/js/app.js"));
+    assertEquals(
+      js.headers.get("content-type"),
+      "text/javascript; charset=utf-8",
+    );
+    await js.body?.cancel();
+    for (const path of ["/server.ts", "/js/../server.ts", "/js/a/b.js"]) {
+      const res = await web.handle(get(path));
+      await res.body?.cancel();
+      assertEquals(res.status, 404, path);
+    }
   } finally {
     web.close();
     await Deno.remove(stateDir, { recursive: true });
@@ -233,6 +272,11 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
     assertEquals((await wantId(4)).ok, true);
     assert(frames.some((f) => f.web === "state"));
     assertEquals(seen.map((l) => JSON.parse(l).id), [3, 4]);
+    // The daemon has answered the send, so the upload is gone.
+    await Deno.stat(path).then(
+      () => Promise.reject(new Error("upload kept")),
+      () => {},
+    );
     ws.close();
     await new Promise((r) => ws.onclose = r);
   } finally {

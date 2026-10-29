@@ -142,6 +142,38 @@ notification, and a person to click it, none of which development can drive.
 **Never point the stub at the real state dir.** It will overwrite
 `state.json`.
 
+## Work on the web page
+
+The web page lives in `daemon/web/`:
+
+| Path | What it is |
+|---|---|
+| `server.ts` | Routes, and `startWeb`, which `daemon.ts` calls. |
+| `auth.ts` | The web key, the cookie, and the same-origin rule. |
+| `bridge.ts` | One browser WebSocket bridged to one daemon socket connection, plus `state.json` changes. |
+| `files.ts` | `/api/file` (media cache and login QR) and `/api/upload`. |
+| `http.ts` | Security headers and small responses. |
+| `public/` | The page: `index.html`, `app.css`, and plain ES modules in `public/js/`, with no build step. |
+
+In `public/js/`, the modules without a prefix (`protocol.js`, `text.js`,
+`drafts.js`, `connection.js`, `i18n.js`) do not touch the DOM, so
+`ui_test.ts` imports and tests them under Deno. `controller-*.js` change the
+shared model, and `view-*.js` draw it. `app.js` puts them together. The server
+serves `public/js/<name>.js` from that one directory only, with no
+subdirectories.
+
+To run the page against the stub, without a LINE account:
+
+```bash
+cd daemon
+XDG_STATE_HOME=/tmp/enil-stub ./stub.py &
+XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run -A web/server.ts
+```
+
+Then open `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`.
+`deno task test` runs `web/server_test.ts` and `web/ui_test.ts` with the rest.
+
 ## Take screenshots
 
 Take screenshots for the docs against the stub, never against a real

@@ -40,6 +40,12 @@ daemon 在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）寫三樣東�
 
 `state.json` 的 `updatedAt` 超過 3 分鐘沒動，面板就顯示 `DAEMON 離線`。
 
+網頁版（[web.zh-TW.md](web.zh-TW.md)）也是讀同一組檔案，不算第三半。有設
+`ENIL_WEB_ADDR` 時，daemon 會同時提供 `daemon/web/`。每條瀏覽器 WebSocket 各自
+連一條 `sock`。`state.json` 每次變動都會轉送；`events.json` 只在連線時送一次，
+用來補上斷線期間的事件。所以網頁拿到的
+回覆和推送跟面板一樣，daemon 處理請求的程式完全不知道有網頁。
+
 ## 讓 daemon 一直在跑
 
 systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 daemon 怎麼

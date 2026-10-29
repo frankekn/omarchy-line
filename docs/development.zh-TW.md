@@ -119,6 +119,36 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 **別讓 stub 指到真的 state 目錄**，它會蓋掉 `state.json`。
 
+## 開發網頁版
+
+網頁版的程式在 `daemon/web/`：
+
+| 路徑 | 內容 |
+|---|---|
+| `server.ts` | 路由，以及 `daemon.ts` 呼叫的 `startWeb`。 |
+| `auth.ts` | web key、cookie 和同源規則。 |
+| `bridge.ts` | 一條瀏覽器 WebSocket 對應一條 daemon socket 連線，並推送 `state.json` 的變動。 |
+| `files.ts` | `/api/file`（媒體快取和登入 QR）和 `/api/upload`。 |
+| `http.ts` | 安全標頭和簡單的回應。 |
+| `public/` | 網頁本身：`index.html`、`app.css`，以及 `public/js/` 裡的原生 ES module，沒有建置步驟。 |
+
+`public/js/` 裡沒有前綴的模組（`protocol.js`、`text.js`、`drafts.js`、
+`connection.js`、`i18n.js`）不碰 DOM，所以 `ui_test.ts` 可以在 Deno 裡直接
+import 來測試。`controller-*.js` 負責改共用的 model，`view-*.js` 負責畫面，
+`app.js` 把它們組起來。伺服器只提供 `public/js/<name>.js` 這一層，不支援子目錄。
+
+不用 LINE 帳號，接 stub 跑網頁：
+
+```bash
+cd daemon
+XDG_STATE_HOME=/tmp/enil-stub ./stub.py &
+XDG_STATE_HOME=/tmp/enil-stub ENIL_WEB_ADDR=127.0.0.1:18440 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run -A web/server.ts
+```
+
+然後開 `http://127.0.0.1:18440/?key=devkey-0123456789abcdef`。
+`deno task test` 會連同 `web/server_test.ts` 和 `web/ui_test.ts` 一起跑。
+
 ## 截圖
 
 文件用的截圖一律對著 stub 拍，不要用真的帳號。真實截圖會拍到沒同意公開的人的名字、

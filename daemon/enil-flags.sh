@@ -26,13 +26,14 @@
 #                    (watchdog.ts, suspend/resume), wl-paste (clipboard.ts),
 #                    ffmpegthumbnailer and ffmpeg (video.ts), omarchy-shell
 #                    and notify-send (notify.ts).
-#   --allow-env      The variables modules/env.ts and web.ts read, plus the two the npm
-#                    dependencies read through Node's process.env shim, which
-#                    throws NotCapable for an unlisted name rather than
-#                    answering undefined: Q_DEBUG (q, loaded by thrift at
-#                    import, so the daemon does not boot without it) and
-#                    NODE_DEBUG (pngjs, reached when qrcode writes the login
-#                    PNG). Deno's own DENO_* settings need no permission.
+#   --allow-env      The variables modules/env.ts and web/server.ts read,
+#                    plus the two the npm dependencies read through Node's
+#                    process.env shim, which throws NotCapable for an
+#                    unlisted name rather than answering undefined:
+#                    Q_DEBUG (q, loaded by thrift at import, so the daemon
+#                    does not boot without it) and NODE_DEBUG (pngjs,
+#                    reached when qrcode writes the login PNG). Deno's own
+#                    DENO_* settings need no permission.
 #                    undici reads more, but linejs only loads undici under
 #                    Node (base/core/node_fetch.ts), never under Deno.
 #   no --allow-sys   Booting, the QR PNG and the thrift codec raised no
