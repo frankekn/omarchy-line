@@ -54,11 +54,22 @@ matches chat names, senders and message previews. Tap a quote to find its
 original in the loaded messages. In the image viewer, use the arrows to switch
 images and the wheel, double-click, pinch or zoom buttons to change the zoom.
 
-Outside text fields, `/` opens search, `j`/`k` or the arrow keys move through
-the chat list, Enter opens the selected chat, `r` syncs, and Esc goes back one
-layer. In a chat, `j`/`k` or up/down scroll the messages. The image viewer uses
-left/right to switch images, `+`/`-` to zoom, Shift plus the arrow keys to pan,
-and Esc to close. A zoomed image can also be dragged.
+With the image viewer closed and focus outside an input, textarea, select or
+editable element, `/` returns to the list and focuses search, and `r` syncs.
+In the list, or with focus in the sidebar, up/down or `j`/`k` select a chat.
+Enter opens the selected chat when focus is on a chat row or the page body.
+In an open chat, those keys scroll messages when focus is outside the sidebar.
+Outside inputs, Esc closes the sticker or mention picker, cancels a reply,
+returns to the list, or clears search, in that order. These shortcuts require
+the chat workspace and ignore Ctrl, Alt, Command and text composition. Use
+up/down, `j`/`k`, `/` and `r` without Shift. Esc also closes the mention
+picker from the message input.
+
+In the message input, Enter selects an open mention choice. Otherwise, Enter
+sends when the viewport is at least 701px wide and the primary pointer is
+fine; in other cases it adds a line. Shift+Enter adds a line. In the image
+viewer, left/right switch images, `+`/`=` and `-` zoom, Shift plus the arrow
+keys pan, and Esc closes the viewer. A zoomed image can also be dragged.
 
 ## Run it on a Mac
 
