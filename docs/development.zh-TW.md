@@ -180,6 +180,18 @@ port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 
 設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
 暫存目錄。
 
+要測 Safari 引擎，先安裝相同版本 Playwright 的 WebKit，再選擇瀏覽器：
+
+```bash
+npx --yes playwright@1.64.1 install webkit
+ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions parity review a11y
+```
+
+預設是 Chromium；`CHROMIUM` 只會改變 Chromium 的執行檔。WebKit 的手機 context
+使用 iPhone 13 設定和各 suite 指定的 viewport。WebKit 透過 IPv4-mapped IPv6
+loopback 位址連接 IPv4 listener，因此機器必須支援該位址。在受支援的 Linux 發行版，
+Playwright 的 `install --with-deps webkit` 可以安裝所需的系統套件。
+
 真 daemon 的 smoke test 也使用空的暫存 state 目錄，不含 LINE 帳號。它用
 `enil-run.sh` 啟動原始碼，並在暫存副本中編譯執行檔。編譯後會移除副本的網頁檔案，
 再檢查執行檔內的頁面、session、socket 和上傳，不會啟動 LINE 登入：

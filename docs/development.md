@@ -208,6 +208,20 @@ there instead of the system temporary directory.
 It removes temporary state after success and keeps it with screenshots and
 logs on failure. Every browser page must have no console or page errors.
 
+To run the Safari engine coverage, install Playwright's matching WebKit and
+select it for the browser suites:
+
+```bash
+npx --yes playwright@1.64.1 install webkit
+ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions parity review a11y
+```
+
+Chromium is the default; `CHROMIUM` only changes its executable. WebKit mobile
+contexts use iPhone 13 settings with the suite's viewport. WebKit connects to
+the IPv4 listener through an IPv4-mapped IPv6 loopback address, so the machine
+must support that address. On a supported Linux distribution, Playwright's
+`install --with-deps webkit` can install its system dependencies.
+
 The real daemon smoke test also uses an empty temporary state directory, with
 no LINE account. It starts `enil-run.sh` from source and builds and starts a
 binary in a temporary copy. It removes the copy's web assets after building,
