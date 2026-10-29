@@ -177,11 +177,18 @@ export async function main(h) {
   const phone = await mobile.newPage();
   const phoneTap = await tapSocket(phone);
   await h.signIn(phone);
-  assert.ok(await phone.evaluate(() => navigator.maxTouchPoints > 0));
   if (h.browserName === "webkit") {
     assert.match(await phone.evaluate(() => navigator.userAgent), /iPhone/);
   }
+  // WebKit's emulation can report zero maxTouchPoints; observe the tap itself.
+  await phone.evaluate(() => {
+    globalThis.__testTouchCount = 0;
+    document.addEventListener("touchstart", (event) => {
+      globalThis.__testTouchCount = event.touches.length;
+    }, { once: true });
+  });
   await phone.getByRole("button", { name: /STUB 工作/ }).tap();
+  assert.equal(await phone.evaluate(() => globalThis.__testTouchCount), 1);
   await phone.getByText("STUB deploy #4821 succeeded").first().waitFor();
   assert.equal(await phone.locator("#sidebar").isVisible(), false);
   await phone.getByRole("button", { name: "返回" }).tap();

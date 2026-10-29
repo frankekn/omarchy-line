@@ -1,6 +1,28 @@
 // Parity with panel navigation, sync, search and the media viewer.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
 
+async function dispatchTouches(page, events) {
+  await page.locator("#lightbox-stage").evaluate((stage, events) => {
+    for (const [type, points] of events) {
+      // WebKit cannot construct Touch objects. The view reads the coordinates
+      // from event.touches, so provide those on a synthetic event instead.
+      const event = new Event(type, {
+        bubbles: true,
+        cancelable: type === "touchmove",
+      });
+      Object.defineProperty(event, "touches", {
+        value: points.map(([identifier, clientX, clientY]) => ({
+          identifier,
+          target: stage,
+          clientX,
+          clientY,
+        })),
+      });
+      stage.dispatchEvent(event);
+    }
+  }, events);
+}
+
 export async function parity(h) {
   const desktop = await h.context({
     locale: "en-US",
@@ -405,26 +427,11 @@ export async function parity(h) {
   h.step("mobile-restriction-sync");
   await phone.locator('article[data-message-id="parity4"] img.media-image')
     .click();
-  await phone.locator("#lightbox-stage").evaluate((stage) => {
-    const touch = (id, x) =>
-      new Touch({ identifier: id, target: stage, clientX: x, clientY: 100 });
-    stage.dispatchEvent(
-      new TouchEvent("touchstart", {
-        touches: [touch(1, 100), touch(2, 200)],
-        bubbles: true,
-      }),
-    );
-    stage.dispatchEvent(
-      new TouchEvent("touchmove", {
-        touches: [touch(1, 50), touch(2, 250)],
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    stage.dispatchEvent(
-      new TouchEvent("touchend", { touches: [], bubbles: true }),
-    );
-  });
+  await dispatchTouches(phone, [
+    ["touchstart", [[1, 100, 100], [2, 200, 100]]],
+    ["touchmove", [[1, 50, 100], [2, 250, 100]]],
+    ["touchend", []],
+  ]);
   assert.ok(
     (await phone.locator("#lightbox-image").getAttribute("style")).includes(
       "scale(2)",
@@ -448,23 +455,11 @@ export async function parity(h) {
   const beforeTouchPan = await phone.locator("#lightbox-image").getAttribute(
     "style",
   );
-  await phone.locator("#lightbox-stage").evaluate((stage) => {
-    const touch = (x) =>
-      new Touch({ identifier: 1, target: stage, clientX: x, clientY: 200 });
-    stage.dispatchEvent(
-      new TouchEvent("touchstart", { touches: [touch(200)], bubbles: true }),
-    );
-    stage.dispatchEvent(
-      new TouchEvent("touchmove", {
-        touches: [touch(170)],
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    stage.dispatchEvent(
-      new TouchEvent("touchend", { touches: [], bubbles: true }),
-    );
-  });
+  await dispatchTouches(phone, [
+    ["touchstart", [[1, 200, 200]]],
+    ["touchmove", [[1, 170, 200]]],
+    ["touchend", []],
+  ]);
   assert.notEqual(
     await phone.locator("#lightbox-image").getAttribute("style"),
     beforeTouchPan,

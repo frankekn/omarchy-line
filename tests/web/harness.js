@@ -212,6 +212,22 @@ export async function runSuite(name, suite) {
           : {};
         const context = await browser.newContext({ ...device, ...options });
         contexts.push(context);
+        await context.addInitScript(() => {
+          document.addEventListener("securitypolicyviolation", (event) => {
+            console.log(
+              "[csp] " + JSON.stringify({
+                blockedURI: event.blockedURI,
+                sourceFile: event.sourceFile,
+                lineNumber: event.lineNumber,
+                columnNumber: event.columnNumber,
+                sample: event.sample,
+                effectiveDirective: event.effectiveDirective,
+                violatedDirective: event.violatedDirective,
+                disposition: event.disposition,
+              }),
+            );
+          });
+        });
         // The stub's sticker and FLEX URLs are real HTTPS URLs; keep their
         // browser rendering deterministic without fetching external images.
         for (
@@ -228,7 +244,19 @@ export async function runSuite(name, suite) {
         }
         context.on("page", (page) => {
           page.on("console", (message) => {
-            if (message.type() === "error") errors.push(message.text());
+            const text = message.text();
+            if (message.type() === "log" && text.startsWith("[csp] ")) {
+              console.log(`  ${text}`);
+            }
+            if (message.type() !== "error") return;
+            // Chromium and Android use interactive-widget; WebKit ignores it
+            // and reports this harmless warning as an error.
+            if (
+              browserName === "webkit" &&
+              text ===
+                'Viewport argument key "interactive-widget" not recognized and ignored.'
+            ) return;
+            errors.push(text);
           });
           page.on("pageerror", (error) => errors.push(error.message));
           page.on("dialog", async (dialog) => {
@@ -279,6 +307,17 @@ export async function runSuite(name, suite) {
       },
     };
     await suite(harness);
+    // Temporary CI probe: isolate whether Playwright's screenshot causes CSP.
+    if (browserName === "webkit" && name === "main") {
+      const page = contexts.flatMap((context) => context.pages()).find((page) =>
+        !page.isClosed()
+      );
+      if (page) {
+        console.log("  CSP probe: before Playwright screenshot");
+        await page.screenshot();
+        console.log("  CSP probe: after Playwright screenshot");
+      }
+    }
     assert.deepEqual(errors, [], "browser console and page errors");
     for (const context of contexts) await context.close();
     assert.deepEqual(errors, [], "browser console and page errors on close");
@@ -288,9 +327,11 @@ export async function runSuite(name, suite) {
     let index = 0;
     for (const context of contexts) {
       for (const page of context.pages()) {
+        console.log("  CSP probe: before failure screenshot");
         await page.screenshot({ path: `${temp}/failure-${++index}.png` }).catch(
           () => {},
         );
+        console.log("  CSP probe: after failure screenshot");
       }
     }
     console.error(`FAIL ${name}: ${error.stack ?? error}`);
