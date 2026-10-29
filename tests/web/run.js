@@ -9,6 +9,7 @@ import { read } from "./read.js";
 import { reconcile } from "./reconcile.js";
 import { parity } from "./parity.js";
 import { review } from "./review.js";
+import { a11y } from "./a11y.js";
 
 const suites = {
   main,
@@ -20,6 +21,7 @@ const suites = {
   reconcile,
   parity,
   review,
+  a11y,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {
