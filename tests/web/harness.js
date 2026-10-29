@@ -148,6 +148,7 @@ export async function runSuite(name, suite) {
   const contexts = [];
   const errors = [];
   const dialogs = [];
+  const expiredImagePages = new Map();
   let browser, browserLaunch, screenshotPage;
   let failed = false;
   let cleanupPromise;
@@ -210,6 +211,15 @@ export async function runSuite(name, suite) {
       step(name) {
         console.log(`  PASS ${name}`);
       },
+      allowExpiredImage401(page) {
+        if (browserName !== "webkit") return () => 0;
+        const entry = { count: 0 };
+        expiredImagePages.set(page, entry);
+        return () => {
+          expiredImagePages.delete(page);
+          return entry.count;
+        };
+      },
       async context(options = {}) {
         const device = browserName === "webkit" && options.isMobile
           ? devices["iPhone 13"]
@@ -267,6 +277,24 @@ export async function runSuite(name, suite) {
               browserName === "webkit" && screenshotPage === page &&
               text === screenshotCspError
             ) return;
+            // An image already in flight may get 401 when an expiry test
+            // clears its cookie. Allow only that page, URL and exact message.
+            const expiry = expiredImagePages.get(page);
+            if (
+              browserName === "webkit" && expiry &&
+              text ===
+                "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+            ) {
+              try {
+                const location = new URL(message.location().url);
+                if (
+                  location.origin === base && location.pathname === "/api/file"
+                ) {
+                  expiry.count++;
+                  return;
+                }
+              } catch { /* The error has no usable URL. */ }
+            }
             errors.push(text);
           });
           page.on("pageerror", (error) => errors.push(error.message));

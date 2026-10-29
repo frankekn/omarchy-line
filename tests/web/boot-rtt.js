@@ -377,6 +377,7 @@ await runSuite("boot-rtt", async (h) => {
     localStorage.getItem("enil.web.drafts.v1")
   );
   assert.ok(savedDrafts?.includes("draft survives web expiry"));
+  const endLiveExpiry = h.allowExpiredImage401(livePage);
   await setCookieFromBrowser(live, "cookie-from-previous-key");
   const liveSession = canInspectCookies
     ? livePage.waitForRequest(`${h.base}/api/session`)
@@ -392,6 +393,21 @@ await runSuite("boot-rtt", async (h) => {
       ),
       "rotated cookie must be sent with a session request",
     );
+  }
+  if (h.browserName === "webkit") {
+    // Exercise the narrow console allowance with a real expired image request.
+    const blocked = livePage.waitForResponse((response) =>
+      response.url() === `${h.base}/api/file?path=expired-probe` &&
+      response.status() === 401
+    );
+    await livePage.evaluate(() =>
+      new Promise((resolve) => {
+        const image = new Image();
+        image.onload = image.onerror = resolve;
+        image.src = "/api/file?path=expired-probe";
+      })
+    );
+    assert.equal((await blocked).status(), 401);
   }
   await firstSocket.close({ code: 4001, reason: "connection lost" });
   const liveSignIn = livePage.getByRole("link", { name: "Sign in again" });
@@ -430,6 +446,9 @@ await runSuite("boot-rtt", async (h) => {
     await livePage.locator("#message-input").inputValue(),
     "draft survives web expiry",
   );
+  await livePage.waitForLoadState("networkidle");
+  const liveImageErrors = endLiveExpiry();
+  if (h.browserName === "webkit") assert.ok(liveImageErrors >= 1);
   h.step("live-expiry-preserves-draft-and-allows-signin");
 
   const fullStorage = await h.context({
@@ -475,6 +494,7 @@ await runSuite("boot-rtt", async (h) => {
   await fullPage.locator("#message-input").evaluate((input) => {
     input.dataset.retained = "yes";
   });
+  const endFullExpiry = h.allowExpiredImage401(fullPage);
   await fullStorage.clearCookies();
   await fullSocket.close({ code: 4001, reason: "disconnected" });
   const fullSignIn = fullPage.getByRole("link", { name: "Sign in again" });
@@ -511,6 +531,8 @@ await runSuite("boot-rtt", async (h) => {
   await fullPage.getByLabel("Web key").fill(KEY);
   await fullPage.getByRole("button", { name: "Sign in" }).click();
   await fullPage.locator("#connection.connected").waitFor();
+  await fullPage.waitForLoadState("networkidle");
+  endFullExpiry();
   h.step("volatile-draft-remains-copyable-before-signin");
 
   const chinese = await h.context({ locale: "zh-TW" });
@@ -526,6 +548,7 @@ await runSuite("boot-rtt", async (h) => {
   });
   await chinesePage.goto(h.base);
   await chinesePage.locator("#connection.connected").waitFor();
+  const endChineseExpiry = h.allowExpiredImage401(chinesePage);
   await chinese.clearCookies();
   await chineseSocket.close({ code: 4001, reason: "disconnected" });
   await chinesePage.getByRole("link", { name: "重新登入" }).waitFor();
@@ -537,6 +560,8 @@ await runSuite("boot-rtt", async (h) => {
     await chinesePage.locator("#connection-text").textContent(),
     "需要重新登入",
   );
+  await chinesePage.waitForLoadState("networkidle");
+  endChineseExpiry();
   await chinese.close();
   h.step("expired-notice-in-traditional-chinese");
 
@@ -563,6 +588,7 @@ await runSuite("boot-rtt", async (h) => {
   });
   await deniedPage.goto(h.base);
   await deniedPage.locator("#connection.connected").waitFor();
+  const endDeniedExpiry = h.allowExpiredImage401(deniedPage);
   await deniedSession.clearCookies();
   await deniedPage.evaluate(() => sessionStorage.setItem("deny-next", "1"));
   await deniedSocket.close({ code: 4001, reason: "disconnected" });
@@ -572,6 +598,8 @@ await runSuite("boot-rtt", async (h) => {
   await deniedSignIn.click();
   await deniedPage.locator("#signin-screen").waitFor({ state: "visible" });
   assert.equal(await deniedPage.locator("#signin-error").isHidden(), true);
+  await deniedPage.waitForLoadState("networkidle");
+  endDeniedExpiry();
   h.step("session-401-stops-reconnect");
 
   const offline = await h.context({ locale: "en-US" });
