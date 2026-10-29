@@ -24,6 +24,7 @@ import { loadBlocks } from "../slice_test.ts";
 import { planKeyChanges } from "./public/js/keyed.js";
 import { createChatController } from "./public/js/controller-chat.js";
 import { createStateController } from "./public/js/controller-state.js";
+import { createSendController } from "./public/js/controller-send.js";
 
 Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
   const examples = [
@@ -652,6 +653,66 @@ class MemoryStorage {
     this.values.delete(key);
   }
 }
+Deno.test("acknowledged sends stay visible until their own echo", async () => {
+  for (const echoFirst of [false, true]) {
+    const model = createModel();
+    model.account = "me";
+    model.active = "chat";
+    model.boot = "boot";
+    const store = createDraftStore(model, new MemoryStorage());
+    let acknowledge = () => {};
+    const ctx = {
+      model,
+      t: (key: string) => key,
+      ...store,
+      renderMessages: () => {},
+      isViewingChat: () => false,
+      displayError: () => {},
+      toast: () => {},
+      sendFiles: () => {},
+      command: () => new Promise<void>((resolve) => acknowledge = resolve),
+    };
+    const send = createSendController(ctx), state = createStateController(ctx);
+    const message = send.optimistic("chat", "send", { text: "hello" }, {
+      text: "hello",
+    });
+    send.sendOptimistic("chat", message);
+    const echo = () =>
+      state.onFrame({
+        boot: "boot",
+        event: {
+          seq: 1,
+          kind: "message",
+          chat: "chat",
+          message: { id: "1", from: "me", requestId: message.requestId },
+        },
+      });
+    if (echoFirst) echo();
+    acknowledge();
+    await Promise.resolve();
+    assertEquals(store.pendingFor("chat", "me"), []);
+    assertEquals(model.sent.size, echoFirst ? 0 : 1);
+    if (!echoFirst) {
+      assertEquals(model.sent.get(message.requestId)?.status, "sent");
+      state.reconcilePending("other", [{
+        from: "me",
+        requestId: message.requestId,
+      }]);
+      state.reconcilePending("chat", [{
+        from: "peer",
+        requestId: message.requestId,
+      }]);
+      assertEquals(model.sent.size, 1);
+      echo();
+    }
+    assertEquals(model.sent.size, 0);
+    assertEquals(model.messages, [{
+      id: "1",
+      from: "me",
+      requestId: message.requestId,
+    }]);
+  }
+});
 Deno.test("storage failures preserve the in-memory draft and report once", () => {
   const storage = {
     getItem(_key: string): string | null {

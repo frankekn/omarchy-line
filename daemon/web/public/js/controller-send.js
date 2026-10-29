@@ -50,6 +50,17 @@ export function createSendController(ctx) {
       ...message.payload,
       requestId: message.requestId,
     }).then(() => {
+      // Like the panel, a success spends the durable draft immediately, but
+      // its bubble remains visible until LINE's echo or refreshed history.
+      // An echo may already have removed the pending row before this reply.
+      if (
+        pendingFor(chat, account).some((m) => m.requestId === message.requestId)
+      ) {
+        model.sent.set(message.requestId, { ...message, status: "sent" });
+        if (model.sent.size > 500) {
+          model.sent.delete(model.sent.keys().next().value);
+        }
+      }
       forgetPending(chat, message.requestId, account);
       if (model.account === account && model.active === chat) {
         model.messages = model.messages.map((m) =>

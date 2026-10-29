@@ -37,7 +37,9 @@ export function createChatController(ctx) {
     model.unreadMarkCount = Number(row?.unread || 0);
     model.unreadMarkId = "";
     model.chatOpen = true;
-    model.messages = [];
+    model.messages = [...model.sent.values()].filter((message) =>
+      message.chat === chat && message.from === model.account
+    );
     model.loading = false;
     model.loadingOlder = false;
     model.noOlder = false;
@@ -108,7 +110,7 @@ export function createChatController(ctx) {
       const fresh = Array.isArray(rows) ? rows : [];
       ctx.reconcilePending(chat, fresh);
       model.messages = mergeHistory(
-        model.messages.filter((m) => !m.pending),
+        model.messages.filter((m) => !m.pending || m.status === "sent"),
         fresh,
         model.account,
       );

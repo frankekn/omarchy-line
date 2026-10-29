@@ -30,6 +30,8 @@ export function createModel() {
     requestNumber: 0,
     requests: new Map(),
     drafts: {},
+    // Acknowledged bubbles stay in memory until their echo or history arrives.
+    sent: new Map(),
     storageWarningShown: false,
     account: "",
     reply: null,

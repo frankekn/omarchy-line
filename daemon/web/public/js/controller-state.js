@@ -40,6 +40,9 @@ export function createStateController(ctx) {
       (state.login?.status === "error" && state.login?.settled === true)
     ) {
       ctx.clearLastAccount(previousAccount);
+      for (const [id, message] of model.sent) {
+        if (message.from === previousAccount) model.sent.delete(id);
+      }
       model.account = "";
       ctx.closeChat();
       model.stickerPacks = null;
@@ -82,6 +85,13 @@ export function createStateController(ctx) {
     model.eventsSeen = true;
   }
   function reconcilePending(chat, rows) {
+    for (const row of rows) {
+      if (row?.from !== model.account || !row.requestId) continue;
+      const id = String(row.requestId), sent = model.sent.get(id);
+      if (sent?.from === model.account && sent.chat === chat) {
+        model.sent.delete(id);
+      }
+    }
     const pending = ctx.pendingFor(chat);
     const remaining = reconcileRows(pending, rows, model.account);
     if (remaining !== pending) ctx.writePending(chat, remaining);
@@ -102,7 +112,11 @@ export function createStateController(ctx) {
       event.kind === "message" && event.message?.requestId &&
       event.message.from === model.account
     ) {
-      ctx.forgetPending(chat, String(event.message.requestId));
+      const id = String(event.message.requestId), sent = model.sent.get(id);
+      if (sent?.from === model.account && sent.chat === chat) {
+        model.sent.delete(id);
+      }
+      ctx.forgetPending(chat, id);
     }
     if (event.kind === "history" && Array.isArray(event.messages)) {
       reconcilePending(chat, event.messages);
