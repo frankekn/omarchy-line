@@ -18,6 +18,9 @@ LINE 帳號裡多出裝置。
 daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏覽器開一次
 這個連結，或開位址後輸入 key。之後瀏覽器會保留 cookie 400 天。換掉 key 就會讓
 所有瀏覽器登出。
+單一瀏覽器登出只會清除該瀏覽器的 cookie，不會撤銷已複製的 cookie。如果 cookie 或
+key 可能外洩，請更換 key。網頁使用 HTTP，因此 cookie 沒有 `Secure` 屬性。請使用
+可信任的 Tailscale 網路，並保護登入連結。
 
 如果位址還不存在（Tailscale 還在啟動），daemon 每 10 秒重試一次，LINE 本身照常運作。
 
@@ -26,11 +29,14 @@ daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏�
 網頁送出的指令和 panel 相同，透過 WebSocket 轉到 daemon 自己的 socket。和 panel
 不同的地方：
 
-- 檔案要先從瀏覽器上傳，再傳送。上傳的檔案放在 `media/web-uploads/`，LINE 收到後
-  就刪除，最多保留一天。
+- 檔案要先從瀏覽器上傳，再傳送。上傳的檔案放在 `media/web-uploads/`，daemon 回覆
+  傳送結果後就刪除，不論成功或失敗。若沒有收到回覆，啟動時和之後每小時會清除超過
+  24 小時的上傳檔。上傳檔共用 1 GiB 儲存上限，最多同時進行四個上傳。上傳連續
+  30 秒沒有資料，或總時間超過一小時，就會停止。
 - 剪貼簿指令一律拒絕，因為它們讀的是 daemon 那台機器的剪貼簿，不是瀏覽器的。
   要傳圖片，請直接貼到網頁裡。
-- 網頁只能讀 media 快取和登入 QR，讀不到 `storage.json` 或其他檔案。
+- 網頁只能讀 media 快取和登入 QR。這個邊界假設 state 目錄沒有被不可信任的本機程式
+  更動。以 daemon 使用者身分執行的程式本來就能直接讀取 `storage.json`。
 - 只有圖片和 MP4 會在瀏覽器裡開啟，其他檔案一律下載。
 
 ## 在 Mac 上執行

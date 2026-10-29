@@ -97,7 +97,7 @@ programs that run as you.
 | `messages/<your-mid>/<chat-mid>.jsonl` | Every message the daemon has seen, one file per chat. It is never cleaned up automatically. |
 | `media/` | Decrypted originals of files and images you opened, thumbnails, and `clipboard-*` images waiting to be sent. |
 | `media/avatars/` | Profile pictures. |
-| `media/web-uploads/` | Files uploaded from the web page, until LINE has them, and at most one day. |
+| `media/web-uploads/` | Files uploaded from the web page, until the daemon answers the send. If no answer arrives, files older than 24 hours are swept at startup and hourly. |
 | `media/public-images/` | Stickers and FLEX images. |
 | `state.json` | The chat list and the last message preview of each chat. |
 | `events.json` | The newest 200 live events, including full recent messages. |

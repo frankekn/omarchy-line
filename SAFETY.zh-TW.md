@@ -75,7 +75,7 @@ Deno 用 `daemon/enil-flags.sh` 裡一份固定的權限清單執行 daemon，�
 | `messages/<你的-mid>/<聊天室-mid>.jsonl` | daemon 看過的每一則訊息，一個聊天室一個檔案。不會自動清理。 |
 | `media/` | 你打開過的檔案與圖片的解密原檔、縮圖，以及等著送出的 `clipboard-*` 圖片。 |
 | `media/avatars/` | 大頭貼。 |
-| `media/web-uploads/` | 從網頁版上傳、等著送出的檔案。LINE 收到後刪除，最多保留一天。 |
+| `media/web-uploads/` | 從網頁版上傳、等著送出的檔案。daemon 回覆傳送結果後刪除；若沒有回覆，啟動時和之後每小時會清除超過 24 小時的檔案。 |
 | `media/public-images/` | 貼圖與 FLEX 圖片。 |
 | `state.json` | 聊天列表，以及每個聊天室最後一則訊息的預覽。 |
 | `events.json` | 最新 200 筆即時事件，包含最近訊息的完整內容。 |

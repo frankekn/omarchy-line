@@ -19,6 +19,10 @@ The page is off by default. It starts when `ENIL_WEB_ADDR` is set.
 At start the daemon logs `[web] sign in: http://<addr>/?key=<key>`. Open that
 link once in each browser, or open the address and type the key. The browser
 then keeps a cookie for 400 days. Change the key to sign out every browser.
+Signing out on one browser clears its cookie, but does not revoke a copy of
+that cookie. Change the key if a cookie or the key may have been exposed.
+The page uses HTTP, so its cookie does not have the `Secure` attribute. Use a
+trusted Tailscale network and keep the sign-in link private.
 
 If the address does not exist yet (Tailscale is still starting), the daemon
 tries again every 10 seconds. LINE keeps working in the meantime.
@@ -29,11 +33,17 @@ The page sends the same commands as the panel, over a WebSocket that the
 daemon connects to its own socket. These are different from the panel:
 
 - Files are uploaded from the browser, then sent. Uploads are kept under
-  `media/web-uploads/` until LINE has the file, and at most one day.
+  `media/web-uploads/` until the daemon answers the send, whether it succeeds
+  or fails. If the answer is lost, a sweep removes uploads older than 24
+  hours at startup and then hourly. Uploads share a 1 GiB storage limit; up
+  to four can run at once. An upload stops after 30 seconds without data or
+  one hour in total.
 - The clipboard commands are refused. They read the daemon machine's
   clipboard, not the browser's. Paste an image into the page instead.
-- The page can read only the media cache and the login QR. It cannot read
-  `storage.json` or any other file.
+- The page can read only the media cache and the login QR. This boundary
+  assumes the state directory is not being changed by an untrusted local
+  process. A program running as the daemon's user can already read
+  `storage.json` directly.
 - Only images and MP4 open in the browser. Every other file downloads.
 
 ## Run it on a Mac
