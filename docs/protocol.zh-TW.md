@@ -41,32 +41,37 @@
     "pin": "…",                        // 只有 status=pin
     "error": "…",                      // 只有 status=error，給人看的訊息
     "reason": "…",                     // 選用，status=error 時的分類
-    "attempt": "logout",               // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
+    // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
+    "attempt": "logout",
     "settled": true                     // 選用；true 代表登入／登出收尾已完成
   },
   "chats": [                           // 未讀在前，其次照 lastTime
     { "mid": "u…", "name": "…", "unread": 0,
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
       "avatarPath": "…/media/avatars/<sha1>.jpg",    // 選用，沒有就是沒設大頭貼
-      "hidden": true }                               // 選用，只有被隱藏的那幾間才有
+      // 選用，只有被隱藏的那幾間才有
+      "hidden": true }
   ],
   "chatsRevision": 12,                 // chats／chatList 有變才遞增；心跳不動
-  "chatList": { "complete": true, "loaded": 80 }, // 選用；false 代表伺服器還有下一頁
+  // 選用；false 代表伺服器還有下一頁
+  "chatList": { "complete": true, "loaded": 80 },
   "timings": {                         // 選用；最近 64 次的 daemon 延遲統計
     "chats.refresh": { "samples": 18, "lastMs": 241.3,
                        "p50Ms": 205.1, "p95Ms": 390.8, "maxMs": 411.2 },
     "cmd.history": { "samples": 6, "lastMs": 92.4,
                      "p50Ms": 88.0, "p95Ms": 131.7, "maxMs": 131.7 }
   },
-  "stateBytes": {                      // 選用；state.json 最近 64 次寫入的大小統計
+  // 選用；state.json 最近 64 次寫入的大小統計
+  "stateBytes": {
     "samples": 64, "last": 253412,
     "p50": 251190, "p95": 258871, "max": 260112,
     "chats": 80                        // 這份檔案序列化時的 chats 列數
   },
-  "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態；
-                                                     //   reason 和 code 只在因限制暫停時才有
+  // 選用，push 連線狀態；reason 和 code 只在因限制暫停時才有
+  "link": { "push": "up", "since": 1735000000000 },
   "refresh": { "at": 1735000000000, "failures": 0,   // 選用，聊天室清單的新鮮度
-               "reason": "network" },                //   reason 只在 failures > 0 才有
+               // reason 只在 failures > 0 才有
+               "reason": "network" },
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // 選用，見下
 }
 ```
@@ -209,8 +214,10 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
 
-網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。網頁
-連線時，每 500 毫秒檢查 `state.json`；中間的寫入可能略過。瀏覽器提出
+網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。daemon
+原子寫入 `state.json` 後，會通知其內建 web server 的共用 feed。網頁連線時，feed 也
+每 500 毫秒檢查一次檔案，作為獨立 server 和外部變動的後備；中間的寫入可能略過。
+瀏覽器提出
 `enil-state-delta-v1` WebSocket 子協定後，會收到帶版本的 state 幀：
 
 - `{ "web": "state", "generation": "…", "version": N, "state": … }`

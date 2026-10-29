@@ -26,11 +26,11 @@ the key if a cookie or the key may have been exposed. The page uses HTTP, so
 its cookie does not have the `Secure` attribute. Use a trusted Tailscale
 network and keep the sign-in link private.
 
-Ten wrong keys within ten minutes temporarily block further sign-in attempts
-until one of those failures is more than ten minutes old. POST and WebSocket
-requests with an `Origin` must match the page's origin. Requests without it
-are also allowed, for non-browser clients; this check does not replace
-authentication.
+Ten wrong keys within ten minutes temporarily block sign-in for the whole web
+server, even with the correct key, until one of those failures is more than
+ten minutes old. POST and WebSocket requests with an `Origin` must match the
+page's origin. Requests without it are also allowed, for non-browser clients;
+this check does not replace authentication.
 The server allows up to 32 WebSocket connections at once.
 
 The browser stores drafts, reply targets, mentions and unconfirmed sends in
@@ -76,10 +76,10 @@ In the image viewer, use the arrows to switch images and the wheel,
 double-click, pinch or zoom buttons to change the zoom.
 
 While you follow new messages at the bottom, the page can remove older loaded
-messages to keep about 500 confirmed rows. Scroll up to load them again. The
-page keeps the loaded history while you read above the bottom, and defers
-removal when it would disturb an unread marker, a selection, focus or media.
-Browser find searches the messages currently loaded in the page.
+messages to keep about 500 confirmed rows. Scroll up to try to load them again;
+see the sparse-cache limitation below. The page keeps the loaded history while
+you read above the bottom, and defers removal when it would disturb an unread
+marker, a selection, focus or media.
 
 Unconfirmed sends remain visible for review and manual retry. If the outcome
 is unknown, retrying can send the same message twice. Recent acknowledged
@@ -107,6 +107,29 @@ sends when the viewport is at least 701px wide and the primary pointer is
 fine; in other cases it adds a line. Shift+Enter adds a line. In the image
 viewer, left/right switch images, `+`/`=` and `-` zoom, Shift plus the arrow
 keys pan, and Esc closes the viewer. A zoomed image can also be dragged.
+
+If a reconnect detects that the web cookie has expired, reconnecting stops
+and a notice offers a sign-in link. The page and composer stay in place so you
+can copy a draft before signing in. Drafts already saved in browser storage
+remain available after sign-in.
+
+## Known limitations
+
+- The HTTP cookie has no `Secure` attribute. Browser notifications normally
+  require HTTPS or another secure context, and this page does not implement
+  browser notifications. The daemon's desktop notifications are separate.
+- The ten-failure sign-in lock applies to the whole web server. A correct key
+  cannot sign in during the lock, regardless of which browser failed.
+- Cookies cannot be revoked one at a time. Change the key and restart the
+  daemon to invalidate all of them.
+- The browser may keep signed-in `/api/file` responses (media and the login
+  QR) in its private cache for one day, including after leaving the page.
+- A cached first history page can show an older version of an edited message
+  while the LINE history response is delayed. Revalidation can also fail.
+- Browser find, including Ctrl+F, searches only currently loaded messages.
+- If the daemon's local message cache has gaps, messages removed from the
+  page's window may not load again when you scroll up. This can happen if the
+  daemon stops before pending cache writes are flushed.
 
 ## Run it on a Mac
 

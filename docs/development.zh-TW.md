@@ -16,7 +16,8 @@ git submodule update --init
 ```
 
 daemon 需要 [Deno](https://deno.com) 2。面板的測試需要 Node.js。按鍵測試需要
-`qt6-declarative` 裡的 `qmltestrunner`，沒裝的話會直接跳過。
+`qt6-declarative` 裡的 `qmltestrunner`，沒裝的話會直接跳過。如果 Qt 工具放在
+`/usr/lib/qt6/bin`，請將該目錄加入 `PATH`，讓按鍵測試和 `qmllint` 找到工具。
 
 ## 跑檢查
 
@@ -28,7 +29,10 @@ node tests/qml/run.js
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+qml_imports="$(mktemp -d)"
+ln -s /usr/share/omarchy/shell "$qml_imports/qs"
+qmllint -I "$qml_imports" Panel.qml LinePanel.qml LineWindow.qml
+rm -rf -- "$qml_imports"
 ```
 
 - `deno task check` 做 daemon 的型別檢查。`deno task no-any` 和 `deno task lint`
@@ -39,7 +43,8 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   state 目錄。
 - `tests/qml/keytest/run.sh` 在 offscreen 的 `qmltestrunner` 下跑列表的按鍵路徑。
 - `python3 daemon/stub_test.py` 拿 stub 對照協定，在自己的暫存 `XDG_STATE_HOME` 裡跑。
-- `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。
+- `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。暫時建立的
+  `qs` 連結讓 `qmllint` 能找到 QML import 的正確根目錄。
 
 這些都證明不了畫面是對的。改完之後要在實機上確認：
 
@@ -62,7 +67,8 @@ LINE session 也能改 UI。
 
 ```bash
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # 已登入
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # 未登入，可以試 QR 流程
+# 未登入，可以試 QR 流程
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
@@ -139,7 +145,8 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
 後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應使用
-`Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體，瀏覽器可以私下保留一天。
+`Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體和登入 QR，瀏覽器
+可以私下保留一天。
 HTML 回應（包括 304）會在載入模組時預載 `/api/session`，session 仍是 `no-store`。
 啟動時網頁只在 session 確認 cookie 後才開 WebSocket；session 檢查失敗時，登入畫面
 會顯示連線錯誤。如果 socket 在第一個 frame 前關閉，網頁會在重連時再檢查 session。
@@ -244,7 +251,8 @@ HTML 已快取時檢查登出和重新登入。這是本機模擬，不是 Tails
 ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
 ```
 
-此測試使用空的暫存 state，不會啟動 LINE 登入。這兩個腳本都不屬於 CI 必跑項目。
+此測試使用空的暫存 state，不會啟動 LINE 登入。CI 會跑 compiled-assets 測試；
+載入量測不屬於 CI 必跑項目。
 
 ## 截圖
 
@@ -295,9 +303,11 @@ dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`
 
 `.github/workflows/ci.yml` 在 GitHub 提供的 `ubuntu-24.04` runner 上跑，對象是推到
 `main` 的 commit，以及每一個 pull request（包括從 fork 來的 pull request）。它不用任何
-secret，對 repo 只有唯讀權限。它跑上面那些檢查，但不跑需要 Omarchy shell 的
-`omarchy plugin validate` 和 `qmllint`。另外還跑 `sh -n daemon/enil-run.sh`，
-以及檢查 `manifest.json` 有沒有 `id`、`name` 和 `version`。
+secret，對 repo 只有唯讀權限。它跑本機檢查，但不跑需要 Omarchy shell 的
+`omarchy plugin validate` 和 `qmllint`。它會跑 Chromium 瀏覽器測試、真 daemon
+smoke test、啟動、compiled-assets 和 state-notify 測試。另一個 job 會跑指定的
+WebKit 瀏覽器測試和啟動測試。另外還跑 `sh -n daemon/enil-run.sh`，以及檢查
+`manifest.json` 有沒有 `id`、`name` 和 `version`。
 
 ## 調校用的環境變數
 

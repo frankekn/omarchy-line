@@ -18,7 +18,8 @@ git submodule update --init
 
 The daemon needs [Deno](https://deno.com) 2. The panel tests need Node.js.
 The key tests need `qmltestrunner` from `qt6-declarative` and skip when it is
-missing.
+missing. If the Qt tools are in `/usr/lib/qt6/bin`, add that directory to
+`PATH` for the key tests and `qmllint`.
 
 ## Run the checks
 
@@ -31,7 +32,10 @@ node tests/qml/run.js
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+qml_imports="$(mktemp -d)"
+ln -s /usr/share/omarchy/shell "$qml_imports/qs"
+qmllint -I "$qml_imports" Panel.qml LinePanel.qml LineWindow.qml
+rm -rf -- "$qml_imports"
 ```
 
 - `deno task check` type-checks the daemon. `deno task no-any` and
@@ -45,7 +49,8 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   offscreen `qmltestrunner`.
 - `python3 daemon/stub_test.py` checks the stub against the protocol. It runs
   inside its own temporary `XDG_STATE_HOME`.
-- `omarchy plugin validate .` and `qmllint` need the local Omarchy shell.
+- `omarchy plugin validate .` and `qmllint` need the local Omarchy shell. The
+  temporary `qs` link gives `qmllint` the correct root for its QML imports.
 
 None of these proves the screen looks right. After a change, check it on
 real hardware:
@@ -70,7 +75,8 @@ needs no real LINE session.
 
 ```bash
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # logged in
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # logged out, QR flow testable
+# logged out, QR flow testable
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
@@ -165,8 +171,8 @@ subdirectories.
 The server snapshots the page's assets and their content-based ETags at
 startup. Restart the web server after editing HTML, CSS or JavaScript; a
 browser reload then revalidates the cached assets. API responses use
-`Cache-Control: no-store`, except signed-in media from `/api/file`, which the
-browser may keep privately for one day.
+`Cache-Control: no-store`, except signed-in `/api/file` responses (media and
+the login QR), which the browser may keep privately for one day.
 The HTML response preloads `/api/session` while modules load, including on
 304 responses. The session stays `no-store`; at startup the page opens the
 WebSocket only after the session confirms the cookie. A failed session check
@@ -287,8 +293,8 @@ source web assets removed from its temporary copy:
 ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
 ```
 
-This test uses an empty temporary state and does not start LINE login. Neither
-script is part of the CI suite.
+This test uses an empty temporary state and does not start LINE login. CI runs
+the compiled-assets test; the load measurement is not part of CI.
 
 ## Take screenshots
 
@@ -352,9 +358,12 @@ config, your state, and your daemon are not touched. A capture larger than
 `.github/workflows/ci.yml` runs on a GitHub-hosted `ubuntu-24.04` runner for
 pushes to `main` and for every pull request, including pull requests from
 forks. It uses no secrets and has read-only access to the repository. It
-runs the checks above except `omarchy plugin validate` and `qmllint`, which
-need the Omarchy shell. It also runs `sh -n daemon/enil-run.sh` and a check
-that `manifest.json` has `id`, `name`, and `version`.
+runs the local checks except `omarchy plugin validate` and `qmllint`, which
+need the Omarchy shell. It runs the Chromium browser suites, real daemon smoke,
+startup, compiled-assets and state-notify tests. A separate job runs selected
+WebKit browser suites and the startup test. It also runs
+`sh -n daemon/enil-run.sh` and a check that `manifest.json` has `id`, `name`,
+and `version`.
 
 ## Tuning variables
 

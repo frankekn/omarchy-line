@@ -16,6 +16,9 @@ Chen, so this project starts at 2.x.
   unread markers, manual sync, image zoom, keyboard navigation, and mobile
   layouts. Unconfirmed sends remain visible for review and manual retry.
   Recent acknowledged sends stay visible while waiting for a matching echo.
+  The page keeps about 500 confirmed messages while following the latest
+  messages, and preserves the composer when a reconnect detects an expired
+  web sign-in. Login and chat-list changes reach connected browsers sooner.
   Uploads share a 1 GiB storage limit. The page cannot read `storage.json`
   or use the daemon machine's clipboard. See [docs/web.md](docs/web.md).
 - A launchd agent, `daemon/enil.plist`, for running the daemon and web page
@@ -25,6 +28,8 @@ Chen, so this project starts at 2.x.
 
 - An edit or unsend arriving while the daemon opens a chat's local message
   cache is no longer overwritten by older cached history.
+- Unrecognized file types with unusual filename extensions now fall back to
+  sending a file; unusual message types use a readable placeholder.
 
 ## [2.16.0] - 2026-10-07
 

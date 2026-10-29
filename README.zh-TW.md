@@ -11,7 +11,7 @@
 [linejs](https://github.com/evex-dev/linejs) 為基礎打造。
 
 | ![英文介面：聊天列表與開著的對話](docs/images/panel-en.png) | ![繁體中文介面](docs/images/panel-zh.png) |
-| :-: | :-: |
+|---|---|
 | English | 繁體中文 |
 
 ![bar 上顯示未讀數的圖示](docs/images/bar-badge.png)

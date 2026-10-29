@@ -43,8 +43,9 @@ daemon 在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）寫三樣東�
 
 網頁版（[web.zh-TW.md](web.zh-TW.md)）也是讀同一組檔案，不算第三半。有設
 `ENIL_WEB_ADDR` 時，daemon 會同時提供 `daemon/web/`。每條瀏覽器 WebSocket 各自
-連一條 `sock`。網頁連著時，共用的 feed 每 500 毫秒檢查 `state.json` 並轉送變動
-後的快照；中間的快照可能略過。協商 state-delta 子協定的網頁，對大型聊天清單會在
+連一條 `sock`。daemon 原子寫入 `state.json` 後，會立刻通知共用的 feed 讀取並轉送
+變動後的快照。網頁連著時，每 500 毫秒輪詢一次，作為獨立 web server 和外部檔案
+變動的後備；中間的快照可能略過。協商 state-delta 子協定的網頁，對大型聊天清單會在
 patch 較小時使用帶版本的聊天列差異；舊版網頁仍收到完整快照。每條連線先收到完整
 快照，patch 沒有對應基礎時重新連線。`events.json` 只在
 連線時送一次，用來補上斷線期間的事件。網頁拿到的回覆和推送跟面板一樣，daemon

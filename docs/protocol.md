@@ -34,8 +34,10 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 
 ```jsonc
 {
-  "updatedAt": 1735000000000,          // heartbeat every 30 s; over 180 s is offline
-  "bootId": "…",                       // this daemon boot's id, changes on restart
+  // heartbeat every 30 s; over 180 s is offline
+  "updatedAt": 1735000000000,
+  // this daemon boot's id, changes on restart
+  "bootId": "…",
   "me": { "mid": "u…", "displayName": "…" },   // {} while logged out
   "login": {
     "status": "idle",                  // idle|starting|qr|pin|ok|error
@@ -43,33 +45,45 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
     "pin": "…",                        // only when status=pin
     "error": "…",                      // only when status=error, human-readable
     "reason": "…",                     // optional, the error's class
-    "attempt": "logout",               // optional; logout|resume|manual — which attempt this state belongs to
-    "settled": true                     // optional; true once login/logout teardown completed
+    // optional; logout|resume|manual — which attempt this state belongs to
+    "attempt": "logout",
+    // optional; true once login/logout teardown completed
+    "settled": true
   },
   "chats": [                           // unread first, then by lastTime
     { "mid": "u…", "name": "…", "unread": 0,
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
-      "avatarPath": "…/media/avatars/<sha1>.jpg",    // optional, absent means no avatar set
-      "hidden": true }                               // optional, only on hidden chats
+      // optional, absent means no avatar set
+      "avatarPath": "…/media/avatars/<sha1>.jpg",
+      // optional, only on hidden chats
+      "hidden": true }
   ],
-  "chatsRevision": 12,                 // bumps only when chats/chatList change; heartbeats don't
-  "chatList": { "complete": true, "loaded": 80 }, // optional; false means the server has a next page
-  "timings": {                         // optional; rolling daemon latency stats, last 64
+  // bumps only when chats/chatList change; heartbeats don't
+  "chatsRevision": 12,
+  // optional; false means the server has a next page
+  "chatList": { "complete": true, "loaded": 80 },
+  // optional; rolling daemon latency stats, last 64
+  "timings": {
     "chats.refresh": { "samples": 18, "lastMs": 241.3,
                        "p50Ms": 205.1, "p95Ms": 390.8, "maxMs": 411.2 },
     "cmd.history": { "samples": 6, "lastMs": 92.4,
                      "p50Ms": 88.0, "p95Ms": 131.7, "maxMs": 131.7 }
   },
-  "stateBytes": {                      // optional; rolling state.json write-size stats, last 64
+  // optional; rolling state.json write-size stats, last 64
+  "stateBytes": {
     "samples": 64, "last": 253412,
     "p50": 251190, "p95": 258871, "max": 260112,
-    "chats": 80                        // chats count when this file was serialized
+    // chats count when this file was serialized
+    "chats": 80
   },
-  "link": { "push": "up", "since": 1735000000000 },  // optional, push link state;
-                                                     //   reason and code only during a restriction halt
-  "refresh": { "at": 1735000000000, "failures": 0,   // optional, chat-list freshness
-               "reason": "network" },                //   reason only exists when failures > 0
-  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // optional, see below
+  // optional, push link state; reason and code appear during a restriction
+  "link": { "push": "up", "since": 1735000000000 },
+  // optional, chat-list freshness
+  "refresh": { "at": 1735000000000, "failures": 0,
+               // reason only exists when failures > 0
+               "reason": "network" },
+  // optional, see below
+  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }
 }
 ```
 
@@ -177,7 +191,8 @@ full-page history refetch.
 ```jsonc
 {
   "updatedAt": 1735000000000,
-  "bootId": "…",                       // same as state.json's, changes on restart
+  // same as state.json's, changes on restart
+  "bootId": "…",
   "events": [                          // ascending seq
     { "seq": 1, "at": 1735000000000, "kind": "message", "chat": "u…",
       "message": { /* same shape as a history entry */ } }
@@ -245,8 +260,10 @@ Socket commands (one JSON line per request, replies
 | `sync` | none | `{ chats, link, at }` |
 
 The web bridge carries one command per WebSocket text frame and forwards
-daemon replies and pushes. It checks `state.json` every 500 ms while pages are
-connected; intermediate writes can be skipped. A browser offers the
+daemon replies and pushes. After an atomic `state.json` write, the daemon
+notifies the shared feed of its built-in web server. While pages are connected,
+the feed checks the file every 500 ms as a fallback for standalone servers and
+external changes; intermediate writes can be skipped. A browser offers the
 `enil-state-delta-v1` WebSocket subprotocol to receive versioned state frames:
 
 - `{ "web": "state", "generation": "…", "version": N, "state": … }`

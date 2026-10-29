@@ -50,10 +50,12 @@ When `state.json`'s `updatedAt` has not moved for 3 minutes, the panel shows
 
 The web page ([web.md](web.md)) is one more reader of the same files, not a
 third half. When `ENIL_WEB_ADDR` is set, the daemon also serves
-`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. A
-shared feed checks `state.json` every 500 ms while pages are connected and
-forwards changed snapshots; intermediate snapshots may be skipped. Large chat
-lists use versioned row patches when smaller for pages that negotiate the
+`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. After
+an atomic `state.json` write, the daemon immediately notifies a shared feed to
+read and forward the changed snapshot. While pages are connected, a 500 ms
+poll is the fallback for standalone web servers and external file changes;
+intermediate snapshots may be skipped. Large chat lists use versioned row
+patches when smaller for pages that negotiate the
 state-delta subprotocol; older pages continue to get full snapshots. Each
 connection starts with a full snapshot and reconnects if a patch has no
 matching base. The page also

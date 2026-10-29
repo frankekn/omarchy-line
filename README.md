@@ -11,7 +11,7 @@ Built on [linejs](https://github.com/evex-dev/linejs) by
 [Evex Developers](https://github.com/evex-dev).
 
 | ![The panel in English: chat list and an open conversation](docs/images/panel-en.png) | ![The panel in Traditional Chinese](docs/images/panel-zh.png) |
-| :-: | :-: |
+|---|---|
 | English | 繁體中文 |
 
 ![The bar icon with an unread count](docs/images/bar-badge.png)
