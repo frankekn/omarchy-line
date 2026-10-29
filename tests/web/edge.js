@@ -1,5 +1,5 @@
 // Push ordering, failures, login states and reconnect backoff.
-import { assert, CHAT, tapSocket, until } from "./harness.js";
+import { assert, CHAT, KEY, tapSocket, until } from "./harness.js";
 import { Buffer } from "node:buffer";
 
 export async function edge(h) {
@@ -190,4 +190,54 @@ export async function edge(h) {
     `intervals ${intervals}`,
   );
   h.step("reconnect-backoff");
+
+  for (let i = 0; i < 10; i++) {
+    const response = await fetch(`${h.base}/?key=wrong-${i}`);
+    assert.equal(response.status, 401);
+    await response.body?.cancel();
+  }
+  for (
+    const [locale, message, noHistory] of [
+      [
+        "en-US",
+        "Link sign-in is temporarily locked. Enter your web key below.",
+      ],
+      ["zh-TW", "連結登入暫時被鎖定，請在下方輸入 web key。"],
+      [
+        "en-US",
+        "Link sign-in is temporarily locked. Enter your web key below.",
+        true,
+      ],
+    ]
+  ) {
+    const blockedContext = await h.context({ locale });
+    if (noHistory) {
+      await blockedContext.addInitScript(() => {
+        History.prototype.replaceState = () => {
+          throw new DOMException("unavailable", "SecurityError");
+        };
+      });
+    }
+    const blockedPage = await blockedContext.newPage();
+    const endExpected429 = h.allowBlockedLink429(blockedPage);
+    const response = await blockedPage.goto(`${h.base}/?key=${KEY}`);
+    assert.equal(response.status(), 429);
+    await blockedPage.locator("#signin-screen").waitFor({ state: "visible" });
+    assert.equal(
+      await blockedPage.locator("#signin-error").textContent(),
+      message,
+    );
+    assert.equal(await blockedPage.locator("#signin-error").isVisible(), true);
+    assert.equal(
+      new URL(blockedPage.url()).searchParams.has("key"),
+      !!noHistory,
+    );
+    await blockedPage.getByLabel("Web key").fill(KEY);
+    await blockedPage.locator('#signin-form button[type="submit"]').click();
+    await blockedPage.locator("#connection.connected").waitFor();
+    await blockedPage.waitForLoadState("networkidle");
+    endExpected429();
+    await blockedContext.close();
+  }
+  h.step("blocked-link-keeps-manual-signin-available");
 }

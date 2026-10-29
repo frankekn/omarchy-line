@@ -148,6 +148,7 @@ export async function runSuite(name, suite) {
   const errors = [];
   const dialogs = [];
   const expiredImagePages = new Map();
+  const blockedLinkPages = new Map();
   let browser, browserLaunch, screenshotPage;
   let failed = false;
   let cleanupPromise;
@@ -215,6 +216,14 @@ export async function runSuite(name, suite) {
         expiredImagePages.set(page, entry);
         return () => {
           expiredImagePages.delete(page);
+          return entry.count;
+        };
+      },
+      allowBlockedLink429(page) {
+        const entry = { count: 0 };
+        blockedLinkPages.set(page, entry);
+        return () => {
+          blockedLinkPages.delete(page);
           return entry.count;
         };
       },
@@ -289,6 +298,23 @@ export async function runSuite(name, suite) {
                   location.origin === base && location.pathname === "/api/file"
                 ) {
                   expiry.count++;
+                  return;
+                }
+              } catch { /* The error has no usable URL. */ }
+            }
+            // The blocked-link test deliberately loads the 429 document.
+            const blocked = blockedLinkPages.get(page);
+            if (
+              blocked && text ===
+                "Failed to load resource: the server responded with a status of 429 (Too Many Requests)"
+            ) {
+              try {
+                const location = new URL(message.location().url);
+                if (
+                  location.origin === base && location.pathname === "/" &&
+                  location.searchParams.has("key")
+                ) {
+                  blocked.count++;
                   return;
                 }
               } catch { /* The error has no usable URL. */ }

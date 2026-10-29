@@ -26,6 +26,8 @@ Chen, so this project starts at 2.x.
 
 ### Fixed
 
+- Wrong sign-in links no longer lock out the web key form; link and form
+  sign-ins have separate limits.
 - An edit or unsend arriving while the daemon opens a chat's local message
   cache is no longer overwritten by older cached history.
 - Unrecognized file types with unusual filename extensions now fall back to

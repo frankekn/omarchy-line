@@ -111,16 +111,29 @@ Deno.test("sign-in: wrong key, right key, then too many tries", async () => {
   }
 });
 
-Deno.test("wrong keys age out of the cap", async () => {
+Deno.test("wrong keys age out of each sign-in bucket independently", async () => {
   let now = 0;
   const auth = await WebAuth.create(KEY, () => now);
-  for (let i = 0; i < 10; i++) assertEquals(auth.signin("nope"), "wrong");
-  assertEquals(auth.signin(KEY), "blocked");
-  now += 10 * 60 * 1000 + 1;
-  assertEquals(auth.signin(KEY), "ok");
+  for (let i = 0; i < 10; i++) {
+    assertEquals(auth.signin("nope", "link"), "wrong");
+  }
+  assertEquals(auth.signin(KEY, "link"), "blocked");
+  assertEquals(auth.signin(KEY, "form"), "ok");
+  now = 5 * 60 * 1000;
+  for (let i = 0; i < 10; i++) {
+    assertEquals(auth.signin("nope", "form"), "wrong");
+  }
+  assertEquals(auth.signin(KEY, "form"), "blocked");
+  now = 10 * 60 * 1000;
+  assertEquals(auth.signin(KEY, "link"), "blocked");
+  now++;
+  assertEquals(auth.signin(KEY, "link"), "ok");
+  assertEquals(auth.signin(KEY, "form"), "blocked");
+  now = 15 * 60 * 1000 + 1;
+  assertEquals(auth.signin(KEY, "form"), "ok");
 });
 
-Deno.test("linked and posted guesses share the cap across connections", async () => {
+Deno.test("sign-in buckets isolate link and form failures across connections", async () => {
   const { stateDir, web, server } = await served();
   try {
     const base = `http://127.0.0.1:${server.addr.port}`;
@@ -144,10 +157,75 @@ Deno.test("linked and posted guesses share the cap across connections", async ()
       method: "POST",
       body: JSON.stringify({ key: KEY }),
     });
-    assertEquals([link.status, post.status], [429, 429]);
+    assertEquals([link.status, post.status], [200, 204]);
+    await link.body?.cancel();
+    for (let i = 0; i < 5; i++) {
+      const wrongLink = await fetch(`${base}/?key=wrong`);
+      const wrongPost = await fetch(`${base}/api/signin`, {
+        method: "POST",
+        body: JSON.stringify({ key: "wrong" }),
+      });
+      assertEquals([wrongLink.status, wrongPost.status], [401, 401]);
+      await wrongLink.body?.cancel();
+      await wrongPost.body?.cancel();
+    }
+    const blockedLink = await fetch(`${base}/?key=${KEY}`);
+    const blockedPost = await fetch(`${base}/api/signin`, {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+    });
+    assertEquals([blockedLink.status, blockedPost.status], [429, 429]);
+    await blockedLink.body?.cancel();
+    await blockedPost.body?.cancel();
   } finally {
     web.close();
     await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("sign-in buckets keep the form usable after link lockout", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    for (let i = 0; i < 10; i++) {
+      assertEquals((await web.handle(get("/?key=wrong"))).status, 401);
+    }
+    const blocked = await web.handle(get(`/?key=${KEY}`, {
+      headers: { "if-none-match": "*" },
+    }));
+    assertEquals(blocked.status, 429);
+    assertEquals(blocked.headers.get("cache-control"), "no-store");
+    assert(blocked.headers.get("content-type")?.startsWith("text/html"));
+    assert((await blocked.text()).includes('id="signin-form"'));
+    assertEquals(blocked.headers.get("set-cookie"), null);
+    assert((await signedInCookie(web)).startsWith("enil_web="));
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("sign-in buckets keep links usable after form lockout", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    for (let i = 0; i < 10; i++) {
+      const wrong = await web.handle(get("/api/signin", {
+        method: "POST",
+        body: JSON.stringify({ key: "wrong" }),
+      }));
+      assertEquals(wrong.status, 401);
+    }
+    const blocked = await web.handle(get("/api/signin", {
+      method: "POST",
+      body: JSON.stringify({ key: KEY }),
+    }));
+    assertEquals(blocked.status, 429);
+    const link = await web.handle(get(`/?key=${KEY}`));
+    assertEquals(link.status, 303);
+    assertEquals(link.headers.get("location"), "/");
+    assert(link.headers.get("set-cookie")?.startsWith("enil_web="));
+  } finally {
+    web.close();
     await Deno.remove(stateDir, { recursive: true });
   }
 });
@@ -558,6 +636,14 @@ Deno.test("a rebound or cross-site sign-in cannot lock out the key", async () =>
         headers: { "sec-fetch-site": site },
       }));
       assertEquals(right.status, 403, site);
+    }
+    for (let i = 0; i < 12; i++) {
+      const post = await web.handle(get("/api/signin", {
+        method: "POST",
+        headers: { origin: "http://other.example" },
+        body: JSON.stringify({ key: "wrong" }),
+      }));
+      assertEquals(post.status, 403);
     }
     for (const site of ["none", "same-origin"]) {
       const link = await web.handle(get(`/?key=${KEY}`, {

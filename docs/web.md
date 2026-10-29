@@ -26,13 +26,17 @@ the key if a cookie or the key may have been exposed. The page uses HTTP, so
 its cookie does not have the `Secure` attribute. Use a trusted Tailscale
 network and keep the sign-in link private.
 
-Ten wrong keys within ten minutes temporarily block sign-in for the whole web
-server, even with the correct key, until one of those failures is more than
-ten minutes old. Requests with a `Host` that does not match `ENIL_WEB_ADDR`
-receive 421. Sign-ins with `Sec-Fetch-Site: cross-site` or `same-site` receive
-403 and do not count toward the lock. POST and WebSocket requests with an
-`Origin` must match the page's origin. Requests without it are also allowed,
-for non-browser clients; this check does not replace authentication.
+Link sign-ins and form sign-ins have separate locks for the whole web server.
+Ten wrong keys within ten minutes block that method, even with the correct
+key, until one of those failures is more than ten minutes old. If links are
+locked and the form is not, enter the key on the sign-in page; if only the
+form is locked, a sign-in link can still work. Together the two methods allow
+up to 20 wrong keys in ten minutes. Requests with a `Host` that does not match
+`ENIL_WEB_ADDR` receive 421. Sign-ins with `Sec-Fetch-Site: cross-site` or
+`same-site` receive 403 and do not count toward the lock. POST and WebSocket
+requests with an `Origin` must match the page's origin. Requests without it
+are also allowed, for non-browser clients; this check does not replace
+authentication.
 The server allows up to 32 WebSocket connections at once.
 
 The browser stores drafts, reply targets, mentions and unconfirmed sends in
@@ -130,13 +134,13 @@ remain available after sign-in.
   or a terminal. Links opened from another site are refused when the browser
   sends `Sec-Fetch-Site: cross-site` or `same-site`. Browsers may omit this
   header on plain HTTP, including Tailscale IP addresses; in that case the
-  sign-in can succeed and wrong keys count toward the global lock. Do not rely
-  on this check to block links from other sites.
+  sign-in can succeed and wrong keys count toward the link lock. Do not rely on
+  this check to block links from other sites. The form has a separate lock.
 - The HTTP cookie has no `Secure` attribute. Browser notifications normally
   require HTTPS or another secure context, and this page does not implement
   browser notifications. The daemon's desktop notifications are separate.
-- The ten-failure sign-in lock applies to the whole web server. A correct key
-  cannot sign in during the lock, regardless of which browser failed.
+- Each ten-failure sign-in lock applies to all browsers of that web server.
+  A correct key cannot use the locked method until its failures age out.
 - Cookies cannot be revoked one at a time. Change the key and restart the
   daemon to invalidate all of them.
 - Media from `/api/file` may stay in the browser cache for up to 24 hours.

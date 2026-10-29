@@ -16,6 +16,10 @@ const strings = {
     "嘗試次數過多，請稍後再試。",
     "Too many attempts. Try again later.",
   ],
+  linkRateLimited: [
+    "連結登入暫時被鎖定，請在下方輸入 web key。",
+    "Link sign-in is temporarily locked. Enter your web key below.",
+  ],
   signinFailed: [
     "無法登入，請檢查連線。",
     "Sign-in failed. Check your connection.",

@@ -68,11 +68,12 @@ export function originAllowed(req: Request): boolean {
 }
 
 export type SigninResult = "ok" | "wrong" | "blocked";
+type SigninSource = "link" | "form";
 
 export class WebAuth {
   readonly key: string;
   readonly #token: string;
-  #failures: number[] = [];
+  #failures: Record<SigninSource, number[]> = { link: [], form: [] };
   #now: () => number;
 
   private constructor(key: string, token: string, now: () => number) {
@@ -103,15 +104,16 @@ export class WebAuth {
     return got !== null && sameText(got, this.#token);
   }
 
-  /** Check a typed or linked key, counting wrong ones against the cap. */
-  signin(given: unknown): SigninResult {
-    const since = this.#now() - SIGNIN_WINDOW_MS;
-    while (this.#failures.length && this.#failures[0] < since) {
-      this.#failures.shift();
+  /** Count wrong link and form keys against separate caps. */
+  signin(given: unknown, source: SigninSource): SigninResult {
+    const failures = this.#failures[source], now = this.#now();
+    const since = now - SIGNIN_WINDOW_MS;
+    while (failures.length && failures[0] < since) {
+      failures.shift();
     }
-    if (this.#failures.length >= SIGNIN_MAX_FAILURES) return "blocked";
+    if (failures.length >= SIGNIN_MAX_FAILURES) return "blocked";
     if (typeof given === "string" && sameText(given, this.key)) return "ok";
-    this.#failures.push(this.#now());
+    failures.push(now);
     return "wrong";
   }
 

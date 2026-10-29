@@ -19,8 +19,8 @@
  * Everything under /api except session and signin needs the cookie, and any
  * POST or WebSocket from another origin is refused. A request whose Host is
  * not ENIL_WEB_ADDR is refused before routing, so a rebound DNS name cannot
- * reach the page, and a sign-in another site started is refused before it
- * can count against the key.
+ * reach the page. Sign-ins marked as cross-site are refused before counting;
+ * link and form attempts have separate caps when browsers omit that marking.
  *
  * Runs inside the daemon (daemon.ts calls startWeb) or alone against a
  * running daemon or stub.py: `deno run -A web/server.ts`.
@@ -142,12 +142,13 @@ function serveAsset(
   assets: Map<string, Asset>,
   path: string,
   req: Request,
+  code = 200,
 ): Response {
   const asset = assets.get(path);
   if (!asset) return status(404);
   const headers = securityHeaders({
     "Content-Type": asset.type,
-    "Cache-Control": "no-cache",
+    "Cache-Control": code === 200 ? "no-cache" : "no-store",
     ETag: asset.etag,
   });
   if (path === "/index.html") {
@@ -157,9 +158,11 @@ function serveAsset(
     const tag = value.trim();
     return tag === "*" || tag.replace(/^W\//, "") === asset.etag;
   });
-  if (matches) return new Response(null, { status: 304, headers });
+  if (code === 200 && matches) {
+    return new Response(null, { status: 304, headers });
+  }
   headers.set("Content-Length", String(asset.body.byteLength));
-  return new Response(asset.body, { headers });
+  return new Response(asset.body, { status: code, headers });
 }
 
 function signedInRedirect(auth: WebAuth): Response {
@@ -262,8 +265,10 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       const given = url.searchParams.get("key");
       if (given === null) return serveAsset(assets, "/index.html", req);
       if (crossSite(req)) return status(403, "open the sign-in link directly");
-      const result = auth.signin(given);
-      if (result === "blocked") return status(429);
+      const result = auth.signin(given, "link");
+      if (result === "blocked") {
+        return serveAsset(assets, "/index.html", req, 429);
+      }
       return result === "ok"
         ? signedInRedirect(auth)
         : status(401, "wrong key");
@@ -292,7 +297,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       const key = value && typeof value === "object" && "key" in value
         ? value.key
         : undefined;
-      const result = auth.signin(key);
+      const result = auth.signin(key, "form");
       if (result === "blocked") return status(429);
       return result === "ok" ? withCookie(auth.signinCookie()) : status(401);
     }

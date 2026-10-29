@@ -4,6 +4,19 @@ import { $, el, fileUrl, setAvatar } from "./dom.js";
 
 export function createLoginView(ctx) {
   const model = ctx.model, t = ctx.t;
+  const url = new URL(location.href), linkLocked = url.searchParams.has("key");
+  if (linkLocked) {
+    url.searchParams.delete("key");
+    try {
+      history.replaceState(
+        history.state,
+        "",
+        url.pathname + url.search + url.hash,
+      );
+    } catch {
+      /* The form remains usable if the browser refuses this change. */
+    }
+  }
   let noticeSignature = "";
   let webSessionExpired = false;
   let syncGeneration = 0, syncAccount = model.account;
@@ -188,6 +201,10 @@ export function createLoginView(ctx) {
       }
     } catch {
       $("signin-error").textContent = t("signinFailed");
+      $("signin-error").hidden = false;
+    }
+    if (linkLocked && $("signin-error").hidden) {
+      $("signin-error").textContent = t("linkRateLimited");
       $("signin-error").hidden = false;
     }
     $("signin-screen").hidden = false;
