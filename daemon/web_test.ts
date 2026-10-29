@@ -1,6 +1,6 @@
 // State snapshots and their recovery across the web bridge.
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { StateFeed } from "./web/bridge.ts";
+import { notifyStateWritten, StateFeed } from "./web/bridge.ts";
 import { makeStateDecoder } from "./web/public/js/state-wire.js";
 import { applyChatPush, applyChatState } from "./web/public/js/protocol.js";
 import { createConnection } from "./web/public/js/connection.js";
@@ -39,7 +39,119 @@ async function until(predicate: () => boolean): Promise<void> {
   }
 }
 
-Deno.test("state feed sends patches, falls back to full and seeds late pages", async () => {
+Deno.test("state notifications are immediate and coalesce a same-turn burst", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "state-notify-" });
+  const path = `${dir}/state.json`, tmp = `${path}.tmp`;
+  const initial = largeState();
+  const write = (state: State) => {
+    Deno.writeTextFileSync(tmp, JSON.stringify(state));
+    Deno.renameSync(tmp, path);
+  };
+  write(initial);
+  const feed = new StateFeed(path), frames: string[] = [];
+  let wake: (() => void) | undefined;
+  const waitFrame = () => new Promise<void>((resolve) => wake = resolve);
+  const send = (frame: string) => {
+    frames.push(frame);
+    wake?.();
+    wake = undefined;
+  };
+  try {
+    await feed.add(send, true);
+    const first = JSON.parse(frames[0]);
+    const next = structuredClone(initial);
+    next.chats[0].name = "immediate";
+    next.chatsRevision++;
+    next.updatedAt++;
+    write(next);
+    const delivered = waitFrame();
+    const started = performance.now();
+    notifyStateWritten(path);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        delivered,
+        new Promise<never>((_, reject) => {
+          deadline = setTimeout(
+            () => reject(new Error("notification timed out")),
+            50,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(deadline);
+    }
+    assert(performance.now() - started < 50, "notification took 50 ms or more");
+    const immediate = JSON.parse(frames[1]);
+    assertEquals(immediate.generation, first.generation);
+    assertEquals(immediate.base, first.version);
+    assertEquals(immediate.version, first.version + 1);
+
+    let last = next;
+    for (let i = 0; i < 3; i++) {
+      last = structuredClone(last);
+      last.chats[0].name = `burst ${i}`;
+      last.chatsRevision++;
+      last.updatedAt++;
+      write(last);
+      notifyStateWritten(path);
+    }
+    await until(() => frames.length === 3);
+    const result = JSON.parse(frames[2]);
+    const decode = makeStateDecoder();
+    decode(first);
+    decode(immediate);
+    assertEquals(decode(result).frame.state, last);
+    assertEquals(result.generation, first.generation);
+    assertEquals(result.base, immediate.version);
+    assertEquals(result.version, immediate.version + 1);
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assertEquals(frames.length, 3);
+  } finally {
+    feed.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a notification during an older read is not lost", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "state-notify-race-" });
+  const path = `${dir}/state.json`, tmp = `${path}.tmp`;
+  const original = largeState(), updated = { ...original, updatedAt: 2 };
+  await Deno.writeTextFile(path, JSON.stringify(original));
+  const feed = new StateFeed(path), frames: string[] = [];
+  const read = Deno.readTextFile;
+  let release!: () => void, blocked = false;
+  const gate = new Promise<void>((resolve) => release = resolve);
+  Deno.readTextFile = async (file, options) => {
+    const text = await read(file, options);
+    if (file === path && !blocked) {
+      blocked = true;
+      await gate;
+    }
+    return text;
+  };
+  try {
+    const adding = feed.add((frame) => frames.push(frame), true);
+    await until(() => blocked);
+    await Deno.writeTextFile(tmp, JSON.stringify(updated));
+    await Deno.rename(tmp, path);
+    notifyStateWritten(path);
+    await Promise.resolve();
+    release();
+    await adding;
+    await until(() => frames.length === 2);
+    const decode = makeStateDecoder();
+    assertEquals(decode(JSON.parse(frames[0])).frame.state, original);
+    assertEquals(decode(JSON.parse(frames[1])).frame.state, updated);
+  } finally {
+    release();
+    Deno.readTextFile = read;
+    feed.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("state feed polls external changes and seeds late pages", async () => {
   const dir = await Deno.makeTempDir({ prefix: "state-wire-" });
   const path = `${dir}/state.json`;
   let stamp = Date.now();

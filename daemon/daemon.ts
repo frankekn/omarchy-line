@@ -34,6 +34,7 @@ import {
   login,
   setLogin,
   setLoginState,
+  setStateSink,
   writeState,
 } from "./modules/state.ts";
 import { MEDIA_SWEEP_MS, sweepMedia } from "./modules/caches.ts";
@@ -48,6 +49,7 @@ import {
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
 import { claimInstance } from "./modules/instance.ts";
 import { startWeb } from "./web/server.ts";
+import { notifyStateWritten } from "./web/bridge.ts";
 
 /** Held for the life of the process: closing it would release the gate. */
 let instanceLock: Deno.FsFile | null = null;
@@ -92,6 +94,7 @@ async function main() {
   // The web page bridges onto the socket above, so it starts after it.
   const webAddr = Deno.env.get("ENIL_WEB_ADDR");
   if (webAddr) {
+    setStateSink(() => notifyStateWritten(STATE_PATH));
     void startWeb({
       addr: webAddr,
       key: Deno.env.get("ENIL_WEB_KEY"),

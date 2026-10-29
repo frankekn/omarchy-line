@@ -218,6 +218,13 @@ deno run -A tests/web/realboot.js
 原始碼測試要求 `enil-run.sh` 會選用 Deno，而不是現有且符合目前版本的 `daemon/enil`
 執行檔。成功時會刪除暫存 state；失敗時會保留 state 和 log。
 
+要檢查 daemon 將 state 立即送到瀏覽器，可執行以下獨立測試。它使用空的暫存
+state，並且不登入 LINE：
+
+```bash
+deno run --frozen -A tests/web/state-notify.js
+```
+
 要以手機大小的 viewport 對 stub 量測網頁載入：
 
 ```bash

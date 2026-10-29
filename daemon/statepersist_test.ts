@@ -13,6 +13,7 @@ interface StatePersistModule {
   renameChat(name: string): void;
   blockStateWrites(): void;
   releaseStateWrites(): void;
+  setStateSink(sink: (() => void) | null): void;
   writeState(): Promise<void>;
   invalidateStateWrites(): Promise<void>;
   addEvent(seq: number, kind?: string): void;
@@ -114,12 +115,31 @@ export function setLoginState(status: string) {
 export {
   blockStateWrites,
   releaseStateWrites,
+  setStateSink,
   writeState,
   invalidateStateWrites,
 };
 `;
   return await loadBlock<StatePersistModule>("statepersist", prelude);
 }
+
+Deno.test("state notifications follow successful atomic commits only", async () => {
+  const m = await mod();
+  const committed: number[] = [];
+  m.setStateSink(() => committed.push(m.renames));
+  const active = m.writeState();
+  while (m.renames === 0) await Promise.resolve();
+  assertEquals(committed, []);
+  const stale = m.writeState();
+  const invalidated = m.invalidateStateWrites();
+  m.release();
+  await Promise.all([active, stale, invalidated]);
+  assertEquals(committed, [1]);
+
+  m.setStateSink(null);
+  await m.writeState();
+  assertEquals(committed, [1]);
+});
 
 for (const failure of ["none", "error", "zero"] as const) {
   Deno.test(`state short writes with ${failure} publish only complete snapshots`, async () => {
@@ -128,7 +148,10 @@ for (const failure of ["none", "error", "zero"] as const) {
     const write = Deno.FsFile.prototype.write;
     try {
       const m = await mod(path);
+      let notifications = 0;
+      m.setStateSink(() => notifications++);
       await m.writeState();
+      assertEquals(notifications, 1);
       const before = await Deno.readTextFile(path);
       m.renameChat("測試🔑");
       let calls = 0;
@@ -146,10 +169,13 @@ for (const failure of ["none", "error", "zero"] as const) {
       if (failure === "none") {
         assertEquals(JSON.parse(saved).chats[0].name, "測試🔑");
         assertEquals(m.sizeSamples.length, 2);
+        assertEquals(notifications, 2);
       } else {
         assertEquals(saved, before);
         assertEquals(m.sizeSamples.length, 1);
+        assertEquals(notifications, 1);
         await m.writeState();
+        assertEquals(notifications, 2);
         assertEquals(
           JSON.parse(await Deno.readTextFile(path)).chats[0].name,
           "測試🔑",

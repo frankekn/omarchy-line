@@ -257,6 +257,13 @@ apply. The source run requires that `enil-run.sh` would select Deno instead of
 an existing up-to-date `daemon/enil` binary. Failed runs keep their logs and
 temporary state; successful runs remove them.
 
+To check immediate state delivery from the running daemon to a browser, run
+the separate test. It uses an empty state directory and does not log in to LINE:
+
+```bash
+deno run --frozen -A tests/web/state-notify.js
+```
+
 To measure page loading against the stub on a phone-sized viewport:
 
 ```bash

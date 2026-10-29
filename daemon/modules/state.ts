@@ -286,6 +286,13 @@ async function loadHidden(path: string = HIDDEN_PATH): Promise<void> {
 
 // enil:statepersist-begin
 let writing = Promise.resolve();
+let stateSink: (() => void) | null = null;
+
+/** The embedded web feed is notified only after an atomic state commit. */
+function setStateSink(sink: typeof stateSink): void {
+  stateSink = sink;
+}
+
 // Invalidates snapshots queued by an ended session before they reach disk.
 // Logout advances it synchronously, before its first await.
 let stateEpoch = 0;
@@ -408,6 +415,11 @@ function writeState(): Promise<void> {
       // Recorded at the commit, not the capture: a snapshot that an
       // invalidation or a failed write kept off disk never reached the panel.
       noteStatePublished(stateSnapshot.chatsRevision, stateSnapshot.refresh);
+      try {
+        stateSink?.();
+      } catch (error) {
+        console.error("[state] notification failed:", error);
+      }
     } finally {
       if (committed) {
         timings.record("state.write", performance.now() - started);
@@ -671,6 +683,7 @@ export {
   setEventSink,
   setHidden,
   setLogin,
+  setStateSink,
   setWanted,
   stateWriteOwed,
   writeState,

@@ -44,6 +44,14 @@ type Subscriber = { delta: boolean; initialized: boolean };
 type StateObject = Record<string, unknown>;
 type ChatRow = StateObject & { mid: string };
 
+// The embedded daemon can notify feeds after its atomic state replacement.
+// Standalone web servers still discover changes through the polling fallback.
+const stateFeeds = new Map<string, Set<StateFeed>>();
+
+export function notifyStateWritten(path: string): void {
+  for (const feed of stateFeeds.get(path) ?? []) feed.notify();
+}
+
 function object(value: unknown): StateObject | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as StateObject
@@ -125,10 +133,15 @@ export class StateFeed {
   #version = 0;
   #fileKey = "";
   #polling: Promise<void> | null = null;
+  #noticePending = false;
+  #noticeScheduled = false;
   readonly #timer: ReturnType<typeof setInterval>;
 
   constructor(path: string) {
     this.#path = path;
+    const feeds = stateFeeds.get(path) ?? new Set<StateFeed>();
+    feeds.add(this);
+    stateFeeds.set(path, feeds);
     this.#timer = setInterval(() => {
       if (this.#subscribers.size === 0) return;
       void this.#poll();
@@ -148,9 +161,41 @@ export class StateFeed {
     this.#subscribers.delete(send);
   }
 
+  /** Coalesce commits in this turn, then read the latest atomic file. */
+  notify(): void {
+    if (this.#subscribers.size === 0) return;
+    this.#noticePending = true;
+    if (this.#noticeScheduled) return;
+    this.#noticeScheduled = true;
+    queueMicrotask(() => {
+      void this.#flushNotices();
+    });
+  }
+
   close(): void {
     clearInterval(this.#timer);
     this.#subscribers.clear();
+    const feeds = stateFeeds.get(this.#path);
+    feeds?.delete(this);
+    if (feeds?.size === 0) stateFeeds.delete(this.#path);
+  }
+
+  async #flushNotices(): Promise<void> {
+    try {
+      do {
+        this.#noticePending = false;
+        // An earlier poll may have read the old file before the commit.
+        // Always check again after it settles.
+        if (this.#polling) await this.#polling;
+        if (this.#subscribers.size) await this.#poll();
+      } while (this.#noticePending && this.#subscribers.size);
+    } catch (error) {
+      console.error("[web] state notification failed:", error);
+    } finally {
+      this.#noticeScheduled = false;
+      if (this.#subscribers.size === 0) this.#noticePending = false;
+      else if (this.#noticePending) this.notify();
+    }
   }
 
   #poll(): Promise<void> {
