@@ -5,6 +5,8 @@ export function createMediaView(ctx) {
   const model = ctx.model, t = ctx.t;
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
+  let pictures = [], pictureIndex = 0, scale = 1, panX = 0, panY = 0;
+  let pinch = null, drag = null;
   async function downloadMessage(chat, message) {
     try {
       const data = await command("download", {
@@ -23,13 +25,193 @@ export function createMediaView(ctx) {
       displayError(error);
     }
   }
+  function applyPan(x, y) {
+    const image = $("lightbox-image"), stage = $("lightbox-stage");
+    const limitX = Math.max(
+      0,
+      (image.clientWidth * scale - stage.clientWidth) / 2,
+    );
+    const limitY = Math.max(
+      0,
+      (image.clientHeight * scale - stage.clientHeight) / 2,
+    );
+    panX = Math.max(-limitX, Math.min(limitX, x));
+    panY = Math.max(-limitY, Math.min(limitY, y));
+    image.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+  function setScale(value, x = 0, y = 0) {
+    const next = Math.max(1, Math.min(4, value));
+    const ratio = next / scale;
+    panX = next === 1 ? 0 : x - (x - panX) * ratio;
+    panY = next === 1 ? 0 : y - (y - panY) * ratio;
+    scale = next;
+    applyPan(panX, panY);
+    $("lightbox-zoom-out").disabled = scale <= 1;
+    $("lightbox-zoom-in").disabled = scale >= 4;
+  }
+  function showPicture() {
+    const item = pictures[pictureIndex];
+    $("lightbox-name").textContent = `${item.name}  ${
+      pictureIndex + 1
+    } / ${pictures.length}`;
+    $("lightbox-image").src = item.url;
+    $("lightbox-image").alt = item.name;
+    $("lightbox-download").hidden = !item.download;
+    $("lightbox-download").onclick = item.download;
+    $("lightbox-prev").disabled = pictureIndex === 0;
+    $("lightbox-next").disabled = pictureIndex === pictures.length - 1;
+    setScale(1);
+  }
+  function stepPicture(delta) {
+    const next = pictureIndex + delta;
+    if (next < 0 || next >= pictures.length) return;
+    pictureIndex = next;
+    showPicture();
+  }
   function openLightbox(chat, message, url) {
-    $("lightbox-name").textContent = String(message.fileName || t("image"));
-    $("lightbox-image").src = url;
-    $("lightbox-image").alt = String(message.fileName || t("image"));
-    $("lightbox-download").onclick = () => downloadMessage(chat, message);
+    pictures = [];
+    for (const row of model.messages) {
+      if (row.unsent || row.pending) continue;
+      if (row.contentType === "FLEX" && Array.isArray(row.flexImages)) {
+        for (const value of row.flexImages) {
+          const source = httpsUrl(value);
+          if (source) {
+            pictures.push({
+              id: String(row.id),
+              url: source,
+              name: t("image"),
+              download: null,
+            });
+          }
+        }
+      } else if (
+        row.contentType === "IMAGE" && row.hasMedia &&
+        (!row.mediaState || row.mediaState === "ok")
+      ) {
+        const path = model.previews.get(String(row.id)) || row.mediaPath;
+        if (path) {
+          pictures.push({
+            id: String(row.id),
+            url: fileUrl(path),
+            name: String(row.fileName || t("image")),
+            download: () => downloadMessage(chat, row),
+          });
+        }
+      }
+    }
+    pictureIndex = pictures.findIndex((item) =>
+      item.id === String(message.id) && item.url === url
+    );
+    if (pictureIndex < 0) return;
+    showPicture();
     if (!$("lightbox").open) $("lightbox").showModal();
   }
+  function clickableImage(image, chat, message, url) {
+    image.tabIndex = 0;
+    image.setAttribute("role", "button");
+    image.addEventListener("click", () => openLightbox(chat, message, url));
+    image.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openLightbox(chat, message, url);
+      }
+    });
+  }
+  $("lightbox-prev").addEventListener("click", () => stepPicture(-1));
+  $("lightbox-next").addEventListener("click", () => stepPicture(1));
+  $("lightbox-zoom-in").addEventListener("click", () => setScale(scale * 1.2));
+  $("lightbox-zoom-out").addEventListener("click", () => setScale(scale / 1.2));
+  $("lightbox").addEventListener("keydown", (event) => {
+    if (event.shiftKey && event.key.startsWith("Arrow")) {
+      const x = event.key === "ArrowLeft"
+        ? 40
+        : event.key === "ArrowRight"
+        ? -40
+        : 0;
+      const y = event.key === "ArrowUp"
+        ? 40
+        : event.key === "ArrowDown"
+        ? -40
+        : 0;
+      applyPan(panX + x, panY + y);
+    } else if (event.key === "ArrowLeft") stepPicture(-1);
+    else if (event.key === "ArrowRight") stepPicture(1);
+    else if (event.key === "+" || event.key === "=") setScale(scale * 1.2);
+    else if (event.key === "-") setScale(scale / 1.2);
+    else return;
+    event.preventDefault();
+  });
+  function pointInStage(x, y) {
+    const bounds = $("lightbox-stage").getBoundingClientRect();
+    return {
+      x: x - bounds.left - bounds.width / 2,
+      y: y - bounds.top - bounds.height / 2,
+    };
+  }
+  $("lightbox-stage").addEventListener("wheel", (event) => {
+    event.preventDefault();
+    const point = pointInStage(event.clientX, event.clientY);
+    if (event.deltaY) {
+      setScale(scale * (event.deltaY < 0 ? 1.2 : 1 / 1.2), point.x, point.y);
+    }
+  }, { passive: false });
+  $("lightbox-stage").addEventListener("dblclick", (event) => {
+    const point = pointInStage(event.clientX, event.clientY);
+    setScale(scale > 1 ? 1 : 2, point.x, point.y);
+  });
+  $("lightbox-stage").addEventListener("pointerdown", (event) => {
+    if (event.pointerType !== "mouse" || event.button !== 0 || scale <= 1) {
+      return;
+    }
+    drag = { x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  });
+  $("lightbox-stage").addEventListener("pointermove", (event) => {
+    if (event.pointerType !== "mouse" || !drag) return;
+    applyPan(panX + event.clientX - drag.x, panY + event.clientY - drag.y);
+    drag = { x: event.clientX, y: event.clientY };
+  });
+  $("lightbox-stage").addEventListener("pointerup", () => drag = null);
+  $("lightbox-stage").addEventListener("pointercancel", () => drag = null);
+  function touchDistance(touches) {
+    return Math.hypot(
+      touches[0].clientX - touches[1].clientX,
+      touches[0].clientY - touches[1].clientY,
+    );
+  }
+  $("lightbox-stage").addEventListener("touchstart", (event) => {
+    if (event.touches.length === 2) {
+      pinch = { distance: touchDistance(event.touches), scale };
+      drag = null;
+    } else if (event.touches.length === 1 && scale > 1) {
+      drag = { x: event.touches[0].clientX, y: event.touches[0].clientY };
+    }
+  }, { passive: true });
+  $("lightbox-stage").addEventListener("touchmove", (event) => {
+    if (pinch && event.touches.length === 2 && pinch.distance) {
+      event.preventDefault();
+      const point = pointInStage(
+        (event.touches[0].clientX + event.touches[1].clientX) / 2,
+        (event.touches[0].clientY + event.touches[1].clientY) / 2,
+      );
+      setScale(
+        pinch.scale * touchDistance(event.touches) / pinch.distance,
+        point.x,
+        point.y,
+      );
+    } else if (drag && event.touches.length === 1) {
+      event.preventDefault();
+      const touch = event.touches[0];
+      applyPan(panX + touch.clientX - drag.x, panY + touch.clientY - drag.y);
+      drag = { x: touch.clientX, y: touch.clientY };
+    }
+  }, { passive: false });
+  function endTouch() {
+    pinch = null;
+    drag = null;
+  }
+  $("lightbox-stage").addEventListener("touchend", endTouch);
+  $("lightbox-stage").addEventListener("touchcancel", endTouch);
   $("lightbox-close").addEventListener("click", () => $("lightbox").close());
   $("lightbox").addEventListener("click", (event) => {
     if (event.target === $("lightbox")) $("lightbox").close();
@@ -58,7 +240,7 @@ export function createMediaView(ctx) {
           continue;
         }
         const img = safeImage(url, "media-image", t("image"));
-        img.addEventListener("click", () => openLightbox(chat, message, url));
+        clickableImage(img, chat, message, url);
         bubble.append(img);
       }
     }
@@ -79,10 +261,7 @@ export function createMediaView(ctx) {
             type === "VIDEO" ? t("video") : t("image"),
           );
         if (type === "IMAGE") {
-          image.addEventListener(
-            "click",
-            () => openLightbox(chat, message, url),
-          );
+          clickableImage(image, chat, message, url);
         }
         bubble.append(image);
       } else {

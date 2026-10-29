@@ -103,7 +103,25 @@
       </div>
       <div id="toast" class="toast" role="alert" hidden></div>
     </main>
-    <dialog id="lightbox"
-      class="lightbox"><div class="lightbox-toolbar"><span id="lightbox-name"></span><button id="lightbox-download" class="secondary" type="button" data-i18n="downloadOriginal">下載原圖</button><button id="lightbox-close" class="icon-button" type="button" data-i18n-title="close" aria-label="關閉">×</button></div><img id="lightbox-image" alt=""></dialog>
+    <dialog id="lightbox" class="lightbox">
+      <div class="lightbox-toolbar">
+        <button id="lightbox-prev" class="icon-button" type="button"
+          data-i18n-title="previousImage">←</button>
+        <button id="lightbox-next" class="icon-button" type="button"
+          data-i18n-title="nextImage">→</button>
+        <span id="lightbox-name"></span>
+        <button id="lightbox-zoom-out" class="icon-button" type="button"
+          data-i18n-title="zoomOut">−</button>
+        <button id="lightbox-zoom-in" class="icon-button" type="button"
+          data-i18n-title="zoomIn">+</button>
+        <button id="lightbox-download" class="secondary" type="button"
+          data-i18n="downloadOriginal">下載原圖</button>
+        <button id="lightbox-close" class="icon-button" type="button"
+          data-i18n-title="close" aria-label="關閉">×</button>
+      </div>
+      <div id="lightbox-stage" class="lightbox-stage">
+        <img id="lightbox-image" alt="">
+      </div>
+    </dialog>
   </body>
 </html>

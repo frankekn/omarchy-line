@@ -1008,6 +1008,20 @@ textarea::placeholder {
   align-items: center;
   gap: 12px;
 }
+.lightbox-toolbar .icon-button {
+  color: #c8d6c8;
+}
+.lightbox-toolbar .secondary {
+  color: var(--text);
+}
+.lightbox-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  touch-action: none;
+}
 .lightbox-toolbar span {
   flex: 1;
   overflow: hidden;
@@ -1017,7 +1031,7 @@ textarea::placeholder {
 .lightbox img {
   display: block;
   max-width: 100%;
-  max-height: calc(100% - 60px);
+  max-height: 100%;
   object-fit: contain;
   margin: auto;
 }
@@ -1097,6 +1111,21 @@ textarea::placeholder {
   }
   .lightbox {
     padding: 12px;
+  }
+  .lightbox-toolbar {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .lightbox-toolbar .icon-button {
+    flex: none;
+  }
+  .lightbox-toolbar .secondary {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .lightbox-toolbar span {
+    order: 1;
+    flex-basis: 100%;
   }
   .chat-header .text-button {
     font-size: 10px;
