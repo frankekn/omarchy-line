@@ -388,10 +388,80 @@ export async function shortcutScope(h) {
   h.step("character-shortcut-focus-scope");
 }
 
+export async function reactionEscape(h) {
+  const now = Date.now();
+  const messages = [
+    picture(h, "reaction-1", "stub-shot1.png", now),
+    picture(h, "reaction-2", "stub-shot2.png", now + 1),
+  ];
+  const { context, page } = await pictureFixture(h, messages);
+  const first = page.locator('article[data-message-id="reaction-1"]');
+  const second = page.locator('article[data-message-id="reaction-2"]');
+  await first.getByRole("button", { name: "Reply" }).click();
+  await page.locator("#stickers").click();
+  await first.getByRole("button", { name: "React" }).click();
+  await second.getByRole("button", { name: "React" }).click();
+  assert.equal(await page.locator(".reaction-picker").count(), 2);
+  await second.getByRole("button", { name: "LOVE" }).focus();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".reaction-picker").count(), 0);
+  assert.equal(
+    await second.getByRole("button", { name: "React" }).evaluate(
+      (node) => node === document.activeElement,
+    ),
+    true,
+  );
+  assert.equal(await page.locator("#sticker-picker").isVisible(), true);
+  assert.equal(
+    await page.locator("#workspace").evaluate((node) =>
+      node.classList.contains("chat-open")
+    ),
+    true,
+  );
+  await first.getByRole("button", { name: "React" }).click();
+  assert.equal(await page.locator(".reaction-picker").count(), 1);
+  const input = page.locator("#message-input");
+  await input.fill("@ST");
+  await page.getByRole("button", { name: "@STUB 媽" }).waitFor();
+  const composing = await input.evaluate((node) => {
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    node.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  assert.equal(composing, false);
+  assert.equal(await page.locator(".reaction-picker").count(), 1);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator(".reaction-picker").count(), 0);
+  assert.equal(await page.locator("#mention-picker").isVisible(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#mention-picker").isHidden(), true);
+  await input.blur();
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#sticker-picker").isHidden(), true);
+  assert.equal(await page.locator("#reply-target").isVisible(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await page.locator("#reply-target").isHidden(), true);
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page.locator("#workspace").evaluate((node) =>
+      node.classList.contains("chat-open")
+    ),
+    false,
+  );
+  await context.close();
+  h.step("reaction-escape-priority");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
   await chatPatchOrder(h);
   await lightboxModifiers(h);
   await shortcutScope(h);
+  await reactionEscape(h);
 }

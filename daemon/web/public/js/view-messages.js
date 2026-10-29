@@ -32,6 +32,17 @@ export function createMessagesView(ctx) {
     target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
   }
+  function closeOpenReactions() {
+    for (const picker of $("messages").querySelectorAll(".reaction-picker")) {
+      if (picker.contains(document.activeElement)) {
+        picker.parentElement.querySelector(
+          ".message-actions button:nth-child(2)",
+        )?.focus();
+      }
+      picker.remove();
+    }
+    ctx.resetReactionPickers();
+  }
   function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
@@ -431,5 +442,5 @@ export function createMessagesView(ctx) {
       ctx.loadOlder();
     }
   });
-  return { renderMessages };
+  return { renderMessages, closeOpenReactions };
 }

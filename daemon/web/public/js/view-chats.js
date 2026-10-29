@@ -211,6 +211,17 @@ export function createChatsView(ctx) {
   document.addEventListener("visibilitychange", () => ctx.markCurrentRead());
   document.addEventListener("keydown", (event) => {
     if (
+      event.key !== "Escape" || !model.openReactions.size ||
+      event.defaultPrevented || event.isComposing || event.ctrlKey ||
+      event.metaKey || event.altKey || $("lightbox").open ||
+      $("workspace").hidden
+    ) return;
+    ctx.closeOpenReactions();
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (
       event.defaultPrevented || event.isComposing || event.ctrlKey ||
       event.metaKey || event.altKey || $("lightbox").open ||
       $("workspace").hidden
