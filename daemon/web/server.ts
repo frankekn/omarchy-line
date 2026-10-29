@@ -31,6 +31,7 @@ import { serveFile, Uploads } from "./files.ts";
 import { json, securityHeaders, status } from "./http.ts";
 
 const BIND_RETRY_MS = 10_000;
+const MAX_BRIDGES = 32;
 const ASSET_RE = /^\/(?:app\.css|js\/[a-z][a-z0-9-]*\.js)$/;
 
 export interface WebOptions {
@@ -147,6 +148,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
       if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
         return status(400);
       }
+      if (connections.size >= MAX_BRIDGES) return status(503);
       return bridge(req, bridgeDeps);
     }
     if (get && path === "/api/file") return serveFile(opts.stateDir, url);

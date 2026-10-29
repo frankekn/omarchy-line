@@ -298,3 +298,63 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
     await Deno.remove(stateDir, { recursive: true });
   }
 });
+
+Deno.test("the bridge caps concurrent daemon connections and frees slots", async () => {
+  const { stateDir, web } = await fixture();
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const peers: Deno.UnixConn[] = [];
+  const accept = (async () => {
+    for await (const conn of daemon) peers.push(conn);
+  })().catch(() => {});
+  const server = Deno.serve(
+    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
+    (req) => web.handle(req),
+  );
+  const sockets: WebSocket[] = [];
+  try {
+    const cookie = await signedInCookie(web);
+    const port = server.addr.port;
+    const open = async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+        headers: { cookie, origin: `http://127.0.0.1:${port}` },
+      });
+      sockets.push(ws);
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error("WebSocket did not open"));
+      });
+      return ws;
+    };
+    for (let i = 0; i < 32; i++) await open();
+    const refused = await fetch(`http://127.0.0.1:${port}/api/ws`, {
+      headers: {
+        cookie,
+        origin: `http://127.0.0.1:${port}`,
+        upgrade: "websocket",
+        connection: "upgrade",
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+      },
+    });
+    assertEquals(refused.status, 503);
+    await refused.body?.cancel();
+    const firstClosed = new Promise<void>((r) => sockets[0].onclose = () => r());
+    sockets[0].close();
+    await firstClosed;
+    await open();
+  } finally {
+    web.close();
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    }
+    daemon.close();
+    await accept;
+    for (const peer of peers) {
+      try {
+        peer.close();
+      } catch { /* already closed */ }
+    }
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
