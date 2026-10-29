@@ -76,8 +76,14 @@ export function createMediaView(ctx) {
     panY = next === 1 ? 0 : y - (y - panY) * ratio;
     scale = next;
     applyPan(panX, panY);
-    $("lightbox-zoom-out").disabled = scale <= 1;
-    $("lightbox-zoom-in").disabled = scale >= 4;
+    const out = $("lightbox-zoom-out"), zoomIn = $("lightbox-zoom-in");
+    const focused = document.activeElement;
+    out.disabled = scale <= 1;
+    zoomIn.disabled = scale >= 4;
+    if (focused === out && out.disabled) zoomIn.focus({ preventScroll: true });
+    else if (focused === zoomIn && zoomIn.disabled) {
+      out.focus({ preventScroll: true });
+    }
   }
   function updatePictureControls() {
     const item = pictures[pictureIndex];
@@ -87,8 +93,19 @@ export function createMediaView(ctx) {
     $("lightbox-image").alt = item.name;
     $("lightbox-download").hidden = !item.download;
     $("lightbox-download").onclick = item.download;
-    $("lightbox-prev").disabled = pictureIndex === 0;
-    $("lightbox-next").disabled = pictureIndex === pictures.length - 1;
+    const prev = $("lightbox-prev"), next = $("lightbox-next");
+    const focused = document.activeElement;
+    prev.disabled = pictureIndex === 0;
+    next.disabled = pictureIndex === pictures.length - 1;
+    if (focused === prev && prev.disabled) {
+      (next.disabled ? $("lightbox-close") : next).focus({
+        preventScroll: true,
+      });
+    } else if (focused === next && next.disabled) {
+      (prev.disabled ? $("lightbox-close") : prev).focus({
+        preventScroll: true,
+      });
+    }
   }
   function setPictureSource(url) {
     $("lightbox-error").hidden = true;

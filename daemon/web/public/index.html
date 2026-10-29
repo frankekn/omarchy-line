@@ -58,9 +58,9 @@
             <div
               class="section-heading"><div><p class="eyebrow" data-i18n="inboxEyebrow">YOUR SPACE</p><h1 data-i18n="chats">聊天</h1></div><span id="chat-count" class="count"></span></div>
             <label
-              class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off"></label>
+              class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
             <button id="sync" class="text-button sync-button" type="button"
-              data-i18n="sync">同步</button>
+              data-i18n="sync" aria-keyshortcuts="R">同步</button>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
           <div id="chat-list" class="chat-list" aria-label="Chats"></div>
@@ -106,18 +106,20 @@
     <dialog id="lightbox" class="lightbox">
       <div class="lightbox-toolbar">
         <button id="lightbox-prev" class="icon-button" type="button"
-          data-i18n-title="previousImage">←</button>
+          data-i18n-title="previousImage"
+          aria-keyshortcuts="ArrowLeft">←</button>
         <button id="lightbox-next" class="icon-button" type="button"
-          data-i18n-title="nextImage">→</button>
+          data-i18n-title="nextImage" aria-keyshortcuts="ArrowRight">→</button>
         <span id="lightbox-name"></span>
         <button id="lightbox-zoom-out" class="icon-button" type="button"
-          data-i18n-title="zoomOut">−</button>
+          data-i18n-title="zoomOut" aria-keyshortcuts="-">−</button>
         <button id="lightbox-zoom-in" class="icon-button" type="button"
-          data-i18n-title="zoomIn">+</button>
+          data-i18n-title="zoomIn" aria-keyshortcuts="= Shift+= Plus">+</button>
         <button id="lightbox-download" class="secondary" type="button"
           data-i18n="downloadOriginal">下載原圖</button>
         <button id="lightbox-close" class="icon-button" type="button"
-          data-i18n-title="close" aria-label="關閉">×</button>
+          data-i18n-title="close" aria-label="關閉"
+          aria-keyshortcuts="Escape">×</button>
       </div>
       <p id="lightbox-error" role="alert" data-i18n="mediaFailed" hidden></p>
       <div id="lightbox-stage" class="lightbox-stage">

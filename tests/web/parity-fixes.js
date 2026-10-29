@@ -891,6 +891,66 @@ export async function mixedGestures(h) {
   h.step("mouse-touch-gesture-isolation");
 }
 
+export async function shortcutMetadata(h) {
+  const now = Date.now();
+  const { context, page } = await pictureFixture(h, [
+    picture(h, "aria-1", "stub-shot1.png", now),
+    picture(h, "aria-2", "stub-shot2.png", now + 1),
+  ]);
+  const expected = {
+    "#search": "/",
+    "#sync": "R",
+    "#lightbox-prev": "ArrowLeft",
+    "#lightbox-next": "ArrowRight",
+    "#lightbox-zoom-out": "-",
+    "#lightbox-zoom-in": "= Shift+= Plus",
+    "#lightbox-close": "Escape",
+  };
+  for (const [selector, keys] of Object.entries(expected)) {
+    assert.equal(
+      await page.locator(selector).getAttribute("aria-keyshortcuts"),
+      keys,
+    );
+  }
+  assert.equal(
+    await page.locator("#lightbox-download").getAttribute("aria-keyshortcuts"),
+    null,
+  );
+  await page.locator('article[data-message-id="aria-1"] img').click();
+  await page.keyboard.press("ArrowRight");
+  assert.match(await page.locator("#lightbox-name").textContent(), /2 \/ 2/);
+  assert.equal(
+    await page.locator("#lightbox-prev").evaluate((node) =>
+      node === document.activeElement
+    ),
+    true,
+  );
+  await page.keyboard.press("ArrowLeft");
+  assert.match(await page.locator("#lightbox-name").textContent(), /1 \/ 2/);
+  await page.keyboard.press("Shift+=");
+  assert.ok(
+    Math.abs(
+      await page.locator("#lightbox-image").evaluate((node) =>
+        new DOMMatrix(node.style.transform).a
+      ) - 1.2,
+    ) < 0.0001,
+  );
+  await page.keyboard.press("-");
+  assert.equal(
+    await page.locator("#lightbox-image").evaluate((node) =>
+      new DOMMatrix(node.style.transform).a
+    ),
+    1,
+  );
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page.locator("#lightbox").evaluate((node) => node.open),
+    false,
+  );
+  await context.close();
+  h.step("accessible-shortcut-metadata");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
@@ -902,4 +962,5 @@ export async function parityFixes(h) {
   await lightboxFailure(h);
   await lightboxOriginal(h);
   await mixedGestures(h);
+  await shortcutMetadata(h);
 }
