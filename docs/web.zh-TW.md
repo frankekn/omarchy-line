@@ -10,10 +10,10 @@ LINE 帳號裡多出裝置。
 
 網頁版預設關閉，設定 `ENIL_WEB_ADDR` 才會啟動。
 
-| 變數            | 作用                                                                                                                    |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 變數 | 作用 |
+|---|---|
 | `ENIL_WEB_ADDR` | 要監聽的 `host:port`。請用這台機器的 Tailscale IP，例如 `100.64.0.1:3440`。不要用 `0.0.0.0`：這個位址是唯一的網路邊界。 |
-| `ENIL_WEB_KEY`  | 登入用的 key：16 個以上的 `A-Z a-z 0-9 - . _ ~`。沒設定時，每次啟動都會產生新的 key。                                   |
+| `ENIL_WEB_KEY` | 登入用的 key：16 個以上的 `A-Z a-z 0-9 - . _ ~`。沒設定時，每次啟動都會產生新的 key。 |
 
 daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏覽器開一次
 這個連結，或開位址後輸入 key。之後瀏覽器會保留 cookie 400 天。換掉 key 就會讓
@@ -22,8 +22,7 @@ daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏�
 key 可能外洩，請更換 key。網頁使用 HTTP，因此 cookie 沒有 `Secure` 屬性。請使用
 可信任的 Tailscale 網路，並保護登入連結。
 
-如果位址還不存在（Tailscale 還在啟動），daemon 每 10 秒重試一次，LINE
-本身照常運作。
+如果位址還不存在（Tailscale 還在啟動），daemon 每 10 秒重試一次，LINE 本身照常運作。
 
 ## 網頁版能做和不能做的事
 
@@ -108,5 +107,5 @@ launchctl bootout "gui/$(id -u)" \
 下次登入時 plist 會再載入。要提早啟動，請執行上面的 bootstrap 和 kickstart
 指令。
 
-在 macOS 上 daemon 沒有桌面通知，也沒有休眠事件。watchdog 仍然會重建停滯的 push
-連線。
+在 macOS 上 daemon 沒有桌面通知，也沒有休眠事件。watchdog 仍然會重建停滯的
+push 連線。

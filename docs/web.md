@@ -4,16 +4,17 @@
 
 The daemon can also serve LINE as a web page. One machine runs the daemon and
 holds the LINE session, and any browser on your tailnet uses it. The browsers
-share the daemon's one LINE login, so they add no devices to your LINE account.
+share the daemon's one LINE login, so they add no devices to your LINE
+account.
 
 ![The web page with a group chat open](images/web-en.png)
 
 The page is off by default. It starts when `ENIL_WEB_ADDR` is set.
 
-| Variable        | Effect                                                                                                                                                   |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Variable | Effect |
+|---|---|
 | `ENIL_WEB_ADDR` | `host:port` to listen on. Use the machine's Tailscale IP, for example `100.64.0.1:3440`. Do not use `0.0.0.0`: the address is the only network boundary. |
-| `ENIL_WEB_KEY`  | The sign-in key: 16 or more of `A-Z a-z 0-9 - . _ ~`. Without it, each start makes a new key.                                                            |
+| `ENIL_WEB_KEY` | The sign-in key: 16 or more of `A-Z a-z 0-9 - . _ ~`. Without it, each start makes a new key. |
 
 At start the daemon logs `[web] sign in: http://<addr>/?key=<key>`. Open that
 link once in each browser, or open the address and type the key. The browser
@@ -28,8 +29,8 @@ tries again every 10 seconds. LINE keeps working in the meantime.
 
 ## What the page can and cannot do
 
-The page sends the same commands as the panel, over a WebSocket that the daemon
-connects to its own socket. These are different from the panel:
+The page sends the same commands as the panel, over a WebSocket that the
+daemon connects to its own socket. These are different from the panel:
 
 - Files are uploaded from the browser, then sent. Uploads are kept under
   `media/web-uploads/` until the daemon answers the send, whether it succeeds
