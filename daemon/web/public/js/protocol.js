@@ -119,6 +119,46 @@ export function mergeHistory(rows, fresh, myMid) {
   return result;
 }
 
+// Keep a contiguous suffix of server messages. Pending rows cannot be fetched
+// with a history cursor and therefore remain outside the limit.
+/**
+ * @template {{ id?: string | number, pending?: boolean }} T
+ * @param {T[]} rows
+ * @param {number} limit
+ * @param {Set<string>} protectedIds
+ * @returns {T[]}
+ */
+export function trimHistory(rows, limit, protectedIds) {
+  // The daemon pages by numeric LINE id, while the view sorts by time first.
+  // Only cut when those orders agree, so `before` cannot skip a removed row.
+  let previous = "", count = 0;
+  for (const row of rows) {
+    if (row.pending) continue;
+    const id = String(row.id || "");
+    if (!/^(0|[1-9]\d*)$/.test(id)) return rows;
+    if (
+      previous && (id.length < previous.length ||
+        (id.length === previous.length && id <= previous))
+    ) return rows;
+    previous = id;
+    if (!protectedIds.has(id)) count++;
+  }
+  let excess = count - limit, cut = 0;
+  if (excess <= 0) return rows;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.pending) continue;
+    const id = String(row.id || "");
+    // Crossing a protected row would leave a gap that `before` cannot fill.
+    if (!id || protectedIds.has(id)) return rows;
+    if (--excess === 0) {
+      cut = i + 1;
+      break;
+    }
+  }
+  return rows.filter((row, index) => index >= cut || row.pending);
+}
+
 export function reconcilePending(pending, rows, myMid) {
   const delivered = new Set(
     rows.filter((m) => m?.from === myMid && m.requestId)

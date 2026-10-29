@@ -15,6 +15,7 @@ import { stateWire } from "./state-wire.js";
 import { stateWireResync } from "./state-wire-resync.js";
 import { previewCache } from "./preview-cache.js";
 import { drafts } from "./drafts.js";
+import { messageWindow } from "./message-window.js";
 
 const suites = {
   main,
@@ -32,6 +33,7 @@ const suites = {
   "state-wire-resync": stateWireResync,
   "preview-cache": previewCache,
   drafts,
+  "message-window": messageWindow,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

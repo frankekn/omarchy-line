@@ -10,6 +10,7 @@ import {
   mergeMessage,
   reconcilePending,
   resetBoot,
+  trimHistory,
   visibleChats,
 } from "./public/js/protocol.js";
 import { avatarInitial, splitText } from "./public/js/text.js";
@@ -27,6 +28,54 @@ import { createStateController } from "./public/js/controller-state.js";
 import { createSendController } from "./public/js/controller-send.js";
 import { createComposerController } from "./public/js/controller-composer.js";
 import { putPreview } from "./public/js/preview-cache.js";
+
+Deno.test("history trimming keeps a continuous suffix and pending sends", () => {
+  const rows = [
+    { id: "1" },
+    { id: "pending-a", pending: true },
+    { id: "2" },
+    { id: "pending-b", pending: true, status: "sent" },
+    { id: "3" },
+    { id: "4" },
+    { id: "5" },
+  ];
+  const result = trimHistory(rows, 3, new Set());
+  assertEquals(result.map((row) => row.id), [
+    "pending-a",
+    "pending-b",
+    "3",
+    "4",
+    "5",
+  ]);
+  assertEquals(result.find((row) => !row.pending)?.id, "3");
+  assertEquals(trimHistory(rows, 5, new Set()), rows);
+  assert(trimHistory(rows, 5, new Set()) === rows);
+});
+
+Deno.test("history trimming defers at protected older rows", () => {
+  const rows = [
+    { id: "1" },
+    { id: "2" },
+    { id: "3" },
+    { id: "4" },
+    { id: "5" },
+  ];
+  // An unread divider, focus, selection or media can protect the same id.
+  for (const protectedId of ["1", "2"]) {
+    assert(trimHistory(rows, 2, new Set([protectedId])) === rows);
+  }
+  // A newer protected row is retained outside the ordinary-row limit.
+  assertEquals(
+    trimHistory(rows, 2, new Set(["5"])).map((row) => row.id),
+    ["3", "4", "5"],
+  );
+  const withoutCursor = [{ id: "" }, ...rows];
+  assert(trimHistory(withoutCursor, 2, new Set()) === withoutCursor);
+  const notInCursorOrder = [rows[1], rows[0], ...rows.slice(2)];
+  assert(trimHistory(notInCursorOrder, 2, new Set()) === notInCursorOrder);
+  const nonNumericId = [{ id: "unknown" }, ...rows];
+  assert(trimHistory(nonNumericId, 2, new Set()) === nonNumericId);
+});
 
 Deno.test("preview cache caps entries, protects visible images and retries later", () => {
   const cache = new Map<string, string>();
@@ -329,6 +378,50 @@ Deno.test("chat search uses the displayed name, sender and preview", () => {
   assertEquals(ids("fallback-id"), ["fallback-id"]);
   assertEquals(ids("first-id"), []);
   assertEquals(ids("alice"), ["first-id", "hidden"]);
+});
+
+Deno.test("short cached history pages do not end pagination", async () => {
+  type Row = { id: string; from: string; time: number };
+  const model: Omit<ReturnType<typeof createModel>, "messages"> & {
+    messages: Row[];
+  } = { ...createModel(), messages: [] };
+  model.account = "me";
+  model.active = "c";
+  const pages: Row[][] = [
+    Array.from({ length: 50 }, (_, i) => ({
+      id: String(100 + i),
+      from: "peer",
+      time: 100 + i,
+    })),
+    [{ id: "99", from: "peer", time: 99 }],
+    [{ id: "98", from: "peer", time: 98 }],
+    [],
+  ];
+  const cursors: string[] = [];
+  const ctx = {
+    model,
+    command: (_cmd: string, request: { before?: string }) => {
+      cursors.push(request.before || "");
+      return Promise.resolve(pages.shift() || []);
+    },
+    reconcilePending: () => {},
+    renderMessages: () => {},
+  };
+  const chat = createChatController(ctx);
+  await chat.loadHistory("c", false);
+  assertEquals(model.noOlder, false);
+  await chat.loadOlder();
+  assertEquals(model.noOlder, false);
+  await chat.loadOlder();
+  assertEquals(model.noOlder, false);
+  await chat.loadOlder();
+  assertEquals(model.noOlder, true);
+  assertEquals(cursors, ["", "100", "99", "98"]);
+  assertEquals(model.messages.map((row) => row.id), [
+    "98",
+    "99",
+    ...Array.from({ length: 50 }, (_, i) => String(100 + i)),
+  ]);
 });
 
 Deno.test("events received during an older page update that page too", async () => {

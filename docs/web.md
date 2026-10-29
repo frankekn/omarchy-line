@@ -75,6 +75,12 @@ and message previews. Tap a quote to find its original in the loaded messages.
 In the image viewer, use the arrows to switch images and the wheel,
 double-click, pinch or zoom buttons to change the zoom.
 
+While you follow new messages at the bottom, the page can remove older loaded
+messages to keep about 500 confirmed rows. Scroll up to load them again. The
+page keeps the loaded history while you read above the bottom, and defers
+removal when it would disturb an unread marker, a selection, focus or media.
+Browser find searches the messages currently loaded in the page.
+
 Unconfirmed sends remain visible for review and manual retry. If the outcome
 is unknown, retrying can send the same message twice. Recent acknowledged
 sends remain visible while the page waits for their matching echo; this

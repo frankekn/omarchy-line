@@ -638,6 +638,8 @@ textarea::placeholder {
   scrollbar-color: var(--line) transparent;
 }
 .message-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 100px;
   display: flex;
   margin: 0 0 18px;
   gap: 9px;

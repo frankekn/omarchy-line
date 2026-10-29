@@ -197,7 +197,8 @@ export function createChatController(ctx) {
           model.readerCount,
         );
       }
-      model.noOlder = fresh.length < 50;
+      // A cached page can be short even when older messages exist upstream.
+      model.noOlder = fresh.length === 0;
       ctx.renderMessages("anchor");
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {

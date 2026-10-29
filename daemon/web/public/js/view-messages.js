@@ -1,12 +1,14 @@
 // Message list DOM, actions and scroll anchoring. Uses protocol and DOM
 // helpers.
 import { $, el, formatTime, richText } from "./dom.js";
-import { compareMessages } from "./protocol.js";
+import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
-  let order = [], renderedChat = "", renderedAccount = "";
+  let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
+  let followedTop = null;
+  let followFrame = 0;
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
   const pendingFor = (...args) => ctx.pendingFor(...args);
@@ -263,12 +265,89 @@ export function createMessagesView(ctx) {
       } else oldColumn.append(child);
     }
   }
+  function protectedMessageIds(list) {
+    const protectedIds = new Set();
+    if (model.unreadMarkId) protectedIds.add(model.unreadMarkId);
+    const pending = pendingFor();
+    if (pending.length || model.sent.size) {
+      const pendingIds = new Set(pending.map((row) => row.requestId));
+      for (const message of model.messages) {
+        if (
+          message.from === model.account && message.requestId &&
+          (model.sent.has(message.requestId) ||
+            pendingIds.has(message.requestId))
+        ) protectedIds.add(String(message.id || ""));
+      }
+    }
+    function rowOf(node) {
+      const element = node instanceof Element ? node : node?.parentElement;
+      const row = element?.closest(".message-row");
+      return row && list.contains(row) ? row : null;
+    }
+    function protect(row) {
+      if (row?.dataset.messageId) protectedIds.add(row.dataset.messageId);
+    }
+    protect(rowOf(document.activeElement));
+    for (const video of list.getElementsByTagName("video")) {
+      if (!video.paused && !video.ended) protect(rowOf(video));
+    }
+    const selection = globalThis.getSelection();
+    if (selection && !selection.isCollapsed) {
+      for (let i = 0; i < selection.rangeCount; i++) {
+        const range = selection.getRangeAt(i);
+        const first = rowOf(range.startContainer),
+          last = rowOf(range.endContainer);
+        if (first && first === last) {
+          protect(first);
+        } else {
+          for (const record of records.values()) {
+            if (record.message && range.intersectsNode(record.node)) {
+              protect(record.node);
+            }
+          }
+        }
+      }
+    }
+    return protectedIds;
+  }
+  function lastConfirmed(rows) {
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (!rows[i].pending && rows[i].id) return rows[i];
+    }
+    return null;
+  }
+  function followBottom(list) {
+    if (followFrame) cancelAnimationFrame(followFrame);
+    list.scrollTop = list.scrollHeight;
+    followedTop = list.scrollTop;
+    const chat = renderedChat, account = renderedAccount;
+    let frames = 2;
+    function settle() {
+      followFrame = 0;
+      if (
+        chat !== renderedChat || account !== renderedAccount ||
+        followedTop === null || Math.abs(list.scrollTop - followedTop) > 2
+      ) return;
+      list.scrollTop = list.scrollHeight;
+      followedTop = list.scrollTop;
+      if (--frames) followFrame = requestAnimationFrame(settle);
+    }
+    followFrame = requestAnimationFrame(settle);
+  }
   function renderMessages(mode = "preserve") {
     const list = $("messages"),
       oldHeight = list.scrollHeight,
       oldTop = list.scrollTop;
-    const nearBottom = oldHeight - oldTop - list.clientHeight < 140;
-    if (renderedChat !== model.active || renderedAccount !== model.account) {
+    const atBottom = oldHeight - oldTop - list.clientHeight <= 2;
+    // Deferred layout can grow the list without moving its scroll position.
+    // A user who moved away from the last pinned position is reading history.
+    const following = atBottom ||
+      (followedTop !== null && Math.abs(oldTop - followedTop) <= 2);
+    const chatChanged = renderedChat !== model.active ||
+      renderedAccount !== model.account;
+    if (chatChanged) {
+      if (followFrame) cancelAnimationFrame(followFrame);
+      followFrame = 0;
       ctx.resetReactionPickers();
       for (const record of records.values()) {
         if (record.message) ctx.unobservePreviews(record.node);
@@ -276,8 +355,26 @@ export function createMessagesView(ctx) {
       }
       records.clear();
       order = [];
+      renderedTail = null;
+      followedTop = null;
       renderedChat = model.active;
       renderedAccount = model.account;
+    }
+    const newest = lastConfirmed(model.messages);
+    const appended = newest && renderedTail &&
+      String(newest.id) !== String(renderedTail.id) &&
+      compareMessages(newest, renderedTail) > 0 &&
+      !records.has(`message:${newest.id}:0`);
+    if (
+      mode === "follow" && following && appended && !chatChanged &&
+      !model.loading && !model.loadingOlder && model.messages.length > 500 &&
+      !$("lightbox").open && ctx.isViewingChat()
+    ) {
+      const kept = trimHistory(model.messages, 500, protectedMessageIds(list));
+      if (kept !== model.messages) {
+        model.messages = kept;
+        model.noOlder = false;
+      }
     }
     const rows = model.messages.slice();
     const pendingRows = pendingFor();
@@ -297,6 +394,7 @@ export function createMessagesView(ctx) {
       }
     }
     rows.sort(compareMessages);
+    renderedTail = lastConfirmed(rows);
     const desired = [];
     if (!model.noOlder && rows.some((m) => !m.pending)) {
       desired.push({ key: "control:older", type: "older" });
@@ -430,11 +528,20 @@ export function createMessagesView(ctx) {
         records.set(item.key, { node, text: item.text });
       }
     }
-    placeKeyedNodes(list, keys, records, changes);
+    // A top trim followed by an append leaves all retained nodes in order.
+    if (
+      changes.removed.length && !changes.moved.length &&
+      changes.added.length &&
+      changes.added.every((key, index) =>
+        key === keys[keys.length - changes.added.length + index]
+      )
+    ) {
+      for (const key of changes.added) list.append(records.get(key).node);
+    } else placeKeyedNodes(list, keys, records, changes);
     order = keys;
     ctx.refreshLightbox();
-    if (mode === "bottom" || (mode === "follow" && nearBottom)) {
-      list.scrollTop = list.scrollHeight;
+    if (mode === "bottom" || (mode === "follow" && following)) {
+      followBottom(list);
     } else if (mode === "anchor") {
       list.scrollTop = oldTop + list.scrollHeight - oldHeight;
     } else list.scrollTop = oldTop;
