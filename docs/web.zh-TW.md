@@ -35,17 +35,61 @@ daemon 啟動時會記錄 `[web] sign in: http://<addr>/?key=<key>`。每個瀏�
 
 ## 在 Mac 上執行
 
-同一個 LINE session 只能有一台機器持有。先停掉另一台的 daemon
-（`systemctl --user disable --now enil`），兩台絕不能同時執行。
+同一個 LINE session 只能由一個 daemon 持有。先停掉另一台的 daemon
+（`systemctl --user disable --now enil`）。另一個裝置上的官方 LINE 可以保持登入。
 
-1. 安裝 Deno 和 FFmpeg：`brew install deno ffmpeg`。
-2. 用 `--recurse-submodules` clone 這個 repo。
-3. 把 `daemon/enil.plist` 複製到
-   `~/Library/LaunchAgents/io.github.frankekn.enil.plist`，替換
-   `@CHECKOUT@`、`@HOME@`、`@TAILSCALE_IP@` 和 `@WEB_KEY@`。
-4. `mkdir -p ~/Library/Logs/enil`，然後
-   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.frankekn.enil.plist`。
-5. 開 `http://<tailscale-ip>:3440/?key=<key>`，用 QR 登入 LINE。
+安裝 Deno 和 FFmpeg，並 clone repo 與 linejs：
+
+```sh
+brew install deno ffmpeg
+git clone --recurse-submodules \
+  https://github.com/frankekn/omarchy-line.git "$HOME/omarchy-line"
+```
+
+先把下方的 `100.64.0.1` 換成這台 Mac 的 Tailscale IPv4 位址，再在 Mac 的終端機
+執行這些指令。指令會產生新的隨機 web key，並填入 plist 的四個佔位值。log 目錄和
+plist 都設為私人權限，因為兩者都可能包含 web key。
+
+```sh
+checkout="$HOME/omarchy-line"
+plist="$HOME/Library/LaunchAgents/io.github.frankekn.enil.plist"
+tailscale_ip=100.64.0.1
+web_key="$(openssl rand -hex 32)"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/enil"
+chmod 700 "$HOME/Library/Logs/enil"
+cp "$checkout/daemon/enil.plist" "$plist"
+chmod 600 "$plist"
+plutil -replace ProgramArguments.1 \
+  -string "$checkout/daemon/enil-run.sh" "$plist"
+plutil -replace WorkingDirectory -string "$checkout/daemon" "$plist"
+plutil -replace EnvironmentVariables.HOME -string "$HOME" "$plist"
+plutil -replace EnvironmentVariables.ENIL_WEB_ADDR \
+  -string "${tailscale_ip}:3440" "$plist"
+plutil -replace EnvironmentVariables.ENIL_WEB_KEY -string "$web_key" "$plist"
+plutil -replace StandardOutPath \
+  -string "$HOME/Library/Logs/enil/enil.log" "$plist"
+plutil -replace StandardErrorPath \
+  -string "$HOME/Library/Logs/enil/enil.log" "$plist"
+plutil -lint "$plist"
+launchctl bootstrap "gui/$(id -u)" "$plist"
+launchctl kickstart "gui/$(id -u)/io.github.frankekn.enil"
+```
+
+在 log 找到 `[web] sign in:` 連結，在 tailnet 裡的裝置上開啟，再用 QR 登入 LINE：
+
+```sh
+tail -f "$HOME/Library/Logs/enil/enil.log"
+```
+
+要在這次登入期間停止 agent：
+
+```sh
+launchctl bootout "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/io.github.frankekn.enil.plist"
+```
+
+下次登入時 plist 會再載入。要提早啟動，請執行上面的 bootstrap 和 kickstart
+指令。
 
 在 macOS 上 daemon 沒有桌面通知，也沒有休眠事件。watchdog 仍然會重建停滯的
 push 連線。

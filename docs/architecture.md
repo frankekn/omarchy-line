@@ -20,9 +20,10 @@ network loss. The exact file formats and socket commands are in
 - **The daemon**, `enil`, is the half that logs in to LINE. It is a Deno
   program: `daemon/daemon.ts` is the entry point and `daemon/modules/` holds
   the rest. LINE's refresh token rotates on every login, so only one process
-  may hold the session at a time. The daemon takes an `flock` on
-  `~/.local/state/enil/lock` at startup, and a second daemon on the same state
-  directory exits instead of sharing the session.
+  may hold the session at a time. The daemon takes an advisory lock on
+  `~/.local/state/enil/lock` through Deno's `FsFile.tryLock` at startup, and a
+  second daemon on the same state directory exits instead of sharing the
+  session. The `flock` command is not needed.
 
 The name `enil` is "LINE" spelled backwards.
 
@@ -86,6 +87,12 @@ A failed start does not stop the unit. `Restart=always` starts it again every
 The checks exist because the alternative is a restart loop on an import error
 that names a file inside `vendor/`.
 
+On macOS, `daemon/enil.plist` runs the same launcher as a launchd agent. Its
+`KeepAlive` and 5-second `ThrottleInterval` restart an exited daemon. The
+agent's `PATH` includes Apple Silicon Homebrew and its output goes to
+`~/Library/Logs/enil/enil.log`. See [web.md](web.md#run-it-on-a-mac) for setup
+and for stopping the agent.
+
 ## Deno permissions
 
 `daemon/enil-flags.sh` defines the daemon's Deno permissions in one place.
@@ -110,7 +117,8 @@ still use `-A`.
   `notify-send` (`notify.ts`).
 - `--allow-env` names the variables that `modules/env.ts` reads: `HOME`,
   `XDG_STATE_HOME`, `ENIL_DEVICE`, `ENIL_INCREMENTAL`, `ENIL_CHAT_LIMIT`,
-  `ENIL_PUSH_STALE_MS`, and `ENIL_REQUEST_TIMEOUT_MS`. It also names
+  `ENIL_PUSH_STALE_MS`, `ENIL_REQUEST_TIMEOUT_MS`, `ENIL_WEB_ADDR`, and
+  `ENIL_WEB_KEY`. It also names
   `Q_DEBUG` and `NODE_DEBUG`. Two npm dependencies read them through Node's
   `process.env`, which throws for an unlisted name, and the daemon does not
   boot without `Q_DEBUG`.
@@ -123,6 +131,10 @@ environment where `deno task build` ran. If you move `XDG_STATE_HOME` after
 the build, the binary cannot write to the new directory, so rebuild it.
 `enil-run.sh` falls back to `deno run` only when `enil.rev` is stale, not when
 the directory moved.
+
+State paths may contain spaces. They cannot contain a newline or comma: the
+shell and Deno use those characters to separate flags and permission paths.
+The launcher rejects such paths before starting Deno.
 
 ## When LINE restricts the account
 

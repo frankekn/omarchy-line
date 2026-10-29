@@ -38,17 +38,64 @@ daemon connects to its own socket. These are different from the panel:
 
 ## Run it on a Mac
 
-Only one machine may hold the LINE session. Stop the daemon on the other
-machine first (`systemctl --user disable --now enil`), and never run both.
+Only one daemon may hold the same LINE session. Stop the daemon on the other
+machine first (`systemctl --user disable --now enil`). The official LINE app
+on another device can stay signed in.
 
-1. Install Deno and FFmpeg: `brew install deno ffmpeg`.
-2. Clone this repository with `--recurse-submodules`.
-3. Copy `daemon/enil.plist` to
-   `~/Library/LaunchAgents/io.github.frankekn.enil.plist` and replace
-   `@CHECKOUT@`, `@HOME@`, `@TAILSCALE_IP@` and `@WEB_KEY@`.
-4. `mkdir -p ~/Library/Logs/enil`, then
-   `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.frankekn.enil.plist`.
-5. Open `http://<tailscale-ip>:3440/?key=<key>` and log in to LINE with the QR.
+Install Deno and FFmpeg and clone the repository, including linejs:
+
+```sh
+brew install deno ffmpeg
+git clone --recurse-submodules \
+  https://github.com/frankekn/omarchy-line.git "$HOME/omarchy-line"
+```
+
+Replace `100.64.0.1` below with this Mac's Tailscale IPv4 address, then run the
+commands in a terminal on the Mac. They create a new random web key and fill
+all four placeholders in the plist. The log directory and plist are private
+because both can contain the web key.
+
+```sh
+checkout="$HOME/omarchy-line"
+plist="$HOME/Library/LaunchAgents/io.github.frankekn.enil.plist"
+tailscale_ip=100.64.0.1
+web_key="$(openssl rand -hex 32)"
+mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/enil"
+chmod 700 "$HOME/Library/Logs/enil"
+cp "$checkout/daemon/enil.plist" "$plist"
+chmod 600 "$plist"
+plutil -replace ProgramArguments.1 \
+  -string "$checkout/daemon/enil-run.sh" "$plist"
+plutil -replace WorkingDirectory -string "$checkout/daemon" "$plist"
+plutil -replace EnvironmentVariables.HOME -string "$HOME" "$plist"
+plutil -replace EnvironmentVariables.ENIL_WEB_ADDR \
+  -string "${tailscale_ip}:3440" "$plist"
+plutil -replace EnvironmentVariables.ENIL_WEB_KEY -string "$web_key" "$plist"
+plutil -replace StandardOutPath \
+  -string "$HOME/Library/Logs/enil/enil.log" "$plist"
+plutil -replace StandardErrorPath \
+  -string "$HOME/Library/Logs/enil/enil.log" "$plist"
+plutil -lint "$plist"
+launchctl bootstrap "gui/$(id -u)" "$plist"
+launchctl kickstart "gui/$(id -u)/io.github.frankekn.enil"
+```
+
+Find the `[web] sign in:` link in the log, open it on a device in the tailnet,
+then use the QR to log in to LINE:
+
+```sh
+tail -f "$HOME/Library/Logs/enil/enil.log"
+```
+
+To stop the agent for this login session:
+
+```sh
+launchctl bootout "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/io.github.frankekn.enil.plist"
+```
+
+The plist loads again at the next login. To start it sooner, run the bootstrap
+and kickstart commands above.
 
 On macOS the daemon has no desktop notifications and no suspend hook. The
 watchdog still rebuilds a stale push connection.

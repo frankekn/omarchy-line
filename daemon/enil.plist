@@ -23,6 +23,8 @@
     <!-- deno and ffmpeg from Homebrew; git for enil-run.sh's checks. -->
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>HOME</key>
+    <string>@HOME@</string>
     <!-- This Mac's Tailscale IP, never 0.0.0.0. -->
     <key>ENIL_WEB_ADDR</key>
     <string>@TAILSCALE_IP@:3440</string>

@@ -17,8 +17,9 @@ omarchy-line 分成兩半，各自是獨立的 process。這一頁說明兩半�
 - **daemon**（`enil`）是真正登入 LINE 的那一半。它是 Deno 程式：進入點是
   `daemon/daemon.ts`，其餘程式碼在 `daemon/modules/`。LINE 的 refresh token 每次
   登入都會換，所以同一時間只能有一個 process 持有 session。daemon 啟動時會對
-  `~/.local/state/enil/lock` 取得 `flock`，同一個 state 目錄上的第二個 daemon 會
-  直接結束，不會共用 session。
+  `~/.local/state/enil/lock` 透過 Deno 的 `FsFile.tryLock` 取得 advisory lock，
+  同一個 state 目錄上的第二個 daemon 會直接結束，不會共用 session。這不需要
+  `flock` 指令。
 
 `enil` 這個名字就是把「LINE」倒過來拼。
 
@@ -71,6 +72,11 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 之前，journal 會一直重複同一段訊息。這些檢查是為了避免另一種結果：在一個指向
 `vendor/` 裡某個檔案的 import 錯誤上無限重啟。
 
+在 macOS 上，`daemon/enil.plist` 讓 launchd agent 執行同一個啟動腳本。
+`KeepAlive` 和 5 秒的 `ThrottleInterval` 會重啟已結束的 daemon；agent 的 `PATH`
+包含 Apple Silicon Homebrew，輸出寫入 `~/Library/Logs/enil/enil.log`。設定和停止
+方式見 [web.zh-TW.md](web.zh-TW.md#在-mac-上執行)。
+
 ## Deno 權限
 
 `daemon/enil-flags.sh` 把 daemon 的 Deno 權限集中在一個地方。`enil-run.sh` 用它跑
@@ -90,7 +96,8 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
   （`video.ts`），以及 `omarchy-shell` 和 `notify-send`（`notify.ts`）。
 - `--allow-env` 列出 `modules/env.ts` 會讀的變數：`HOME`、`XDG_STATE_HOME`、
   `ENIL_DEVICE`、`ENIL_INCREMENTAL`、`ENIL_CHAT_LIMIT`、`ENIL_PUSH_STALE_MS` 和
-  `ENIL_REQUEST_TIMEOUT_MS`。另外還有 `Q_DEBUG` 和 `NODE_DEBUG`：兩個 npm 相依套件
+  `ENIL_REQUEST_TIMEOUT_MS`、`ENIL_WEB_ADDR` 和 `ENIL_WEB_KEY`。另外還有 `Q_DEBUG`
+  和 `NODE_DEBUG`：兩個 npm 相依套件
   透過 Node 的 `process.env` 讀它們，沒列出的名稱會直接丟錯誤，而少了 `Q_DEBUG`
   daemon 根本啟動不了。
 - 沒有 `--allow-sys`。哪天某個相依套件需要系統 API，`permissions_test.ts` 會失敗並
@@ -100,6 +107,9 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 目錄。編譯好的執行檔會記住跑 `deno task build` 那個環境的目錄。建好之後才搬動
 `XDG_STATE_HOME` 的話，執行檔寫不進新目錄，要重新編譯。`enil-run.sh` 只在
 `enil.rev` 過期時才退回 `deno run`，目錄搬了它不會發現。
+
+state 路徑可以包含空格，但不能包含換行或逗號：shell 和 Deno 分別用它們分隔參數
+與權限路徑。啟動腳本會在執行 Deno 前拒絕這類路徑。
 
 ## LINE 限制帳號的時候
 
