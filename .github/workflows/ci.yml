@@ -81,4 +81,6 @@ jobs:
       - name: web browser tests
         env:
           ENIL_WEB_BROWSER: webkit
-        run: deno run -A tests/web/run.js main edge media mentions parity review a11y drafts
+        run: |
+          deno run --frozen -A tests/web/run.js main edge media mentions parity review a11y state-wire state-wire-resync preview-cache drafts
+          deno run --frozen -A tests/web/boot-rtt.js

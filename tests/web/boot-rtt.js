@@ -4,27 +4,94 @@ import { assert, KEY, runSuite, until } from "./harness.js";
 
 await runSuite("boot-rtt", async (h) => {
   const loopback = h.base.replace("enil.test", "127.0.0.1");
+  async function withBootstrapPage(context, run) {
+    const page = await context.newPage();
+    try {
+      // Keep the page's real network origin without warming application assets.
+      for (
+        const [path, type] of [
+          ["/js/**", "text/javascript"],
+          ["/app.css", "text/css"],
+        ]
+      ) {
+        await page.route(`${h.base}${path}`, (route) =>
+          route.fulfill({
+            contentType: type,
+            body: "",
+            headers: { "Cache-Control": "no-store" },
+          }));
+      }
+      await page.goto(h.base);
+      return await run(page);
+    } finally {
+      await page.close();
+    }
+  }
   async function signInContext(context) {
-    const response = await fetch(`${loopback}/?key=${KEY}`, {
-      redirect: "manual",
+    const status = await withBootstrapPage(
+      context,
+      (page) =>
+        page.evaluate(async (key) => {
+          const response = await fetch("/api/signin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key }),
+          });
+          return response.status;
+        }, KEY),
+    );
+    assert.equal(status, 204);
+  }
+  async function setCookieFromBrowser(context, value, expires = "") {
+    // WebKit does not send addCookies on the mapped IPv6 host. A second
+    // server on that host can set the test cookie in a real HTTP response;
+    // cookies apply across ports, and the check confirms the browser sends it.
+    await context.clearCookies();
+    const fixture = Deno.serve({
+      hostname: "127.0.0.1",
+      port: Number(Deno.env.get("ENIL_WEB_COOKIE_TEST_PORT") ?? 0),
+      onListen() {},
+    }, (request) => {
+      if (new URL(request.url).pathname === "/check") {
+        return Response.json({
+          sent: request.headers.get("cookie")?.split("; ").includes(
+            `enil_web=${value}`,
+          ) ?? false,
+        });
+      }
+      return new Response("<!doctype html>", {
+        headers: {
+          "Content-Type": "text/html",
+          "Set-Cookie": `enil_web=${value}; Path=/; HttpOnly; ` +
+            `SameSite=Strict${expires}`,
+        },
+      });
     });
-    assert.equal(response.status, 303);
-    const cookie = response.headers.get("set-cookie").split(";")[0].split("=");
-    await response.body?.cancel();
-    await context.addCookies([{
-      name: cookie[0],
-      value: cookie[1],
-      url: h.base,
-      httpOnly: true,
-      sameSite: "Strict",
-    }]);
+    let page;
+    try {
+      page = await context.newPage();
+      const url = new URL(h.base);
+      url.port = String(fixture.addr.port);
+      await page.goto(url.href);
+      assert.deepEqual(
+        await page.evaluate(async () => (await fetch("/check")).json()),
+        { sent: !expires },
+      );
+    } finally {
+      await page?.close().catch(() => {});
+      await fixture.shutdown();
+    }
   }
   const context = await h.context({ locale: "en-US" });
   await signInContext(context);
   const page = await context.newPage();
   let sessions = 0, sockets = 0;
+  const startupHeaders = [];
   page.on("request", (request) => {
-    if (request.url() === `${h.base}/api/session`) sessions++;
+    if (request.url() === `${h.base}/api/session`) {
+      sessions++;
+      startupHeaders.push(request.allHeaders());
+    }
   });
   page.on("websocket", () => sockets++);
   await page.goto(h.base);
@@ -34,6 +101,15 @@ await runSuite("boot-rtt", async (h) => {
     sessions >= 1 && sessions <= (h.browserName === "chromium" ? 1 : 2),
   );
   assert.equal(sockets, 1);
+  const canInspectCookies = (await Promise.all(startupHeaders)).some((
+    headers,
+  ) => headers.cookie?.includes("enil_web="));
+  assert.ok(canInspectCookies || h.browserName === "webkit");
+  if (!canInspectCookies) {
+    // Connected startup proves the server received a valid cookie, even when
+    // WebKit does not expose it in Playwright's request headers.
+    console.log("  WebKit does not expose session Cookie headers");
+  }
   h.step("signed-in-startup");
 
   if (h.browserName === "chromium") {
@@ -95,13 +171,7 @@ await runSuite("boot-rtt", async (h) => {
   }
 
   const stale = await h.context({ locale: "en-US" });
-  await stale.addCookies([{
-    name: "enil_web",
-    value: "expired-or-rotated-cookie",
-    url: h.base,
-    httpOnly: true,
-    sameSite: "Strict",
-  }]);
+  await setCookieFromBrowser(stale, "expired-or-rotated-cookie");
   await stale.addInitScript(() => {
     globalThis.bootFlashes = [];
     new MutationObserver(() => {
@@ -146,9 +216,13 @@ await runSuite("boot-rtt", async (h) => {
   assert.deepEqual(await unsigned.json(), { signedIn: false });
   const stalePage = await stale.newPage();
   let staleSockets = 0, staleSessions = 0;
+  const staleHeaders = [];
   stalePage.on("websocket", () => staleSockets++);
   stalePage.on("request", (request) => {
-    if (request.url() === `${h.base}/api/session`) staleSessions++;
+    if (request.url() === `${h.base}/api/session`) {
+      staleSessions++;
+      if (canInspectCookies) staleHeaders.push(request.allHeaders());
+    }
   });
   await stalePage.goto(h.base);
   await stalePage.locator("#signin-screen").waitFor({ state: "visible" });
@@ -160,19 +234,23 @@ await runSuite("boot-rtt", async (h) => {
     staleSessions >= 1 &&
       staleSessions <= (h.browserName === "chromium" ? 1 : 2),
   );
+  if (canInspectCookies) {
+    assert.ok(
+      (await Promise.all(staleHeaders)).some((headers) =>
+        headers.cookie?.includes("enil_web=expired-or-rotated-cookie")
+      ),
+      "stale cookie must be sent with a session request",
+    );
+  }
   assert.deepEqual(await stalePage.evaluate(() => globalThis.bootFlashes), []);
   h.step("expired-cookie-rejected-without-socket-or-error-flash");
 
   const expired = await h.context({ locale: "en-US" });
-  await expired.addCookies([{
-    name: "enil_web",
-    value: "expired-cookie",
-    domain: new URL(h.base).hostname,
-    path: "/",
-    expires: Date.now() / 1000 - 60,
-    httpOnly: true,
-    sameSite: "Strict",
-  }]);
+  await setCookieFromBrowser(
+    expired,
+    "expired-cookie",
+    "; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+  );
   assert.deepEqual(await expired.cookies(h.base), []);
   const expiredPage = await expired.newPage();
   let expiredSockets = 0;
@@ -299,17 +377,22 @@ await runSuite("boot-rtt", async (h) => {
     localStorage.getItem("enil.web.drafts.v1")
   );
   assert.ok(savedDrafts?.includes("draft survives web expiry"));
-  await live.addCookies([{
-    name: "enil_web",
-    value: "cookie-from-previous-key",
-    url: h.base,
-    httpOnly: true,
-    sameSite: "Strict",
-  }]);
+  await setCookieFromBrowser(live, "cookie-from-previous-key");
+  const liveSession = canInspectCookies
+    ? livePage.waitForRequest(`${h.base}/api/session`)
+    : null;
   assert.deepEqual(
     await livePage.evaluate(async () => (await fetch("/api/session")).json()),
     { signedIn: false },
   );
+  if (liveSession) {
+    assert.ok(
+      (await (await liveSession).allHeaders()).cookie?.includes(
+        "enil_web=cookie-from-previous-key",
+      ),
+      "rotated cookie must be sent with a session request",
+    );
+  }
   await firstSocket.close({ code: 4001, reason: "connection lost" });
   const liveSignIn = livePage.getByRole("link", { name: "Sign in again" });
   await liveSignIn.waitFor({ state: "visible" });

@@ -72,7 +72,13 @@ export async function stateWire(h) {
     "enil-state-delta-v1",
   );
   const legacy = await context.newPage();
-  await legacy.goto(`${h.base}/api/session`);
+  // Use the real page origin, but stop the app from opening a second socket.
+  // Navigating to JSON instead triggers WebKit's styled JSON viewer.
+  await legacy.route(
+    "**/js/app.js",
+    (route) => route.fulfill({ contentType: "text/javascript", body: "" }),
+  );
+  await legacy.goto(h.base);
   await legacy.evaluate(() => {
     globalThis.__legacyFrames = [];
     globalThis.__legacySocket = new WebSocket(`ws://${location.host}/api/ws`);
