@@ -223,20 +223,39 @@ export async function messageWindow(h) {
   await atBottom();
   if (features.contentVisibility) {
     assert.equal(
-      await page.locator(".message-row").last().evaluate((node) =>
+      await page.locator(".message-row").first().evaluate((node) =>
         getComputedStyle(node).contentVisibility
       ),
       "auto",
     );
+    assert.equal(
+      await page.locator(".message-row").last().evaluate((node) =>
+        getComputedStyle(node).contentVisibility
+      ),
+      "visible",
+    );
   }
-  let beforeTrim;
+  let beforeTrim, maxBottom = 0, maxTailMove = 0;
   for (let i = 50; i < 750; i += 25) {
     if (i === 725) {
       beforeTrim = await page.locator(".message-row").last().evaluate((node) =>
         node.getBoundingClientRect().bottom
       );
-    }
-    await deliver(Array.from({ length: 25 }, (_, j) => row(i + j)));
+      for (let j = 0; j < 25; j++) {
+        await deliver([row(i + j)]);
+        await page.evaluate(() => new Promise(requestAnimationFrame));
+        const sample = await page.evaluate(() => {
+          const list = document.getElementById("messages");
+          const tail = list.querySelector(".message-row:last-child");
+          return {
+            bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
+            tail: tail.getBoundingClientRect().bottom,
+          };
+        });
+        maxBottom = Math.max(maxBottom, Math.abs(sample.bottom));
+        maxTailMove = Math.max(maxTailMove, Math.abs(sample.tail - beforeTrim));
+      }
+    } else await deliver(Array.from({ length: 25 }, (_, j) => row(i + j)));
   }
   await page.evaluate(() =>
     new Promise((resolve) =>
@@ -249,6 +268,11 @@ export async function messageWindow(h) {
   assert.equal(state.ids[0], row(250).id);
   assert.equal(state.noOlder, false);
   assert.ok(state.bottom <= 2, `bottom distance ${state.bottom}`);
+  assert.ok(maxBottom <= 2, `frame bottom distance ${maxBottom}`);
+  assert.ok(maxTailMove <= 2, `frame tail movement ${maxTailMove}`);
+  console.log(
+    `  trim frames: 25, max bottom ${maxBottom}px, tail ${maxTailMove}px`,
+  );
   const afterTrim = await page.locator(".message-row").last().evaluate((node) =>
     node.getBoundingClientRect().bottom
   );
@@ -432,7 +456,34 @@ export async function messageWindow(h) {
   );
   h.step("pending and acknowledged sends survive outside the limit");
 
+  await fixture();
+  await page.locator("#messages").evaluate((list) =>
+    list.focus({ preventScroll: true })
+  );
+  await page.keyboard.press("ArrowUp");
+  await page.evaluate(() => {
+    const grow = document.createElement("div");
+    grow.style.height = "180px";
+    document.querySelector(".message-row:last-child .bubble").append(grow);
+    globalThis.__windowGrow = grow;
+  });
+  await atBottom();
+  assert.ok((await current()).bottom <= 2);
+  await page.evaluate(() => globalThis.__windowGrow.style.height = "360px");
+  assert.ok((await current()).bottom > 2);
+  await fixtureMessage();
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  assert.ok((await current()).bottom <= 2);
+  assert.equal((await current()).ids.length, 500);
+  h.step("returning to bottom follows later deferred height changes");
+
   await fixture({ image: true, imageAt: 498 });
+  await page.locator('article[data-message-id="10000498"] img.media-image')
+    .evaluate((node) => node.decode());
   const selectedTail = await page.evaluate(() => {
     const text = document.querySelector(
       'article[data-message-id="10000499"] .message-text',
@@ -447,6 +498,7 @@ export async function messageWindow(h) {
     return getSelection().toString();
   });
   assert.ok(selectedTail.includes("Fixture 499"));
+  await atBottom();
   await fixtureMessage();
   await fixtureMessage();
   state = await current();

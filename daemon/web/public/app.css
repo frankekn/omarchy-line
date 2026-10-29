@@ -645,6 +645,10 @@ textarea::placeholder {
   gap: 9px;
   align-items: end;
 }
+/* Measure the incoming tail before scrolling to it. */
+.message-row:last-child {
+  content-visibility: visible;
+}
 .message-row.own {
   justify-content: flex-end;
 }
