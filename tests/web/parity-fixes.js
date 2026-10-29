@@ -156,7 +156,63 @@ export async function unreadBoundary(h) {
   h.step("unread-opening-boundary");
 }
 
+export async function chatPatchOrder(h) {
+  const context = await h.context({ locale: "en-US" });
+  const page = await context.newPage();
+  const tap = await tapSocket(page);
+  await h.signIn(page);
+  const state = await h.state();
+  const row = (mid, lastTime, extra = {}) => ({
+    mid,
+    name: `Chat ${mid}`,
+    lastTime,
+    unread: 0,
+    ...extra,
+  });
+  const rows = [
+    row("ca", 200),
+    row("cc", 200),
+    row("cb", 100),
+    row("cd", 50, { unread: 1 }),
+    row("ce", 400, { hidden: true }),
+  ];
+  let revision = Number(state.chatsRevision || 0) + 100;
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, chats: rows, chatsRevision: revision },
+  }));
+  await until(
+    async () => await page.locator(".chat-row").count() === 4,
+    "chats",
+  );
+  const focused = page.locator('[data-chat-id="ca"]');
+  await focused.focus();
+  await focused.evaluate((node) => globalThis.savedChatRow = node);
+  tap.socket.send(JSON.stringify({
+    chat: { ...rows[2], lastTime: 300, lastText: "new" },
+    chatsRevision: ++revision,
+    boot: state.bootId,
+  }));
+  await page.getByText("new", { exact: true }).waitFor();
+  const order = () =>
+    page.locator(".chat-row").evaluateAll((nodes) =>
+      nodes.map((node) => node.dataset.chatId)
+    );
+  assert.deepEqual(await order(), ["cd", "cb", "ca", "cc"]);
+  assert.equal(
+    await focused.evaluate((node) =>
+      node === globalThis.savedChatRow && node === document.activeElement
+    ),
+    true,
+  );
+  await page.locator("#search").fill("Chat");
+  assert.deepEqual(await order(), ["cd", "cb", "ca", "cc", "ce"]);
+  await context.close();
+  h.step("chat-patch-order-and-focus");
+}
+
 export async function parityFixes(h) {
   await syncAccount(h);
   await unreadBoundary(h);
+  await chatPatchOrder(h);
 }

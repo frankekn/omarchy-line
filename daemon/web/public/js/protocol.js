@@ -52,6 +52,7 @@ export function applyChatPush(snapshot, row, revision, boot) {
   const index = chats.findIndex((chat) => String(chat.mid) === String(row.mid));
   if (index < 0) chats.push(row);
   else chats[index] = row;
+  chats.sort((a, b) => (Number(b.lastTime) || 0) - (Number(a.lastTime) || 0));
   return {
     ...snapshot,
     chats,
