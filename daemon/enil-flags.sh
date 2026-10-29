@@ -3,7 +3,7 @@
 # `deno compile`, so the compiled binary and the source run can never drift.
 # permissions_test.ts boots daemon.ts with exactly this set.
 #
-# Sourced, not executed: it sets ENIL_STATE_DIR and ENIL_DENO_FLAGS.
+# Sourced, not executed: it sets ENIL_STATE_DIR, ENIL_DENO_FLAGS, IFS and -f.
 #
 #   --allow-net      Broad on purpose. LINE's hosts alone would do for talk and
 #                    push, but FLEX messages and link previews fetch images
@@ -40,8 +40,26 @@
 #                    NotCapable for a sys API under this set; if a dependency
 #                    ever needs one, permissions_test.ts fails with its name.
 ENIL_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/enil"
-ENIL_DENO_FLAGS="--allow-net \
---allow-read \
---allow-write=$ENIL_STATE_DIR \
---allow-run=dbus-monitor,wl-paste,ffmpegthumbnailer,ffmpeg,omarchy-shell,notify-send \
+# Both callers expand the flags as a shell word list. Split only on newlines
+# and disable globbing so spaces and metacharacters in the state path stay in
+# the one --allow-write argument. Refuse the shell separator and Deno's comma
+# separator in a path: either would split the permission into extra entries.
+case "$ENIL_STATE_DIR" in
+  *'
+'*)
+    echo "enil: state directory cannot contain a newline" >&2
+    return 1
+    ;;
+  *,*)
+    echo "enil: state directory cannot contain a comma" >&2
+    return 1
+    ;;
+esac
+IFS='
+'
+set -f
+ENIL_DENO_FLAGS="--allow-net
+--allow-read
+--allow-write=$ENIL_STATE_DIR
+--allow-run=dbus-monitor,wl-paste,ffmpegthumbnailer,ffmpeg,omarchy-shell,notify-send
 --allow-env=HOME,XDG_STATE_HOME,ENIL_DEVICE,ENIL_INCREMENTAL,ENIL_CHAT_LIMIT,ENIL_PUSH_STALE_MS,ENIL_REQUEST_TIMEOUT_MS,ENIL_WEB_ADDR,ENIL_WEB_KEY,Q_DEBUG,NODE_DEBUG"
