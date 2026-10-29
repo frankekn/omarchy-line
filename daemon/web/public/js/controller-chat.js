@@ -1,6 +1,6 @@
 // Chat navigation and history requests. Uses protocol projections and injected
 // view actions.
-import { firstUnreadIndex, mergeHistory } from "./protocol.js";
+import { applyEvent, firstUnreadIndex, mergeHistory } from "./protocol.js";
 export function createChatController(ctx) {
   const model = ctx.model;
   function markCurrentRead() {
@@ -74,9 +74,22 @@ export function createChatController(ctx) {
     ctx.showChatList();
     ctx.renderChats();
   }
+  function replayHistoryEvents() {
+    for (const { event, applied } of model.historyEvents) {
+      if (applied) {
+        model.messages = applyEvent(
+          model.messages,
+          event,
+          model.account,
+          model.readerCount,
+        );
+      } else ctx.applyEvent(event, false);
+    }
+  }
   async function loadHistory(chat, markRead, replaceLoading = false) {
-    const continuing = model.loading && model.active === chat;
-    if (continuing && !replaceLoading) return;
+    const sameChat = model.active === chat;
+    const continuing = sameChat && (model.loading || model.loadingOlder);
+    if (sameChat && model.loading && !replaceLoading) return;
     const generation = ++model.historyGeneration;
     model.loading = true;
     model.loadingOlder = false;
@@ -99,7 +112,7 @@ export function createChatController(ctx) {
         fresh,
         model.account,
       );
-      for (const event of model.historyEvents) ctx.applyEvent(event, false);
+      replayHistoryEvents();
       model.historyEvents = [];
       if (model.unreadMarkCount > 0) {
         const index = firstUnreadIndex(
@@ -115,7 +128,7 @@ export function createChatController(ctx) {
       model.noOlder = fresh.length < 50;
     } catch (error) {
       if (generation === model.historyGeneration && model.active === chat) {
-        for (const event of model.historyEvents) ctx.applyEvent(event, false);
+        replayHistoryEvents();
         model.historyEvents = [];
         ctx.displayError(error);
       }
@@ -134,6 +147,7 @@ export function createChatController(ctx) {
     if (!first) return;
     const chat = model.active, generation = model.historyGeneration;
     model.loadingOlder = true;
+    model.historyEvents = [];
     try {
       const rows = await ctx.command("history", {
         chat,
@@ -147,6 +161,16 @@ export function createChatController(ctx) {
       const fresh = Array.isArray(rows) ? rows : [];
       ctx.reconcilePending(chat, fresh);
       model.messages = mergeHistory(model.messages, fresh, model.account);
+      // Live events were already shown, but the older page may predate them.
+      // Project them again without repeating side effects such as markRead.
+      for (const { event } of model.historyEvents) {
+        model.messages = applyEvent(
+          model.messages,
+          event,
+          model.account,
+          model.readerCount,
+        );
+      }
       model.noOlder = fresh.length < 50;
       ctx.renderMessages("anchor");
     } catch (error) {
@@ -156,6 +180,7 @@ export function createChatController(ctx) {
     } finally {
       if (generation === model.historyGeneration && model.active === chat) {
         model.loadingOlder = false;
+        model.historyEvents = [];
       }
     }
   }

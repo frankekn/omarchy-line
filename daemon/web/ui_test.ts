@@ -22,6 +22,8 @@ import { mediaKind, sizeRefusal } from "./public/js/media-kind.js";
 import { uploadName } from "./files.ts";
 import { loadBlocks } from "../slice_test.ts";
 import { planKeyChanges } from "./public/js/keyed.js";
+import { createChatController } from "./public/js/controller-chat.js";
+import { createStateController } from "./public/js/controller-state.js";
 
 Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
   const examples = [
@@ -293,6 +295,123 @@ Deno.test("chat search uses the displayed name, sender and preview", () => {
   assertEquals(ids("fallback-id"), ["fallback-id"]);
   assertEquals(ids("first-id"), []);
   assertEquals(ids("alice"), ["first-id", "hidden"]);
+});
+
+Deno.test("events received during an older page update that page too", async () => {
+  type Row = { id: string; from: string; text: string; unsent?: boolean };
+  const model: Omit<ReturnType<typeof createModel>, "messages"> & {
+    messages: Row[];
+  } = { ...createModel(), messages: [] };
+  model.account = "me";
+  model.active = "c";
+  model.boot = "boot";
+  model.messages = [{ id: "500", from: "peer", text: "existing" }];
+  let resolvePage: (rows: object[]) => void = () => {};
+  let state: ReturnType<typeof createStateController>;
+  const ctx = {
+    model,
+    command: () => new Promise<object[]>((resolve) => resolvePage = resolve),
+    reconcilePending: () => {},
+    renderMessages: () => {},
+    isViewingChat: () => false,
+    applyEvent: (event: object, render: boolean) =>
+      state.applyEvent(event, render),
+  };
+  state = createStateController(ctx);
+  const chat = createChatController(ctx);
+  const loading = chat.loadOlder();
+  state.onFrame({
+    boot: "boot",
+    event: { seq: 1, kind: "unsend", chat: "c", messageId: "499" },
+  });
+  state.onFrame({
+    boot: "boot",
+    event: {
+      seq: 2,
+      kind: "edit",
+      chat: "c",
+      message: { id: "500", from: "peer", text: "edited" },
+    },
+  });
+  assertEquals(model.messages[0].text, "edited", "live changes stay immediate");
+  resolvePage([{ id: "499", from: "peer", text: "revoked" }]);
+  await loading;
+  const older = model.messages.find((m: { id: string }) => m.id === "499");
+  assertEquals(older?.unsent, true);
+  assertEquals(older?.text, "");
+  assertEquals(model.historyEvents, []);
+});
+
+Deno.test("replacement history retains older-page events without duplicate reads", async () => {
+  type Row = { id: string; from: string; text: string; unsent?: boolean };
+  const model: Omit<ReturnType<typeof createModel>, "messages"> & {
+    messages: Row[];
+  } = { ...createModel(), messages: [] };
+  model.account = "me";
+  model.active = "c";
+  model.boot = "boot";
+  model.messages = [{ id: "500", from: "peer", text: "original" }];
+  const requests: ((rows: Row[]) => void)[] = [];
+  let reads = 0;
+  const ctx = {
+    model,
+    command: (cmd: string) => {
+      if (cmd === "markRead") {
+        reads++;
+        return Promise.resolve([]);
+      }
+      return new Promise<Row[]>((resolve) => requests.push(resolve));
+    },
+    reconcilePending: () => {},
+    renderMessages: () => {},
+    displayError: (error: Error) => {
+      throw error;
+    },
+    isViewingChat: () => true,
+    applyEvent: (event: object, render: boolean) =>
+      state.applyEvent(event, render),
+  };
+  const state = createStateController(ctx), chat = createChatController(ctx);
+  const older = chat.loadOlder();
+  state.onFrame({
+    boot: "boot",
+    event: { seq: 1, kind: "unsend", chat: "c", messageId: "500" },
+  });
+  state.onFrame({
+    boot: "boot",
+    event: {
+      seq: 2,
+      kind: "message",
+      chat: "c",
+      message: { id: "501", from: "peer", text: "before sync" },
+    },
+  });
+  assertEquals(reads, 1);
+  const firstRefresh = chat.loadHistory("c", false, true);
+  state.onFrame({
+    boot: "boot",
+    event: {
+      seq: 3,
+      kind: "message",
+      chat: "c",
+      message: { id: "502", from: "peer", text: "during sync" },
+    },
+  });
+  const secondRefresh = chat.loadHistory("c", false, true);
+  assertEquals(requests.length, 3);
+  requests[1]([{ id: "stale", from: "peer", text: "stale refresh" }]);
+  await firstRefresh;
+  requests[2]([{ id: "500", from: "peer", text: "original" }]);
+  await secondRefresh;
+  assertEquals(model.messages.find((row) => row.id === "500")?.unsent, true);
+  assertEquals(model.messages.filter((row) => row.id === "501").length, 1);
+  assertEquals(model.messages.filter((row) => row.id === "502").length, 1);
+  assertEquals(reads, 2);
+  requests[0]([{ id: "499", from: "peer", text: "stale older" }]);
+  await older;
+  assertEquals(model.messages.some((row) => row.id === "499"), false);
+  assertEquals(model.messages.some((row) => row.id === "stale"), false);
+  assertEquals(model.historyEvents, []);
 });
 
 Deno.test("message deduplication and requestId sender boundary", () => {

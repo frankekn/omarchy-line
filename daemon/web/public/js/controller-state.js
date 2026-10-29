@@ -109,9 +109,12 @@ export function createStateController(ctx) {
     }
     if (chat !== model.active) return;
     if (model.loading) {
-      model.historyEvents.push(event);
+      model.historyEvents.push({ event, applied: false });
       return;
     }
+    // Keep live updates immediate while retaining them for an older page that
+    // may have been read before the event arrived.
+    if (model.loadingOlder) model.historyEvents.push({ event, applied: true });
     applyEvent(event);
   }
   function applyEvent(event, render = true) {
