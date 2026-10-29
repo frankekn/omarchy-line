@@ -101,14 +101,17 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const auth = await WebAuth.create(opts.key);
   const uploads = await Uploads.open(opts.stateDir);
   const feed = new StateFeed(`${opts.stateDir}/state.json`);
+  const connections = new Set<() => void>();
   const bridgeDeps = {
     sockPath: `${opts.stateDir}/sock`,
     eventsPath: `${opts.stateDir}/events.json`,
     feed,
     uploads,
+    connections,
   };
 
   async function handle(req: Request): Promise<Response> {
+    if (closed) return status(503);
     const url = new URL(req.url);
     const path = url.pathname;
     const get = req.method === "GET";
@@ -160,6 +163,7 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
     close() {
       if (closed) return;
       closed = true;
+      for (const close of connections) close();
       feed.close();
       uploads.close();
       log("[web] stopped");

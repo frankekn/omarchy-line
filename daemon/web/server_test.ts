@@ -5,6 +5,7 @@ import { sniffInline, uploadName } from "./files.ts";
 import { createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
+const TEST_PORT = Number(Deno.env.get("ENIL_WEB_TEST_PORT") ?? "0");
 
 async function fixture() {
   const stateDir = await Deno.makeTempDir({ prefix: "enil-web-" });
@@ -192,6 +193,7 @@ Deno.test("/api/file serves media and the QR, never storage.json", async () => {
 Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask", async () => {
   const { stateDir, web } = await fixture();
   const seen: string[] = [];
+  let daemonClosed = false;
   const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
   (async () => {
     for await (const conn of daemon) {
@@ -199,18 +201,22 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
         const lines = conn.readable.pipeThrough(new TextDecoderStream())
           .pipeThrough(new TextLineStream());
         const enc = new TextEncoder();
-        for await (const line of lines) {
-          seen.push(line);
-          const req = JSON.parse(line);
-          await conn.write(
-            enc.encode(JSON.stringify({ id: req.id, ok: true }) + "\n"),
-          );
+        try {
+          for await (const line of lines) {
+            seen.push(line);
+            const req = JSON.parse(line);
+            await conn.write(
+              enc.encode(JSON.stringify({ id: req.id, ok: true }) + "\n"),
+            );
+          }
+        } finally {
+          daemonClosed = true;
         }
       })().catch(() => {});
     }
   })().catch(() => {});
   const server = Deno.serve(
-    { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+    { hostname: "127.0.0.1", port: TEST_PORT, onListen: () => {} },
     (req) => web.handle(req),
   );
   try {
@@ -277,8 +283,14 @@ Deno.test("the WebSocket bridge relays, and refuses what a browser may not ask",
       () => Promise.reject(new Error("upload kept")),
       () => {},
     );
-    ws.close();
-    await new Promise((r) => ws.onclose = r);
+    const closed = new Promise<CloseEvent>((r) => ws.onclose = r);
+    web.close();
+    assertEquals((await closed).code, 1001);
+    assertEquals((await web.handle(get("/api/session"))).status, 503);
+    for (let i = 0; i < 100 && !daemonClosed; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    assert(daemonClosed);
   } finally {
     web.close();
     daemon.close();

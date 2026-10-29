@@ -100,6 +100,7 @@ export interface BridgeDeps {
   eventsPath: string;
   feed: StateFeed;
   uploads: Uploads;
+  connections: Set<() => void>;
 }
 
 /** Upgrade `req` and bridge it; the caller has already checked who it is. */
@@ -110,6 +111,7 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   const encoder = new TextEncoder();
   let conn: Deno.UnixConn | null = null;
   let closed = false;
+  const close = () => shut(1001, "server stopped");
   /** request id → uploaded file to remove once the daemon has answered. */
   const sentUploads = new Map<unknown, string>();
 
@@ -124,13 +126,18 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   const shut = (code: number, reason: string) => {
     if (closed) return;
     closed = true;
+    deps.connections.delete(close);
     deps.feed.delete(send);
     try {
       conn?.close();
     } catch { /* already closed */ }
     conn = null;
     // An upload whose send may still be reading it stays; the sweep takes it.
-    if (ws.readyState === WebSocket.OPEN) ws.close(code, reason);
+    if (ws.readyState < WebSocket.CLOSING) {
+      try {
+        ws.close(code, reason);
+      } catch { /* closed under us */ }
+    }
   };
   const refuse = (id: unknown, error: string) =>
     send(JSON.stringify({ id, ok: false, error }));
@@ -197,7 +204,15 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
 
   ws.onopen = async () => {
     try {
-      conn = await Deno.connect({ transport: "unix", path: deps.sockPath });
+      const connected = await Deno.connect({
+        transport: "unix",
+        path: deps.sockPath,
+      });
+      if (closed) {
+        connected.close();
+        return;
+      }
+      conn = connected;
     } catch {
       shut(CLOSE_DAEMON_OFFLINE, "daemon offline");
       return;
@@ -218,5 +233,6 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
   };
   ws.onclose = () => shut(1000, "");
   ws.onerror = () => shut(1011, "");
+  deps.connections.add(close);
   return response;
 }
