@@ -14,6 +14,10 @@ const browserName = Deno.env.get("ENIL_WEB_BROWSER") ?? "chromium";
 if (browserName !== "chromium" && browserName !== "webkit") {
   throw new Error("ENIL_WEB_BROWSER must be chromium or webkit");
 }
+const screenshotCspError =
+  "Refused to apply a stylesheet because its hash, its nonce, or " +
+  "'unsafe-inline' does not appear in the style-src directive of the " +
+  "Content Security Policy.";
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let activeCleanup;
 
@@ -144,7 +148,7 @@ export async function runSuite(name, suite) {
   const contexts = [];
   const errors = [];
   const dialogs = [];
-  let browser, browserLaunch;
+  let browser, browserLaunch, screenshotPage;
   let failed = false;
   let cleanupPromise;
   const cleanup = () =>
@@ -256,6 +260,13 @@ export async function runSuite(name, suite) {
               text ===
                 'Viewport argument key "interactive-widget" not recognized and ignored.'
             ) return;
+            // Playwright's WebKit screenshot inserts "body {}" to sync
+            // animations. Ignore only its exact CSP error during a failure
+            // screenshot; ordinary page errors still fail the suite.
+            if (
+              browserName === "webkit" && screenshotPage === page &&
+              text === screenshotCspError
+            ) return;
             errors.push(text);
           });
           page.on("pageerror", (error) => errors.push(error.message));
@@ -307,17 +318,6 @@ export async function runSuite(name, suite) {
       },
     };
     await suite(harness);
-    // Temporary CI probe: isolate whether Playwright's screenshot causes CSP.
-    if (browserName === "webkit" && name === "main") {
-      const page = contexts.flatMap((context) => context.pages()).find((page) =>
-        !page.isClosed()
-      );
-      if (page) {
-        console.log("  CSP probe: before Playwright screenshot");
-        await page.screenshot();
-        console.log("  CSP probe: after Playwright screenshot");
-      }
-    }
     assert.deepEqual(errors, [], "browser console and page errors");
     for (const context of contexts) await context.close();
     assert.deepEqual(errors, [], "browser console and page errors on close");
@@ -327,11 +327,13 @@ export async function runSuite(name, suite) {
     let index = 0;
     for (const context of contexts) {
       for (const page of context.pages()) {
-        console.log("  CSP probe: before failure screenshot");
-        await page.screenshot({ path: `${temp}/failure-${++index}.png` }).catch(
-          () => {},
-        );
-        console.log("  CSP probe: after failure screenshot");
+        screenshotPage = page;
+        try {
+          await page.screenshot({ path: `${temp}/failure-${++index}.png` })
+            .catch(() => {});
+        } finally {
+          screenshotPage = undefined;
+        }
       }
     }
     console.error(`FAIL ${name}: ${error.stack ?? error}`);
