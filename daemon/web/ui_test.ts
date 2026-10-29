@@ -309,7 +309,6 @@ Deno.test("events received during an older page update that page too", async () 
   model.boot = "boot";
   model.messages = [{ id: "500", from: "peer", text: "existing" }];
   let resolvePage: (rows: object[]) => void = () => {};
-  let state: ReturnType<typeof createStateController>;
   const ctx = {
     model,
     command: () => new Promise<object[]>((resolve) => resolvePage = resolve),
@@ -319,7 +318,7 @@ Deno.test("events received during an older page update that page too", async () 
     applyEvent: (event: object, render: boolean) =>
       state.applyEvent(event, render),
   };
-  state = createStateController(ctx);
+  const state = createStateController(ctx);
   const chat = createChatController(ctx);
   const loading = chat.loadOlder();
   state.onFrame({
