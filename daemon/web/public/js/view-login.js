@@ -5,6 +5,7 @@ import { $, el, fileUrl, setAvatar } from "./dom.js";
 export function createLoginView(ctx) {
   const model = ctx.model, t = ctx.t;
   let noticeSignature = "";
+  let syncGeneration = 0, syncAccount = model.account;
   function toast(message) {
     $("toast").textContent = String(message || t("genericError"));
     $("toast").hidden = false;
@@ -66,12 +67,14 @@ export function createLoginView(ctx) {
   }
   async function syncNow() {
     if (model.syncing) return;
+    const generation = ++syncGeneration, account = model.account;
     model.syncing = true;
     $("sync").disabled = true;
     $("sync").textContent = t("syncing");
     renderNotices();
     try {
       const data = await ctx.command("sync");
+      if (generation !== syncGeneration || account !== model.account) return;
       const at = Number(data?.at) || Date.now();
       toast(`${t("synced")} ${
         new Date(at).toLocaleTimeString([], {
@@ -83,13 +86,20 @@ export function createLoginView(ctx) {
         ctx.loadHistory(model.active, ctx.isViewingChat(), true);
       }
     } catch (error) {
-      displayError(error);
+      if (generation === syncGeneration && account === model.account) {
+        displayError(error);
+      }
     } finally {
-      model.syncing = false;
-      $("sync").disabled = false;
-      $("sync").textContent = t("sync");
-      renderNotices();
+      if (generation === syncGeneration && account === model.account) {
+        resetSync();
+      }
     }
+  }
+  function resetSync() {
+    model.syncing = false;
+    $("sync").disabled = false;
+    $("sync").textContent = t("sync");
+    renderNotices();
   }
   function connectionStatus(status) {
     $("connection-text").textContent = t(status);
@@ -122,6 +132,11 @@ export function createLoginView(ctx) {
     $("login-pin").textContent = String(login.pin || "");
   }
   function renderAccount(me, account) {
+    if (account !== syncAccount) {
+      syncAccount = account;
+      syncGeneration++;
+      if (model.syncing) resetSync();
+    }
     const name = String(me?.displayName || account);
     if ($("account-name").textContent !== name) {
       $("account-name").textContent = name;
