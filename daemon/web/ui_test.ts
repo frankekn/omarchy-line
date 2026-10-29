@@ -26,6 +26,38 @@ import { createChatController } from "./public/js/controller-chat.js";
 import { createStateController } from "./public/js/controller-state.js";
 import { createSendController } from "./public/js/controller-send.js";
 import { createComposerController } from "./public/js/controller-composer.js";
+import { putPreview } from "./public/js/preview-cache.js";
+
+Deno.test("preview cache caps entries, protects visible images and retries later", () => {
+  const cache = new Map<string, string>();
+  for (let i = 0; i < 2000; i++) {
+    assertEquals(putPreview(cache, `id-${i}`, `path-${i}`, new Set()), true);
+  }
+  assertEquals(
+    putPreview(cache, "new", "", new Set(["id-0", "id-1999"])),
+    true,
+  );
+  assertEquals(cache.size, 2000);
+  assertEquals(cache.has("id-0"), true);
+  assertEquals(cache.has("id-1"), false);
+  assertEquals(cache.get("new"), "");
+  const before = [...cache];
+  assertEquals(
+    putPreview(cache, "blocked", "path", new Set(cache.keys())),
+    false,
+  );
+  assertEquals([...cache], before);
+  assertEquals(
+    putPreview(cache, "id-0", "updated", new Set(cache.keys())),
+    true,
+  );
+  assertEquals(cache.size, 2000);
+  assertEquals(cache.get("id-0"), "updated");
+  assertEquals(putPreview(cache, "blocked", "path", new Set(["id-0"])), true);
+  assertEquals(cache.size, 2000);
+  assertEquals(cache.get("blocked"), "path");
+  assertEquals(cache.get("id-0"), "updated");
+});
 
 Deno.test("keyed changes keep the largest ordered set of existing rows", () => {
   const examples = [
@@ -447,6 +479,48 @@ Deno.test("a reopened chat ignores an older members response", async () => {
   responses[0]([{ mid: "old", name: "Old" }]);
   await Promise.resolve();
   assertEquals(model.members, [{ mid: "new", name: "New" }]);
+});
+
+Deno.test("a reopened chat ignores stale preview replies and keeps its new request", async () => {
+  const model = createModel();
+  model.account = "me";
+  const replies: ((data: { path: string }) => void)[] = [];
+  const ctx = {
+    model,
+    command: (cmd: string) =>
+      cmd === "preview"
+        ? new Promise<{ path: string }>((resolve) => replies.push(resolve))
+        : Promise.resolve([]),
+    saveComposer: () => {},
+    closeStickerPicker: () => {},
+    showChat: () => {},
+    restoreComposer: () => {},
+    renderActiveHeader: () => {},
+    renderChats: () => {},
+    renderMessages: () => {},
+    focusComposer: () => {},
+    updateMentionPicker: () => {},
+    reconcilePending: () => {},
+    displayError: () => {},
+  };
+  const chat = createChatController(ctx);
+  chat.openChat("c1");
+  chat.requestPreview("same-id", "c1");
+  chat.openChat("c2");
+  chat.openChat("c1");
+  chat.requestPreview("same-id", "c1");
+  assertEquals(replies.length, 2);
+  replies[0]({ path: "old" });
+  await Promise.resolve();
+  await Promise.resolve();
+  assertEquals(model.previews.has("same-id"), false);
+  assertEquals(model.previewPending.has("same-id"), true);
+  replies[1]({ path: "new" });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assertEquals(model.previews.get("same-id"), "new");
+  assertEquals(model.previewPending.has("same-id"), false);
 });
 
 Deno.test("background markRead failures only write a debug line", async () => {

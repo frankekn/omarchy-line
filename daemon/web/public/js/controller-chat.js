@@ -1,6 +1,7 @@
 // Chat navigation and history requests. Uses protocol projections and injected
 // view actions.
 import { applyEvent, firstUnreadIndex, mergeHistory } from "./protocol.js";
+import { PREVIEW_CACHE_MAX, putPreview } from "./preview-cache.js";
 export function createChatController(ctx) {
   const model = ctx.model;
   let membersGeneration = 0;
@@ -211,17 +212,27 @@ export function createChatController(ctx) {
   }
   function requestPreview(id, chat) {
     if (!id || model.previewPending.has(id) || model.previews.has(id)) return;
+    const generation = membersGeneration, account = model.account;
     model.previewPending.add(id);
-    ctx.command("preview", { chat, messageId: id }).then((data) => {
-      if (model.active !== chat) return;
-      model.previews.set(id, data?.path ? String(data.path) : "");
-      ctx.renderMessages("preserve");
-    }).catch(() => {
-      if (model.active === chat) {
-        model.previews.set(id, "");
-        ctx.renderMessages("preserve");
+    function remember(path) {
+      if (
+        generation !== membersGeneration || model.active !== chat ||
+        model.account !== account
+      ) return;
+      const visible = model.previews.size >= PREVIEW_CACHE_MAX
+        ? ctx.visiblePreviewIds()
+        : new Set();
+      if (!putPreview(model.previews, id, path, visible)) {
+        ctx.deferPreview(id, chat);
+        return;
       }
-    }).finally(() => model.previewPending.delete(id));
+      ctx.renderMessages("preserve");
+    }
+    ctx.command("preview", { chat, messageId: id }).then((data) => {
+      remember(data?.path ? String(data.path) : "");
+    }).catch(() => remember("")).finally(() => {
+      if (generation === membersGeneration) model.previewPending.delete(id);
+    });
   }
   return {
     markCurrentRead,

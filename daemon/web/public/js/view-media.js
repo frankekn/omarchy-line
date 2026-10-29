@@ -414,6 +414,38 @@ export function createMediaView(ctx) {
       ctx.requestPreview(id, chat);
     }
   }, { root: $("messages"), rootMargin: "400px 0px" });
+  const deferredPreviews = new Map();
+  function visiblePreviewIds() {
+    const list = $("messages"), area = list.getBoundingClientRect();
+    const visible = new Set();
+    for (const image of list.querySelectorAll(".message-row img.media-image")) {
+      const rect = image.getBoundingClientRect();
+      if (
+        rect.width > 0 && rect.height > 0 && rect.bottom > area.top &&
+        rect.top < area.bottom && rect.right > area.left &&
+        rect.left < area.right
+      ) {
+        const id = image.closest(".message-row")?.dataset.messageId;
+        if (id) visible.add(id);
+      }
+    }
+    return visible;
+  }
+  function deferPreview(id, chat) {
+    deferredPreviews.set(id, chat);
+  }
+  function retryDeferredPreviews() {
+    if (!deferredPreviews.size) return;
+    for (const node of $("messages").querySelectorAll(".media-placeholder")) {
+      const id = node.dataset.messageId, chat = node.dataset.chat;
+      if (deferredPreviews.get(id) !== chat || chat !== model.active) continue;
+      deferredPreviews.delete(id);
+      previewObserver.observe(node);
+    }
+  }
+  $("messages").addEventListener("scroll", retryDeferredPreviews);
+  globalThis.addEventListener("resize", retryDeferredPreviews);
+  globalThis.visualViewport?.addEventListener("resize", retryDeferredPreviews);
   function addMedia(bubble, message, chat) {
     const type = String(message.contentType || "");
     const state = message.mediaState || "ok";
@@ -505,7 +537,14 @@ export function createMediaView(ctx) {
   function unobservePreviews(row) {
     for (const node of row.querySelectorAll(".media-placeholder")) {
       previewObserver.unobserve(node);
+      deferredPreviews.delete(node.dataset.messageId);
     }
   }
-  return { addMedia, unobservePreviews, refreshLightbox };
+  return {
+    addMedia,
+    unobservePreviews,
+    refreshLightbox,
+    visiblePreviewIds,
+    deferPreview,
+  };
 }
