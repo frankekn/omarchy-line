@@ -11,7 +11,7 @@ export function createChatController(ctx) {
     );
     if (latest) {
       ctx.command("markRead", { chat: model.active, upTo: String(latest.id) })
-        .catch(() => {});
+        .catch(() => console.debug("[markRead] failed"));
     }
   }
   function closeChat() {

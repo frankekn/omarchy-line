@@ -146,7 +146,7 @@ export function createStateController(ctx) {
       ctx.command("markRead", {
         chat: model.active,
         upTo: String(event.message.id),
-      }).catch(() => {});
+      }).catch(() => console.debug("[markRead] failed"));
     }
     if (render) ctx.renderMessages("follow");
   }

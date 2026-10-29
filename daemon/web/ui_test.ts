@@ -449,6 +449,39 @@ Deno.test("a reopened chat ignores an older members response", async () => {
   assertEquals(model.members, [{ mid: "new", name: "New" }]);
 });
 
+Deno.test("background markRead failures only write a debug line", async () => {
+  const model = createModel();
+  model.account = "me";
+  model.active = "c";
+  model.boot = "boot";
+  const lines: string[] = [], original = console.debug;
+  console.debug = (...values: unknown[]) => lines.push(values.join(" "));
+  try {
+    const ctx = {
+      model,
+      isViewingChat: () => true,
+      command: () => Promise.reject(new Error("read failure")),
+      renderMessages: () => {},
+    };
+    const state = createStateController(ctx), chat = createChatController(ctx);
+    state.onFrame({
+      boot: "boot",
+      event: {
+        seq: 1,
+        kind: "message",
+        chat: "c",
+        message: { id: "1", from: "peer", text: "hello" },
+      },
+    });
+    await Promise.resolve();
+    chat.markCurrentRead();
+    await Promise.resolve();
+    assertEquals(lines, ["[markRead] failed", "[markRead] failed"]);
+  } finally {
+    console.debug = original;
+  }
+});
+
 Deno.test("message deduplication and requestId sender boundary", () => {
   const pending = {
     id: "local",
