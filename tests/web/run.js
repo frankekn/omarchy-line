@@ -8,6 +8,7 @@ import { account } from "./account.js";
 import { read } from "./read.js";
 import { reconcile } from "./reconcile.js";
 import { parity } from "./parity.js";
+import { review } from "./review.js";
 
 const suites = {
   main,
@@ -18,6 +19,7 @@ const suites = {
   read,
   reconcile,
   parity,
+  review,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {
