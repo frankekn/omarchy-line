@@ -393,6 +393,7 @@ export function createMessagesView(ctx) {
     return false;
   }
   function releaseSelectionVisibility() {
+    if (!selectionVisibility.size) return;
     const selection = globalThis.getSelection();
     for (const [row, previous] of selectionVisibility) {
       if (selectionIncludes(row, selection)) continue;
