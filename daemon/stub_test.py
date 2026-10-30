@@ -1764,6 +1764,14 @@ class HiddenTest(unittest.TestCase):
                     {"ok": False, "error": "沒有指定是哪一間聊天室",
                      "id": res["id"]}, res)
 
+    def test_an_id_no_chat_can_have_is_refused_like_history(self):
+        for cmd in ("hide", "unhide"):
+            for chat in ("u" + "x" * 128, "../c", "c d"):
+                res = self.s.call(cmd=cmd, chat=chat)
+                self.assertEqual(
+                    {"ok": False, "error": "不支援的聊天室",
+                     "id": res["id"]}, res)
+
     def test_a_mid_that_is_not_a_string_is_read_the_daemon_s_way(self):
         # daemon.ts reads it as String(req.chat ?? ""): only null (or nothing
         # at all) means "not given" -- every other value is a mid, spelled out

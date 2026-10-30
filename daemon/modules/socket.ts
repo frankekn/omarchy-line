@@ -74,6 +74,7 @@ import {
   chats,
   chatSummaryStore,
   dirtyMids,
+  isChatMid,
   login,
   me,
   pushEvent,
@@ -323,6 +324,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
   if (cmd === "hide" || cmd === "unhide") {
     const mid = String(req.chat ?? "");
     if (!mid) return { ok: false, error: "沒有指定是哪一間聊天室" };
+    // Same rule as history: each id is kept in memory and in hidden.json, so
+    // an id no chat can have must not get there.
+    if (!isChatMid(mid)) return { ok: false, error: "不支援的聊天室" };
     // Nothing moved: the file on disk already says this, and state.json is
     // already stamped from the same set.
     if (!setHidden(mid, cmd === "hide")) return { ok: true };
@@ -364,7 +368,7 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     const chatMid = String(req.chat ?? "");
     // The id is a path segment in the message store and a mid on the wire;
     // anything else is no chat this daemon could have.
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(chatMid)) {
+    if (!isChatMid(chatMid)) {
       return { ok: false, error: "不支援的聊天室" };
     }
     const count = historyCount(req.count);

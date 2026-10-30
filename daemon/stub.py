@@ -1465,6 +1465,8 @@ def handle(req):
         mid = "" if mid is None else str(mid)
         if not mid:
             return {"ok": False, "error": "沒有指定是哪一間聊天室"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", mid):
+            return {"ok": False, "error": "不支援的聊天室"}
         with lock:
             was = mid in hidden
             if cmd == "hide":

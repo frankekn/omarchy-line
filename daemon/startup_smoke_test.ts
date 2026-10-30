@@ -13,6 +13,9 @@
  * dependency that starts needing a permission the set lacks fails here with
  * the NotCapable text instead of in the user's journal.
  *
+ * The same boot also drives one socket command end to end: `hide` writes
+ * hidden.json, and only a real daemon shows that a refused id writes nothing.
+ *
  *   deno test -A startup_smoke_test.ts
  */
 import { assert, assertEquals } from "@std/assert";
@@ -145,4 +148,75 @@ Deno.test("daemon boots to idle against an empty state dir and stops clean", asy
   assertEquals(state.events, undefined);
 
   await Deno.remove(stateHome, { recursive: true }).catch(() => {});
+});
+
+Deno.test("hide refuses a 1 MiB chat id and writes nothing", async () => {
+  const stateHome = await Deno.makeTempDir({ prefix: "enil-smoke-hide-" });
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      ...await daemonPermissionFlags(stateHome),
+      new URL("./daemon.ts", import.meta.url).pathname,
+    ],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "null",
+    // An operator's ENIL_WEB_ADDR must not start a web server here.
+    env: { XDG_STATE_HOME: stateHome, ENIL_WEB_ADDR: "" },
+  }).spawn();
+  const out = lineReader(child.stdout);
+  let conn: Deno.UnixConn | undefined;
+  try {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      assert(Date.now() < deadline, "daemon never printed its startup banner");
+      const line = await out.read(5_000);
+      if (line?.startsWith("enil: ")) break;
+    }
+    conn = await Deno.connect({
+      transport: "unix",
+      path: `${stateHome}/enil/sock`,
+    });
+    const replies = lineReader(conn.readable);
+    const encoder = new TextEncoder();
+    const ask = async (id: number, chat: string) => {
+      const bytes = encoder.encode(
+        JSON.stringify({ id, cmd: "hide", chat }) + "\n",
+      );
+      let off = 0;
+      while (off < bytes.length) off += await conn!.write(bytes.subarray(off));
+      for (;;) {
+        const line = await replies.read(10_000);
+        assert(line !== null, `no reply to request ${id}`);
+        const reply = JSON.parse(line);
+        if (reply.id === id) return reply;
+      }
+    };
+    const hiddenPath = `${stateHome}/enil/hidden.json`;
+    const exists = () =>
+      Deno.stat(hiddenPath).then(() => true).catch(() => false);
+
+    // Under the daemon's 1 MiB line cap, so the command itself must refuse.
+    const huge = "u" + "x".repeat(1024 * 1024 - 64);
+    assertEquals(await ask(1, huge), {
+      id: 1,
+      ok: false,
+      error: "不支援的聊天室",
+    });
+    assertEquals(await exists(), false, "a refused id reached hidden.json");
+
+    // The same path still writes a real id, so the check above is not vacuous.
+    assertEquals((await ask(2, "cgroup")).ok, true);
+    assertEquals(JSON.parse(await Deno.readTextFile(hiddenPath)), {
+      mids: ["cgroup"],
+    });
+  } finally {
+    try {
+      conn?.close();
+    } catch { /* already closed */ }
+    child.kill("SIGTERM");
+    await child.status;
+    while (await out.read(1_000) !== null) { /* drain to EOF */ }
+    await Deno.remove(stateHome, { recursive: true }).catch(() => {});
+  }
 });
