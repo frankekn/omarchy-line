@@ -63,6 +63,8 @@ daemon connects to its own socket. These are different from the panel:
   or one hour in total.
 - The clipboard commands are refused. They read the daemon machine's
   clipboard, not the browser's. Paste an image into the page instead.
+- The WebSocket forwards only the commands the page itself sends. It refuses
+  other daemon commands.
 - The page can read only the media cache and the login QR. This boundary
   assumes the state directory is not being changed by an untrusted local
   process. A program running as the daemon's user can already read

@@ -1356,3 +1356,90 @@ Deno.test("an upload is claimed by one sendFile across connections", async () =>
     await Deno.remove(stateDir, { recursive: true });
   }
 });
+
+Deno.test("the bridge forwards only the commands the page sends", async () => {
+  const { stateDir, web, server, addr } = await served();
+  const seen: string[] = [];
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const peers: Deno.UnixConn[] = [];
+  const accept = (async () => {
+    for await (const conn of daemon) {
+      peers.push(conn);
+      (async () => {
+        const lines = conn.readable.pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextLineStream());
+        const enc = new TextEncoder();
+        for await (const line of lines) {
+          const req = JSON.parse(line);
+          seen.push(req.cmd);
+          await conn.write(
+            enc.encode(JSON.stringify({ id: req.id, ok: true }) + "\n"),
+          );
+        }
+      })().catch(() => {});
+    }
+  })().catch(() => {});
+  let ws: WebSocket | undefined;
+  try {
+    const cookie = await signedInCookie(web, addr);
+    const port = server.addr.port;
+    ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+      headers: { cookie, origin: `http://127.0.0.1:${port}` },
+    });
+    const frames: Record<string, unknown>[] = [];
+    ws.onmessage = (ev) => frames.push(JSON.parse(ev.data));
+    await new Promise((r) => ws!.onopen = r);
+    // Every command in public/js. sendFile is left out: it needs an upload,
+    // and its own tests cover it.
+    const page = [
+      "download",
+      "hide",
+      "history",
+      "login",
+      "logout",
+      "markRead",
+      "members",
+      "preview",
+      "react",
+      "reply",
+      "send",
+      "sendSticker",
+      "stickers",
+      "sync",
+      "unhide",
+      "unsend",
+    ];
+    // Real daemon commands the page never sends, and one it does not know.
+    const other = ["image", "poke", "readFile", "toString"];
+    const all = [...other, ...page];
+    all.forEach((cmd, id) => ws!.send(JSON.stringify({ id, cmd, chat: "c" })));
+    for (
+      let i = 0;
+      i < 200 && frames.filter((f) => "id" in f).length <
+        all.length;
+      i++
+    ) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    for (const [id, cmd] of other.entries()) {
+      assertEquals(frames.find((f) => f.id === id), {
+        id,
+        ok: false,
+        error: "網頁版不支援這個指令",
+      }, cmd);
+    }
+    assertEquals(seen, page);
+  } finally {
+    web.close();
+    if (ws?.readyState === WebSocket.OPEN) ws.close();
+    daemon.close();
+    await accept;
+    for (const peer of peers) {
+      try {
+        peer.close();
+      } catch { /* already closed */ }
+    }
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});

@@ -11,9 +11,10 @@
  *   {"web":"events","events":<events.json>} on connect, when the file exists
  * Close code 4001 means the daemon is not there; the page reconnects.
  *
- * What the bridge refuses: the clipboard commands (they read the daemon
- * host's clipboard, not the browser's), a sendFile whose path is not an
- * upload this server stored, and a second sendFile of the same upload.
+ * What the bridge refuses: any command the page does not send, the
+ * clipboard commands (they read the daemon host's clipboard, not the
+ * browser's), a sendFile whose path is not an upload this server stored,
+ * and a second sendFile of the same upload.
  *
  * Dependency direction: imports ./files.ts for the upload check.
  */
@@ -33,7 +34,31 @@ export const CLOSE_DAEMON_OFFLINE = 4001;
 const CLOSE_TOO_SLOW = 4002;
 const CLOSE_BAD_FRAME = 4003;
 const CLOSE_INBOUND_OVERLOAD = 4004;
-const REFUSED_CMDS = new Set([
+/**
+ * The commands the page sends (public/js), and no others: a command the
+ * daemon gains later, such as one that takes a path, stays closed to the
+ * browser until it is added here.
+ */
+const ALLOWED_CMDS = new Set([
+  "download",
+  "hide",
+  "history",
+  "login",
+  "logout",
+  "markRead",
+  "members",
+  "preview",
+  "react",
+  "reply",
+  "send",
+  "sendFile",
+  "sendSticker",
+  "stickers",
+  "sync",
+  "unhide",
+  "unsend",
+]);
+const CLIPBOARD_CMDS = new Set([
   "probeClipboardImage",
   "sendClipboardImage",
   "discardClipboardImage",
@@ -370,9 +395,10 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
       shut(CLOSE_INBOUND_OVERLOAD, "duplicate or too many requests");
       return;
     }
-    if (REFUSED_CMDS.has(cmd)) {
+    if (CLIPBOARD_CMDS.has(cmd)) {
       return refuse(req.id, "網頁版不能使用這台主機的剪貼簿");
     }
+    if (!ALLOWED_CMDS.has(cmd)) return refuse(req.id, "網頁版不支援這個指令");
     if (cmd === "sendFile") {
       const real = await deps.uploads.owned(req.path);
       if (!real) return refuse(req.id, "只能傳送從網頁上傳的檔案");
