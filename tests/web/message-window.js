@@ -69,8 +69,708 @@ async function reactDuringEmptyPage(h) {
   h.step("empty older page keeps React stable during pointer and touch input");
 }
 
+async function scrollFollow(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const appUrl = new URL("../../daemon/web/public/js/app.js", import.meta.url);
+  let app = await Deno.readTextFile(appUrl);
+  for (
+    const [old, replacement] of [
+      [
+        "  model = createModel();",
+        "  model = createModel();\nglobalThis.__followModel = model;",
+      ],
+      ["ctx = finish();", "ctx = finish();\nglobalThis.__followCtx = ctx;"],
+    ]
+  ) {
+    assert.equal(app.split(old).length, 2);
+    app = app.replace(old, replacement);
+  }
+  await context.route(
+    "**/js/app.js",
+    (route) => route.fulfill({ contentType: "text/javascript", body: app }),
+  );
+  const page = await context.newPage();
+  const now = Date.now();
+  const messages = Array.from({ length: 30 }, (_, i) => ({
+    id: String(100 + i),
+    chat: CHAT,
+    from: "u-window-peer",
+    fromName: "Peer",
+    time: now + i * 1000,
+    text: `Follow message ${i}`,
+    contentType: "NONE",
+    ...(i === 29
+      ? { replyTo: { id: "100", fromName: "Peer", text: "origin" } }
+      : {}),
+  }));
+  const requests = [];
+  await tapSocket(page, {
+    client(frame, connection) {
+      if (frame.cmd === "markRead") {
+        connection.socket.send(JSON.stringify({ id: frame.id, ok: true }));
+        return false;
+      }
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      requests.push(frame);
+      connection.socket.send(JSON.stringify({
+        id: frame.id,
+        ok: true,
+        data: frame.before ? [] : messages,
+      }));
+      return false;
+    },
+  });
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.getByText("Follow message 29", { exact: true }).waitFor();
+
+  async function stableBottom() {
+    await page.locator("#messages").evaluate((list) => {
+      list.scrollTop = list.scrollHeight;
+      list.__followTest = { height: 0, stable: 0 };
+    });
+    await page.waitForFunction(
+      () => {
+        const list = document.getElementById("messages"),
+          state = list.__followTest;
+        const height = list.scrollHeight;
+        const bottom = height - list.clientHeight - list.scrollTop;
+        if (Math.abs(bottom) > 2) list.scrollTop = height;
+        state.stable = height === state.height && Math.abs(bottom) <= 2
+          ? state.stable + 1
+          : 0;
+        state.height = height;
+        if (state.stable < 3) return false;
+        delete list.__followTest;
+        return true;
+      },
+      null,
+      { polling: "raf" },
+    );
+  }
+
+  for (const motion of ["no-preference", "reduce"]) {
+    await page.emulateMedia({ reducedMotion: motion });
+    await stableBottom();
+    const before = requests.length;
+    await page.locator('article[data-message-id="129"] .quote').click();
+    await page.waitForFunction(
+      () => document.getElementById("messages").scrollTop < 150,
+      null,
+      { timeout: 5000 },
+    );
+    await page.waitForTimeout(300);
+    assert.equal(
+      requests.length,
+      before,
+      `${motion} quote paged automatically`,
+    );
+  }
+  h.step("quote jumps from a stable bottom with and without reduced motion");
+
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await stableBottom();
+  await page.locator('article[data-message-id="129"] .quote').evaluate((
+    quote,
+  ) => {
+    quote.addEventListener("click", () => {
+      const model = globalThis.__followModel;
+      globalThis.__followCtx.onFrame({
+        boot: model.boot,
+        event: {
+          seq: model.seq + 1,
+          kind: "message",
+          chat: model.active,
+          message: {
+            id: "130",
+            chat: model.active,
+            from: model.account,
+            time: Date.now() + 60000,
+            text: "Incoming during quote jump",
+            contentType: "NONE",
+          },
+        },
+      });
+    }, { once: true });
+  });
+  await page.locator('article[data-message-id="129"] .quote').click();
+  await page.getByText("Incoming during quote jump").waitFor();
+  await page.waitForFunction(
+    () => document.getElementById("messages").scrollTop < 150,
+    null,
+    { timeout: 5000 },
+  );
+  h.step("an incoming message does not interrupt a quote jump");
+
+  await page.evaluate(() => {
+    const list = document.getElementById("messages");
+    globalThis.__followLastScroll = performance.now();
+    list.addEventListener("scroll", () => {
+      globalThis.__followLastScroll = performance.now();
+    });
+    globalThis.__blockFollowScrollEnd = (event) => {
+      if (event.target === list) event.stopImmediatePropagation();
+    };
+    globalThis.addEventListener(
+      "scrollend",
+      globalThis.__blockFollowScrollEnd,
+      true,
+    );
+  });
+  await stableBottom();
+  await page.locator('article[data-message-id="129"] .quote').click();
+  await page.waitForFunction(
+    () => document.getElementById("messages").scrollTop < 150,
+    null,
+    { timeout: 5000 },
+  );
+  await page.waitForFunction(() =>
+    performance.now() - globalThis.__followLastScroll > 300
+  );
+  await stableBottom();
+  await page.waitForFunction(() =>
+    performance.now() - globalThis.__followLastScroll > 300
+  );
+  await page.evaluate(() => {
+    const model = globalThis.__followModel;
+    globalThis.__followCtx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: {
+          id: "131",
+          chat: model.active,
+          from: model.account,
+          time: Date.now() + 120000,
+          text: "Follow after quote fallback",
+          contentType: "NONE",
+        },
+      },
+    });
+  });
+  await page.getByText("Follow after quote fallback").waitFor();
+  await page.waitForFunction(() => {
+    const list = document.getElementById("messages");
+    return list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+  });
+  h.step("quote following resumes without scrollend support");
+
+  await stableBottom();
+  await page.locator("#messages").evaluate((list) => {
+    list.style.overflowAnchor = "none";
+    const descriptor = Object.getOwnPropertyDescriptor(
+      Element.prototype,
+      "scrollTop",
+    );
+    const trace = globalThis.__followTouch = {
+      active: false,
+      starts: 0,
+      ends: 0,
+      writes: [],
+    };
+    list.addEventListener("touchstart", () => {
+      trace.active = true;
+      trace.starts++;
+    }, true);
+    for (const type of ["touchend", "touchcancel"]) {
+      list.addEventListener(type, () => {
+        trace.active = false;
+        trace.ends++;
+      }, true);
+    }
+    Object.defineProperty(list, "scrollTop", {
+      configurable: true,
+      get() {
+        return descriptor.get.call(this);
+      },
+      set(value) {
+        trace.writes.push({ active: trace.active, value });
+        descriptor.set.call(this, value);
+      },
+    });
+    list.addEventListener("touchstart", () => {
+      const grow = document.createElement("div");
+      grow.style.height = "87px";
+      list.querySelector(".message-row:last-child .bubble").append(grow);
+      globalThis.__followGrow = grow;
+    }, { once: true });
+  });
+  const box = await page.locator("#messages").boundingBox();
+  await page.touchscreen.tap(box.x + box.width - 5, box.y + box.height / 2);
+  await page.waitForFunction(
+    () => {
+      const list = document.getElementById("messages");
+      return list.scrollHeight - list.clientHeight - list.scrollTop <= 2 &&
+        globalThis.__followTouch.writes.some((entry) => !entry.active);
+    },
+    null,
+    { timeout: 5000 },
+  );
+  const tapped = await page.evaluate(() => globalThis.__followTouch);
+  assert.equal(tapped.starts, 1);
+  assert.equal(tapped.ends, 1);
+  assert.deepEqual(tapped.writes.filter((entry) => entry.active), []);
+  await page.evaluate(() => {
+    globalThis.removeEventListener(
+      "scrollend",
+      globalThis.__blockFollowScrollEnd,
+      true,
+    );
+    globalThis.__followGrow.remove();
+  });
+  h.step("touch release settles delayed growth without scrollend support");
+
+  if (h.browserName === "chromium") {
+    await stableBottom();
+    await page.locator('article[data-message-id="129"] .quote').click();
+    await page.waitForFunction(() => {
+      const list = document.getElementById("messages");
+      return list.scrollTop > 150 &&
+        list.scrollHeight - list.clientHeight - list.scrollTop > 50;
+    });
+    await page.locator("#messages").evaluate((list) =>
+      list.focus({ preventScroll: true })
+    );
+    await page.keyboard.press("End");
+    await page.waitForFunction(
+      () => {
+        const list = document.getElementById("messages");
+        return list.scrollHeight - list.clientHeight - list.scrollTop <= 2 &&
+          performance.now() - globalThis.__followLastScroll > 300;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    h.step("keyboard input interrupts an ongoing quote jump");
+
+    await stableBottom();
+    await page.locator("#messages").evaluate((list) => {
+      list.scrollTop = list.scrollHeight - list.clientHeight - 100;
+    });
+    await page.waitForFunction(() => {
+      const list = document.getElementById("messages");
+      return Math.abs(
+        list.scrollHeight - list.clientHeight - list.scrollTop - 100,
+      ) <= 2;
+    });
+    await page.evaluate(() => globalThis.__followTouch.writes = []);
+    const cdp = await context.newCDPSession(page);
+    const x = box.x + box.width / 2, y = box.y + box.height * 0.75;
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    for (const distance of [40, 80, 120, 160, 200, 240]) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: y - distance, id: 1 }],
+      });
+    }
+    await page.waitForFunction(() => {
+      const list = document.getElementById("messages");
+      return list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+    });
+    await page.locator("#messages").evaluate((list) => {
+      const grow = document.createElement("div");
+      grow.style.height = "87px";
+      list.querySelector(".message-row:last-child .bubble").append(grow);
+    });
+    await page.evaluate(() =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+    );
+    const held = await page.evaluate(() => globalThis.__followTouch);
+    assert.equal(held.active, true);
+    assert.deepEqual(held.writes.filter((entry) => entry.active), []);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await page.waitForFunction(
+      () => {
+        const list = document.getElementById("messages");
+        return list.scrollHeight - list.clientHeight - list.scrollTop <= 2 &&
+          globalThis.__followTouch.writes.some((entry) => !entry.active);
+      },
+      null,
+      { timeout: 5000 },
+    );
+    assert.deepEqual(
+      (await page.evaluate(() => globalThis.__followTouch.writes)).filter((
+        entry,
+      ) => entry.active),
+      [],
+    );
+
+    await page.evaluate(() => {
+      const model = globalThis.__followModel, ctx = globalThis.__followCtx;
+      const now = Date.now();
+      model.messages = Array.from({ length: 1300 }, (_, i) => ({
+        id: String(10000000 + i),
+        chat: model.active,
+        from: model.account,
+        time: now + i * 1000,
+        text: `Touch trim ${i}`,
+        contentType: "NONE",
+      }));
+      model.unreadMarkId = "";
+      model.noOlder = true;
+      model.loading = false;
+      model.loadingOlder = false;
+      ctx.renderMessages("bottom");
+    });
+    await stableBottom();
+    await page.evaluate(() => globalThis.__followTouch.writes = []);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    await page.evaluate(() => {
+      const model = globalThis.__followModel;
+      globalThis.__followCtx.onFrame({
+        boot: model.boot,
+        event: {
+          seq: model.seq + 1,
+          kind: "message",
+          chat: model.active,
+          message: {
+            id: "10001300",
+            chat: model.active,
+            from: model.account,
+            time: Date.now() + 1300 * 1000,
+            text: "Touch trim incoming",
+            contentType: "NONE",
+          },
+        },
+      });
+    });
+    await page.evaluate(() =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+    );
+    const heldTrim = await page.evaluate(() => ({
+      rows: globalThis.__followModel.messages.length,
+      active: globalThis.__followTouch.active,
+      writes: globalThis.__followTouch.writes.filter((entry) => entry.active),
+    }));
+    assert.equal(heldTrim.active, true);
+    assert.equal(heldTrim.rows, 1301);
+    assert.deepEqual(heldTrim.writes, []);
+    const heldTop = await page.locator("#messages").evaluate((list) =>
+      list.scrollTop
+    );
+    for (const distance of [40, 80, 120]) {
+      await cdp.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x, y: y + distance, id: 1 }],
+      });
+    }
+    await page.waitForFunction(
+      (top) => top - document.getElementById("messages").scrollTop > 50,
+      heldTop,
+    );
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await page.waitForFunction(
+      () => {
+        const list = document.getElementById("messages");
+        return list.scrollHeight - list.clientHeight - list.scrollTop > 50 &&
+          performance.now() - globalThis.__followLastScroll > 300;
+      },
+      null,
+      { timeout: 5000 },
+    );
+    assert.equal(
+      await page.evaluate(() => globalThis.__followModel.messages.length),
+      1301,
+    );
+    assert.deepEqual(
+      (await page.evaluate(() => globalThis.__followTouch.writes)).filter((
+        entry,
+      ) => entry.active),
+      [],
+    );
+
+    await stableBottom();
+    await page.evaluate(() => globalThis.__followTouch.writes = []);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y, id: 1 }],
+    });
+    await page.evaluate(() => {
+      const model = globalThis.__followModel;
+      globalThis.__followCtx.onFrame({
+        boot: model.boot,
+        event: {
+          seq: model.seq + 1,
+          kind: "message",
+          chat: model.active,
+          message: {
+            id: "10001301",
+            chat: model.active,
+            from: model.account,
+            time: Date.now() + 1301 * 1000,
+            text: "Touch trim resumes",
+            contentType: "NONE",
+          },
+        },
+      });
+    });
+    await page.evaluate(() =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      )
+    );
+    assert.equal(
+      await page.evaluate(() => globalThis.__followModel.messages.length),
+      1302,
+    );
+    assert.deepEqual(
+      (await page.evaluate(() => globalThis.__followTouch.writes)).filter((
+        entry,
+      ) => entry.active),
+      [],
+    );
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await page.waitForFunction(
+      () => {
+        const list = document.getElementById("messages");
+        return globalThis.__followModel.messages.length === 500 &&
+          list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+      },
+      null,
+      { timeout: 10000 },
+    );
+    assert.deepEqual(
+      (await page.evaluate(() => globalThis.__followTouch.writes)).filter((
+        entry,
+      ) => entry.active),
+      [],
+    );
+    await cdp.detach();
+    h.step("touch holds bottom without writes, then settles delayed growth");
+    h.step(
+      "touch cancels or resumes deferred trim according to scroll position",
+    );
+  }
+
+  await page.evaluate(() => {
+    const model = globalThis.__followModel, now = Date.now();
+    model.messages = [
+      {
+        id: "900",
+        chat: model.active,
+        from: "u-peer",
+        time: now,
+        text: "Visible origin",
+        contentType: "NONE",
+      },
+      {
+        id: "901",
+        chat: model.active,
+        from: "u-peer",
+        time: now + 1000,
+        text: "Visible reply",
+        contentType: "NONE",
+        replyTo: { id: "900", text: "Visible origin" },
+      },
+    ];
+    model.noOlder = true;
+    model.loading = false;
+    model.loadingOlder = false;
+    globalThis.__followCtx.renderMessages("bottom");
+  });
+  await page.getByText("Visible reply").waitFor();
+  assert.equal(
+    await page.locator("#messages").evaluate((list) =>
+      list.scrollHeight <= list.clientHeight
+    ),
+    true,
+  );
+  await page.locator('article[data-message-id="901"] .quote').evaluate(
+    (quote) => {
+      quote.addEventListener("click", () => {
+        const model = globalThis.__followModel;
+        globalThis.__followCtx.onFrame({
+          boot: model.boot,
+          event: {
+            seq: model.seq + 1,
+            kind: "message",
+            chat: model.active,
+            message: {
+              id: "902",
+              chat: model.active,
+              from: model.account,
+              time: Date.now() + 2000,
+              text: "new line\n".repeat(100),
+              contentType: "NONE",
+            },
+          },
+        });
+      }, { once: true });
+    },
+  );
+  await page.locator('article[data-message-id="901"] .quote').click();
+  await page.waitForFunction(
+    () => {
+      const list = document.getElementById("messages");
+      return !!list.querySelector('article[data-message-id="902"]') &&
+        list.scrollHeight > list.clientHeight &&
+        list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+    },
+    null,
+    { timeout: 5000 },
+  );
+  h.step("a quote that cannot scroll does not block new-message following");
+
+  await page.evaluate(() => {
+    const model = globalThis.__followModel, now = Date.now();
+    model.messages = [
+      {
+        id: "900",
+        chat: model.active,
+        from: "u-peer",
+        time: now,
+        text: "Short history",
+        contentType: "NONE",
+      },
+    ];
+    model.noOlder = false;
+    model.loading = false;
+    model.loadingOlder = false;
+    globalThis.__followCtx.renderMessages("bottom");
+  });
+  await page.getByText("Short history", { exact: true }).waitFor();
+  await page.locator("#messages").evaluate((list) => {
+    globalThis.__followTouch.writes = [];
+    list.addEventListener("touchstart", () => {
+      const grow = document.createElement("div");
+      grow.style.height = "1000px";
+      list.querySelector(".message-row:last-child .bubble").append(grow);
+      const overflow = list.scrollHeight - list.clientHeight;
+      grow.style.height = `${1000 - overflow + 60}px`;
+    }, { once: true });
+  });
+  const beforeTouchGrowth = requests.length;
+  await page.touchscreen.tap(box.x + box.width - 5, box.y + box.height / 2);
+  await page.waitForFunction(
+    () => {
+      const list = document.getElementById("messages");
+      return list.scrollTop > 10 && list.scrollTop < 150 &&
+        list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+    },
+    null,
+    { timeout: 5000 },
+  );
+  await page.waitForTimeout(300);
+  assert.equal(
+    requests.length,
+    beforeTouchGrowth,
+    "bottom settling paged older",
+  );
+  await page.locator("#messages").evaluate((list) => {
+    list.dispatchEvent(new Event("scroll"));
+    list.focus({ preventScroll: true });
+  });
+  await page.keyboard.press("ArrowUp");
+  await until(() => requests.length > beforeTouchGrowth, "user paging");
+  h.step("touch settling near the top does not page older automatically");
+
+  const alignment = await page.evaluate(() => {
+    const model = globalThis.__followModel, now = Date.now();
+    model.messages = Array.from({ length: 30 }, (_, i) => ({
+      id: String(200 + i),
+      chat: model.active,
+      from: "u-peer",
+      time: now + i * 1000,
+      text: `Aligned message ${i}`,
+      contentType: "NONE",
+      ...(i === 29 ? { replyTo: { id: "228", text: "origin" } } : {}),
+    }));
+    globalThis.__followCtx.renderMessages("bottom");
+    const list = document.getElementById("messages");
+    for (const row of list.querySelectorAll(".message-row")) {
+      row.style.contentVisibility = "visible";
+    }
+    list.scrollTop = list.scrollHeight;
+    const target = list.querySelector('article[data-message-id="228"]');
+    const area = list.getBoundingClientRect(),
+      rect = target.getBoundingClientRect();
+    const distance = (rect.top + rect.bottom - area.top - area.bottom) / 2;
+    const spacer = document.createElement("div");
+    spacer.style.height = `${distance}px`;
+    list.querySelector('article[data-message-id="229"] .bubble').append(spacer);
+    list.scrollTop = list.scrollHeight;
+    return distance;
+  });
+  assert.ok(alignment > 0);
+  await stableBottom();
+  const centered = await page.locator('article[data-message-id="228"]')
+    .evaluate((target) => {
+      const area = document.getElementById("messages").getBoundingClientRect();
+      const rect = target.getBoundingClientRect();
+      return (rect.top + rect.bottom - area.top - area.bottom) / 2;
+    });
+  assert.ok(Math.abs(centered) <= 2, `target is ${centered}px from center`);
+  await page.locator('article[data-message-id="229"] .quote').evaluate(
+    (quote) => {
+      quote.addEventListener("click", () => {
+        const model = globalThis.__followModel;
+        globalThis.__followCtx.onFrame({
+          boot: model.boot,
+          event: {
+            seq: model.seq + 1,
+            kind: "message",
+            chat: model.active,
+            message: {
+              id: "230",
+              chat: model.active,
+              from: model.account,
+              time: Date.now() + 60000,
+              text: "after centered quote\n".repeat(100),
+              contentType: "NONE",
+            },
+          },
+        });
+        const list = document.getElementById("messages");
+        globalThis.__alignedPendingBottom = list.scrollHeight -
+          list.clientHeight -
+          list.scrollTop;
+      }, { once: true });
+    },
+  );
+  await page.locator('article[data-message-id="229"] .quote').click();
+  assert.ok(await page.evaluate(() => globalThis.__alignedPendingBottom) > 2);
+  await page.waitForFunction(
+    () => {
+      const list = document.getElementById("messages");
+      return !!list.querySelector('article[data-message-id="230"]') &&
+        list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+    },
+    null,
+    { timeout: 5000 },
+  );
+  h.step("a centered quote restores deferred following after an idle scroll");
+  await context.close();
+}
+
 export async function messageWindow(h) {
   await reactDuringEmptyPage(h);
+  await scrollFollow(h);
   const context = await h.context({
     locale: "en-US",
     viewport: { width: 390, height: 844 },
