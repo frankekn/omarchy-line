@@ -6163,8 +6163,9 @@ Panel {
               }
 
               Text {
-                // Row 只管 x，寬度要自己扣掉左邊那顆臉，不然長名字會超出去。
-                width: Math.max(0, parent.width - x)
+                // Row 只管 x，寬度要自己扣掉左邊那顆臉和右邊的已讀，不然長名字會超出去。
+                width: Math.max(0, parent.width - x
+                  - (readLabel.visible ? readLabel.width + parent.spacing : 0))
                 anchors.verticalCenter: parent.verticalCenter
                 text: root.clockText(modelData.time) + "  "
                   + (modelData.from === root.myMid ? tr("me") : (modelData.fromName || "?"))
@@ -6173,6 +6174,20 @@ Panel {
                 font.family: root.fontFamily
                 font.pixelSize: root.fontBody
                 elide: Text.ElideRight
+              }
+
+              // 已讀。只有自己傳的訊息才有 —— LINE 回報的是「誰讀了我送的」，
+              // 不是反過來。跟時間同一行，像 LINE 和其他通訊軟體一樣：狀態變了只是
+              // 換字，泡泡不長高 —— 另起一行的話，送出兩秒後已讀一到，整段對話
+              // 會再往上跳一行。
+              Text {
+                id: readLabel
+                anchors.verticalCenter: parent.verticalCenter
+                visible: text.length > 0
+                text: root.readText(msgDelegate.modelData)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Math.max(1, root.fontBody - 1)
               }
             }
 
@@ -6478,17 +6493,6 @@ Panel {
               }
             }
 
-            // 已讀。只有自己傳的訊息才有 —— LINE 回報的是「誰讀了我送的」，
-            // 不是反過來。什麼都不知道的時候 readText 回空字串，這一列就不存在。
-            Text {
-              width: parent.width
-              horizontalAlignment: Text.AlignRight
-              visible: text.length > 0
-              text: root.readText(msgDelegate.modelData)
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Math.max(1, root.fontBody - 1)
-            }
           }
         }
 

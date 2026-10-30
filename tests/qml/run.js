@@ -8001,6 +8001,12 @@ ok(
   "oldest at the top, like every other chat window",
 );
 ok(
+  /Text \{\n\s+id: readLabel\n\s+anchors\.verticalCenter: parent\.verticalCenter\n\s+visible: text\.length > 0\n\s+text: root\.readText\(msgDelegate\.modelData\)/.test(listBlock) &&
+    (listBlock.match(/root\.readText\(msgDelegate\.modelData\)/g) || []).length === 1,
+  "已讀 sits on the time row, like LINE: a receipt arriving two seconds after "
+    + "a send changes a label, not the bubble's height",
+);
+ok(
   /Qt\.callLater\(function\(\) \{ root\.retryPreview\(retryId, true\) \}\)/.test(listBlock) &&
     !/^\s*root\.retryPreview\(messageId, true\)$/m.test(listBlock),
   "a broken thumbnail retries a turn later -- delegates now appear inside the "
@@ -9869,8 +9875,9 @@ ok(
 );
 ok(
   /text: root\.readText\(msgDelegate\.modelData\)/.test(msgRows) &&
-    /horizontalAlignment: Text\.AlignRight/.test(msgRows),
-  "已讀 is a right-aligned line under the bubble",
+    /id: readLabel/.test(msgRows) &&
+    /readLabel\.visible \? readLabel\.width \+ parent\.spacing : 0/.test(msgRows),
+  "已讀 is the last item of the time row, and the name gives it room",
 );
 ok(
   /visible: text\.length > 0/.test(msgRows),

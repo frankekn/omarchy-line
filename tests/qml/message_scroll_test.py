@@ -111,6 +111,7 @@ Item {
       width: msgList.width
       height: 30 + ((Number(modelData.n) % 7 + 7) % 7) * 23
               + (root.growingId === modelData.id ? 180 : 0)
+              + (modelData.reactions && modelData.reactions.length > 0 ? 25 : 0)
       Text { text: parent.modelData.id }
     }
     HANDLERS
@@ -305,6 +306,28 @@ Item {
       root.sendText("hi")
       wait(100)
       verify(msgList.atYEnd)
+    }
+    // The full lifecycle of a send, the way a messenger sees it: optimistic
+    // bubble, the server's echo replacing it, then the peer's activity a few
+    // seconds later. 已讀 sits on the time row and never changes a bubble's
+    // height; a reaction does add a row, so it stands in for "the newest
+    // bubble grew" here.
+    function test_send_echo_and_reaction_keep_the_newest_bubble_in_view() {
+      root.sendText("hi")
+      wait(50)
+      var echo = {id: "wire-hi", n: 121, time: 1800000000000, from: "ME",
+                  text: "hi", requestId: root.messages[root.messages.length - 1].requestId}
+      root.applyEvents([{chat: "C1", kind: "message", message: echo}])
+      wait(50)
+      verify(msgList.atYEnd, "echo left the bottom")
+      compare(root.messages.filter(function(m) { return m.pending }).length, 0)
+      root.applyEvents([{chat: "C1", kind: "read", by: "OTHER", upTo: "wire-hi"}])
+      root.applyEvents([{chat: "C1", kind: "reaction", messageId: "wire-hi",
+                         reactions: [{type: "LOVE", count: 1}]}])
+      wait(100)
+      compare(root.messages[root.messages.length - 1].readBy.count, 1)
+      verify(msgList.atYEnd, "the reaction row pushed the newest bubble below the fold: cy="
+             + msgList.contentY + " end=" + (msgList.originY + msgList.contentHeight - msgList.height))
     }
     function test_own_send_tall_bubble_follows_to_bottom() {
       for (var i = 0; i < 5; i++) {
