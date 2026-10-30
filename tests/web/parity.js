@@ -273,13 +273,37 @@ export async function parity(h) {
   await page.getByText(/Image too large \(over 20 MB\)/).waitFor();
   assert.equal(uploadRequests, beforeUpload);
   h.step("disguised-image-limit");
+  const quotedOrigin = page.locator('article[data-message-id="parity1"]');
+  await quotedOrigin.evaluate((row) => {
+    const scrollIntoView = row.scrollIntoView;
+    row.scrollIntoView = function (options) {
+      globalThis.__quoteScrollBehavior = options.behavior;
+      return scrollIntoView.call(this, options);
+    };
+  });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.locator('article[data-message-id="parity6"] .quote').click();
+  assert.equal(
+    await page.evaluate(() => globalThis.__quoteScrollBehavior),
+    "auto",
+  );
   assert.equal(
     await page.locator('article[data-message-id="parity1"]').evaluate((row) =>
       row.classList.contains("quote-target")
     ),
     true,
   );
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.locator('article[data-message-id="parity6"] .quote').evaluate((
+    node,
+  ) => node.click());
+  assert.equal(
+    await page.evaluate(() => globalThis.__quoteScrollBehavior),
+    "smooth",
+  );
+  await quotedOrigin.evaluate((row) => delete row.scrollIntoView);
+  await page.evaluate(() => delete globalThis.__quoteScrollBehavior);
+  h.step("quote-reduced-motion");
   const historyBefore =
     tap.sent.filter((frame) => frame.cmd === "history").length;
   await page.waitForTimeout(1000);

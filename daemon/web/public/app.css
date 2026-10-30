@@ -90,36 +90,6 @@ a:focus-visible {
 .muted {
   color: var(--muted);
 }
-.context-label {
-  font-size: 11px;
-  letter-spacing: .08em;
-  color: var(--muted);
-  font-weight: 700;
-  margin: 0;
-}
-.brand-mark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 800;
-  font-size: 23px;
-  letter-spacing: -.04em;
-  border-radius: 6px;
-  padding-right: 2px;
-}
-.brand-mark span {
-  opacity: .65;
-}
-.brand-mark.small {
-  width: 31px;
-  height: 31px;
-  font-size: 17px;
-  border-radius: 5px;
-}
 .primary,
 .secondary {
   border: 1px solid transparent;
@@ -185,12 +155,6 @@ a:focus-visible {
   border: 1px solid var(--line);
   border-radius: 6px;
 }
-.auth-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 28px;
-}
 .auth-card h1,
 .login-card h1 {
   font-size: 22px;
@@ -251,12 +215,6 @@ a:focus-visible {
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -.02em;
-}
-.brand-tag {
-  font-size: 11px;
-  letter-spacing: .12em;
-  color: var(--muted);
-  margin-left: 2px;
 }
 .bar-right {
   display: flex;
@@ -334,16 +292,6 @@ a:focus-visible {
   border: 1px solid var(--line);
   border-radius: 6px;
 }
-.login-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-}
-.login-heading h1 {
-  margin-bottom: 0;
-}
 .login-card .muted {
   line-height: 1.7;
 }
@@ -387,11 +335,6 @@ a:focus-visible {
   justify-content: space-between;
   align-items: end;
   margin-bottom: 20px;
-}
-.section-heading > div {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
 }
 .section-heading h1 {
   font-size: 20px;
@@ -460,9 +403,6 @@ textarea::placeholder {
 .chat-row.active,
 .chat-row.keyboard-selected:focus-visible {
   background: var(--hover);
-}
-.chat-row.active {
-  box-shadow: inset 1px 0 var(--accent);
 }
 .avatar {
   width: 42px;
@@ -583,25 +523,10 @@ textarea::placeholder {
   color: var(--muted);
   padding: 20px;
 }
-.empty-glyph {
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  font-size: 28px;
-  color: var(--accent);
-  position: relative;
-}
-.empty-glyph span {
-  position: absolute;
-  right: 3px;
-  bottom: 3px;
-  font-size: 15px;
-}
 .empty-chat h2 {
   color: var(--text);
   font-size: 16px;
-  margin: 23px 0 8px;
+  margin: 0 0 8px;
 }
 .empty-chat p {
   font-size: 12px;
@@ -883,8 +808,7 @@ textarea::placeholder {
   padding: 9px 0;
   line-height: 1.4;
 }
-.search-wrap input:focus-visible,
-.composer textarea:focus-visible {
+.search-wrap input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1140,9 +1064,6 @@ textarea::placeholder {
   .app-bar {
     height: 56px;
     padding: 0 15px;
-  }
-  .brand-tag {
-    display: none;
   }
   .bar-right {
     gap: 5px;

@@ -38,7 +38,13 @@ export function createMessagesView(ctx) {
     interruptFollowing();
     // A quote jump can pass the paging threshold without the reader scrolling.
     suspendPaging(1000);
-    target.scrollIntoView({ block: "center", behavior: "smooth" });
+    target.scrollIntoView({
+      block: "center",
+      behavior:
+        globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+    });
     target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
   }

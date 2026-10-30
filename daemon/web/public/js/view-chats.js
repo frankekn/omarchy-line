@@ -143,7 +143,7 @@ export function createChatsView(ctx) {
     if (focused?.isConnected && document.activeElement !== focused) {
       focused.focus({ preventScroll: true });
     }
-    const count = String(rows.length).padStart(2, "0");
+    const count = String(rows.length);
     if ($("chat-count").textContent !== count) {
       $("chat-count").textContent = count;
     }

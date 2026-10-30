@@ -56,7 +56,6 @@ const strings = {
   lineError: ["登入失敗。", "Sign-in failed."],
   lineLogout: ["登出 LINE", "Sign out of LINE"],
   confirmLogout: ["確定要登出 LINE？", "Sign out of LINE?"],
-  inboxEyebrow: ["YOUR SPACE", "YOUR SPACE"],
   chats: ["聊天", "Chats"],
   search: ["搜尋聊天", "Search chats"],
   lineAccount: ["LINE 帳號", "LINE account"],

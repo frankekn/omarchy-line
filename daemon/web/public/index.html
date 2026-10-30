@@ -42,10 +42,6 @@
   <body>
     <main id="signin-screen" class="auth-screen" hidden>
       <section class="auth-card" aria-labelledby="signin-title">
-        <div class="auth-brand">
-          <div class="brand-mark" aria-hidden="true">e<span>_</span></div>
-          <p class="context-label">ENIL / WEB</p>
-        </div>
         <h1 id="signin-title" data-i18n="signinTitle">連接你的 LINE</h1>
         <p class="muted auth-intro"
           data-i18n="signinIntro">輸入 web key，從這個裝置開啟你的對話。</p>
@@ -64,18 +60,14 @@
 
     <main id="app" class="app" hidden>
       <header class="app-bar">
-        <div
-          class="brand"><span class="brand-mark small" aria-hidden="true">e<span>_</span></span><span>enil</span><span class="brand-tag">/ WEB</span></div>
+        <div class="brand">enil</div>
         <div
           class="bar-right"><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span><button id="web-signout" class="text-button" type="button" data-i18n="webSignout">離開網頁</button></div>
       </header>
       <div id="notices" class="notices" aria-live="polite" hidden></div>
       <section id="line-login" class="line-login" hidden>
         <div class="login-card">
-          <div class="login-heading">
-            <h1 data-i18n="lineTitle">登入 LINE</h1>
-            <p class="context-label">LINE / SESSION</p>
-          </div>
+          <h1 data-i18n="lineTitle">登入 LINE</h1>
           <p id="line-login-message" class="muted"></p>
           <img id="qr-image" class="qr-image" alt="LINE login QR code" hidden>
           <p id="login-pin" class="login-pin" hidden></p>
@@ -87,7 +79,7 @@
         <aside class="sidebar" aria-label="Chats" id="sidebar">
           <div class="sidebar-top">
             <div
-              class="section-heading"><div><h1 data-i18n="chats">聊天</h1><p class="context-label" data-i18n="inboxEyebrow">YOUR SPACE</p></div><span id="chat-count" class="count"></span></div>
+              class="section-heading"><h1 data-i18n="chats">聊天</h1><span id="chat-count" class="count"></span></div>
             <label
               class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
             <button id="sync" class="text-button sync-button" type="button"
@@ -102,7 +94,6 @@
         <section id="conversation" class="conversation"
           aria-label="Conversation">
           <div id="empty-chat" class="empty-chat">
-            <div class="empty-glyph" aria-hidden="true">▤<span>_</span></div>
             <h2 data-i18n="emptyTitle">選擇一個聊天室</h2>
             <p data-i18n="emptyDescription">從左側選擇對話，繼續聊下去。</p>
           </div>
