@@ -113,9 +113,16 @@ How messages are stored:
 - Messages that arrive while the daemon is running, including messages from
   chats with Letter Sealing (end-to-end encryption) on, are stored
   decrypted.
-- Older messages that the daemon fetches when you scroll back are stored as
-  LINE sent them. For a chat with Letter Sealing, that is ciphertext, but the
-  keys that decrypt it are in `storage.json` in the same directory.
+- Older messages that the daemon fetches from LINE, when you open a chat or
+  scroll back, are stored as LINE sent them. For a chat with Letter Sealing,
+  that is ciphertext. Once the daemon has decrypted such a message, it also
+  stores the decrypted text next to it, so the chat opens without decrypting
+  it again. The keys that decrypt it are in `storage.json` in the same
+  directory either way.
+- The message files only grow at the end. When a message is edited, the
+  daemon reads the new version from then on, but the old version and its
+  decrypted text stay in the file until the daemon next rewrites it (it does
+  this once a file holds about twice as many lines as it uses).
 - When someone unsends a message, the daemon marks it as unsent. The original
   content stays on disk.
 

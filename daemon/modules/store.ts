@@ -17,6 +17,13 @@
  *                                                 the whole new raw)
  *   {chatMid, id, _unsent: true}                  unsend tombstone
  *   {chatMid, id, _reactions: [wire Reaction]}    reaction overlay
+ *   {chatMid, id, _plain: {text?, contentMetadata?, location?}}
+ *                                                 what decrypting a sealed
+ *                                                 message produced, kept
+ *                                                 beside the wire copy so an
+ *                                                 open never decrypts it again
+ *                                                 (a new full line -- an
+ *                                                 edit -- drops it)
  *
  * Reads merge per id, last line wins, then order numerically by id (LINE ids
  * are monotonic, so that is chronological order). The store is a cache in the
@@ -70,6 +77,29 @@ function comparableLine(fields: Json): string {
     if (v instanceof Uint8Array) return { type: "Buffer", data: Array.from(v) };
     return v;
   });
+}
+
+/**
+ * Which ciphertext a kept plaintext was decrypted from: an edit re-seals the
+ * message (new chunks), so a plaintext overlay only ever attaches to the
+ * version it came from. Not a security hash -- it tells versions of one
+ * message apart. "" for a message that carries no ciphertext.
+ */
+export function sealedVersion(rec: Json): string {
+  if (!Array.isArray(rec.chunks) || !rec.chunks.length) return "";
+  const text = comparableLine({ t: rec.contentType, c: rec.chunks });
+  // cyrb53: 53 bits, sync, and plenty to tell a handful of versions apart.
+  let h1 = 0xdeadbeef ^ text.length, h2 = 0x41c6ce57 ^ text.length;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
+    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
+    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function messageIdOf(line: Json): string {
@@ -154,6 +184,19 @@ function mergeInto(recs: Map<string, Json>, line: Json): {
     if (base) recs.set(id, { ...base, reactions: line._reactions });
     return { id, full: false };
   }
+  if (line._plain && typeof line._plain === "object") {
+    // Only onto the version it was decrypted from: a plaintext that raced an
+    // edit, or that the file still holds from before one, never attaches to
+    // the new version (on disk it is dead weight until the next compaction).
+    const base = recs.get(id);
+    if (
+      base && typeof line._of === "string" && line._of &&
+      line._of === sealedVersion(base)
+    ) {
+      recs.set(id, { ...base, _plain: line._plain, _of: line._of });
+    }
+    return { id, full: false };
+  }
   // A full wire struct: edits arrive the same shape as first delivery.
   recs.set(id, line);
   return { id, full: true };
@@ -204,6 +247,10 @@ async function loadFile(f: ChatFile): Promise<void> {
   } catch {
     return; // missing or unreadable == empty cache
   }
+  // The file is the count: lines flushed before this first load were already
+  // added by flushFile, and counting them again here doubled diskLines --
+  // enough to compact the whole file on the next single overlay.
+  f.diskLines = 0;
   for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
@@ -219,8 +266,18 @@ async function loadFile(f: ChatFile): Promise<void> {
 }
 
 export interface MessageStore {
-  /** Append freshly seen wire messages (also how edits are recorded). */
-  append(myMid: string, chat: string, raws: unknown[]): void;
+  /**
+   * Append freshly seen wire messages (also how edits are recorded). Returns
+   * the store's record for each one, in order: the record already held when
+   * the copy is identical, so conversions keyed by record identity (the
+   * decrypt cache) still hit; the new record otherwise.
+   */
+  append(myMid: string, chat: string, raws: unknown[]): Json[];
+  /**
+   * Record what decrypting `record` (a sealed message the store holds)
+   * produced. It sticks only while the store holds that same version.
+   */
+  plain(myMid: string, chat: string, record: Json, fields: Json): void;
   /** Record an unsend; keeps position/from/time, strips the content. */
   tombstone(myMid: string, chat: string, id: string): void;
   /** Record the newest reaction bar for a message. */
@@ -357,7 +414,22 @@ export function createMessageStore(
         // in-memory index -- a capped index would silently drop old rows.
         applyLine(recs, order, seen, parsed, Number.POSITIVE_INFINITY);
       }
-      const body = order.map((id) => safeLine(stripped(recs.get(id)!)) + "\n");
+      const body: string[] = [];
+      for (const id of order) {
+        const rec = recs.get(id)!;
+        body.push(safeLine(stripped(rec)) + "\n");
+        // The kept plaintext is an overlay, so it is written back as one.
+        if (rec._plain && typeof rec._plain === "object") {
+          body.push(
+            safeLine({
+              chatMid: rec.chatMid,
+              id,
+              _plain: rec._plain,
+              _of: rec._of,
+            }) + "\n",
+          );
+        }
+      }
       for (const id of recs.keys()) {
         if (seen.has(id)) continue;
         const rec = recs.get(id)!;
@@ -385,8 +457,12 @@ export function createMessageStore(
    * ratio) and nobody pays its reparse cost anyway.
    */
   function maybeCompact(f: ChatFile): boolean {
-    return f.loaded && files.get(f.key) === f && !f.compacting &&
-      f.diskLines > compactMinLines && f.diskLines > f.recs.size * compactRatio;
+    if (!f.loaded || files.get(f.key) !== f || f.compacting) return false;
+    if (f.diskLines <= compactMinLines) return false;
+    // A kept plaintext is a live line of its own, not a dead one.
+    let live = f.recs.size;
+    for (const rec of f.recs.values()) if (rec._plain) live++;
+    return f.diskLines > live * compactRatio;
   }
 
   async function flushFile(f: ChatFile): Promise<void> {
@@ -442,19 +518,32 @@ export function createMessageStore(
   return {
     append(myMid, chat, raws) {
       const f = storable(myMid, chat) ? fileFor(myMid, chat) : null;
+      const out: Json[] = [];
       for (const raw of raws) {
         const line: Json = { chatMid: chat, ...(raw as Json) };
         // A head-page revalidation re-sends the page it just served, almost
         // always unchanged. Writing it again would grow the file by a page
         // per open and swap every record for an equal new object -- which is
-        // what the decrypted-message cache is keyed by.
+        // what the decrypted-message cache is keyed by. Overlay keys (the
+        // kept plaintext above all) are the store's own, not LINE's.
         if (f?.loaded) {
           const id = messageIdOf(line);
           const prev = id ? f.recs.get(id) : undefined;
-          if (prev && comparableLine(prev) === comparableLine(line)) continue;
+          if (prev && comparableLine(stripped(prev)) === comparableLine(line)) {
+            out.push(prev);
+            continue;
+          }
         }
         appendLine(myMid, chat, line);
+        out.push(line);
       }
+      return out;
+    },
+    plain(myMid, chat, record, fields) {
+      const id = messageIdOf(record);
+      const of = sealedVersion(record);
+      if (!id || !of) return;
+      appendLine(myMid, chat, { chatMid: chat, id, _plain: fields, _of: of });
     },
     tombstone(myMid, chat, id) {
       appendLine(myMid, chat, { chatMid: chat, id, _unsent: true });

@@ -446,12 +446,15 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       // LINE returns newest-first; the store and the panel both want
       // oldest-first.
       raws.reverse();
+      // The store's own records, so what is decrypted here is what the next
+      // open from the store finds already done.
+      let records: unknown[] = raws;
       if (raws.length) {
         rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
-        messageStore.append(myMid, chatMid, raws);
+        records = messageStore.append(myMid, chatMid, raws);
       }
       pageRaws = raws;
-      out = await convertHistoryPage(raws, chatMid, owner, generation);
+      out = await convertHistoryPage(records, chatMid, owner, generation);
       if (out === null) return { ok: false, error: "尚未登入" };
     }
 
@@ -841,9 +844,36 @@ async function wrap(
   raw: TalkMessage["raw"],
   owner: Client,
 ): Promise<TalkMsg> {
-  let known = decrypted.get(owner);
-  const hit = known?.get(raw);
+  // Taken before any await: the decrypt pool runs several wraps at once, and
+  // each creating its own map after its await kept only the last one's.
+  const known = decrypted.get(owner) ?? new WeakMap<object, TalkMsg>();
+  decrypted.set(owner, known);
+  const hit = known.get(raw);
   if (hit) return hit;
+  // The store kept what an earlier decrypt of this exact record produced
+  // (rememberPlaintext); a restart reads it back instead of decrypting.
+  const kept = (raw as { _plain?: unknown })._plain;
+  if (kept && typeof kept === "object") {
+    const { _plain: _p, _of: _o, ...wire } = raw as unknown as Json;
+    const plain = kept as Json;
+    const restored: Json = { ...wire };
+    if ("text" in plain) restored.text = plain.text;
+    if ("location" in plain) restored.location = plain.location;
+    // The keys decrypting added or changed, over the metadata the record
+    // carries *now* -- as a fresh decrypt merges them. A recall that marked
+    // the record UNSENT after the plaintext was kept stays marked: only the
+    // decrypt's own keys were kept, never a snapshot of the whole map.
+    restored.contentMetadata = {
+      ...((wire.contentMetadata ?? {}) as Json),
+      ...((plain.contentMetadata ?? {}) as Json),
+    };
+    const tm = new TalkMessage({
+      client: owner,
+      raw: restored as unknown as TalkMessage["raw"],
+    });
+    known.set(raw, tm);
+    return tm;
+  }
   try {
     // A copy: decryptE2EEMessage writes the plaintext into the object it is
     // given. Handed the store's own record, it put plaintext into what the
@@ -853,11 +883,66 @@ async function wrap(
       ...raw,
       contentMetadata: { ...(raw.contentMetadata ?? {}) },
     }, owner);
-    if (!known) decrypted.set(owner, known = new WeakMap());
     known.set(raw, tm);
     return tm;
   } catch {
     return new TalkMessage({ client: owner, raw });
+  }
+}
+
+/** A message LINE delivered sealed: decrypting it is the expensive part. */
+function sealed(raw: Json): boolean {
+  const meta = (raw.contentMetadata ?? {}) as Json;
+  return !!meta.e2eeVersion && Array.isArray(raw.chunks) &&
+    raw.chunks.length > 0;
+}
+
+/**
+ * What a decrypt changed, as the store keeps it: decryptE2EEMessage fills in
+ * text and merges contentMetadata for a text message, location for a location
+ * message. Only the metadata keys it added or changed are kept, so wrap()
+ * lays them under whatever the record carries later (an UNSENT mark). null
+ * when it changed nothing worth keeping.
+ */
+function plainOf(raw: Json, decrypted: Json): Json | null {
+  const out: Json = {};
+  if (decrypted.text !== raw.text) out.text = decrypted.text;
+  const before = (raw.contentMetadata ?? {}) as Json;
+  const after = (decrypted.contentMetadata ?? {}) as Json;
+  const added: Json = {};
+  for (const [k, v] of Object.entries(after)) {
+    if (before[k] !== v) added[k] = v;
+  }
+  if (Object.keys(added).length) out.contentMetadata = added;
+  if (
+    JSON.stringify(decrypted.location ?? null) !==
+      JSON.stringify(raw.location ?? null)
+  ) out.location = decrypted.location;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Keep each freshly decrypted sealed message's plaintext beside its record,
+ * like the messages that arrive while the daemon runs (SAFETY.md). Only a
+ * decrypt that succeeded counts -- a failed one is tried again next open --
+ * and only records that do not carry it already.
+ */
+function rememberPlaintext(
+  records: unknown[],
+  wrapped: TalkMsg[],
+  chatMid: string,
+  owner: Client,
+): void {
+  const myMid = String(me.mid ?? "");
+  const known = decrypted.get(owner);
+  if (!known) return;
+  for (let i = 0; i < records.length; i++) {
+    const raw = records[i] as Json;
+    if (!raw || raw._plain || !sealed(raw)) continue;
+    const tm = wrapped[i];
+    if (!tm || known.get(raw) !== tm) continue;
+    const kept = plainOf(raw, tm.raw as unknown as Json);
+    if (kept) messageStore.plain(myMid, chatMid, raw, kept);
   }
 }
 // enil:wrap-end
@@ -1043,6 +1128,7 @@ async function convertHistoryPage(
   if (wrapped === null) return null;
   const decryptedAt = performance.now();
   timings.record("history.decrypt", decryptedAt - started);
+  rememberPlaintext(raws, wrapped, chatMid, owner);
   // Every sender's name before the loop below asks for them one by one: a
   // cold daemon (fresh boot, new login) otherwise paid one getUser round trip
   // per distinct sender in sequence -- six seconds for a busy group's page.
@@ -1162,11 +1248,14 @@ async function revalidateHistory(
     const [raws] = fetched;
     if (!sessionIsCurrent(owner, generation)) return;
     raws.reverse();
+    // LINE's copy of a page the store already holds maps back to the held
+    // records: unchanged messages convert from the decrypt cache, not again.
+    let records: unknown[] = raws;
     if (raws.length) {
       rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
-      messageStore.append(myMid, chatMid, raws);
+      records = messageStore.append(myMid, chatMid, raws);
     }
-    const fresh = await convertHistoryPage(raws, chatMid, owner, generation);
+    const fresh = await convertHistoryPage(records, chatMid, owner, generation);
     publishHistoryPage(chatMid, owner, generation, served, servedAt, fresh);
   } catch (e) {
     console.error("[history] revalidate:", errorLine(e));

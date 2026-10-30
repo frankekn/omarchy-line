@@ -17,6 +17,13 @@ interface Module {
   ): Promise<{ raw: Record<string, unknown>; plain: boolean }>;
   calls: { decrypt: number };
   failNext(): void;
+  rememberPlaintext(
+    records: unknown[],
+    wrapped: unknown[],
+    chat: string,
+    owner: object,
+  ): void;
+  kept: Array<{ chat: string; id: string; fields: Record<string, unknown> }>;
 }
 
 const PRELUDE = `
@@ -38,7 +45,15 @@ class TalkMessage {
   }
 }
 declare namespace TalkMessage { type raw = Record<string, unknown> & { contentMetadata?: Record<string, string> }; }
-export { wrap };
+type Json = Record<string, unknown>;
+const me = { mid: "ME" };
+export const kept: Array<{ chat: string; id: string; fields: Json }> = [];
+const messageStore = {
+  plain(_me: string, chat: string, record: Json, fields: Json) {
+    kept.push({ chat, id: String(record.id), fields });
+  },
+};
+export { rememberPlaintext, wrap };
 `;
 
 const load = () => loadBlock<Module>("wrap", PRELUDE);
@@ -88,4 +103,83 @@ Deno.test("decrypting never writes plaintext into the stored record", async () =
   assertEquals(tm.raw.text, "plaintext");
   assertEquals(stored.text, "");
   assertEquals(stored.contentMetadata, { e2eeVersion: "2" });
+});
+
+const sealedRaw = (id: string) => ({
+  id,
+  text: "",
+  contentMetadata: { e2eeVersion: "2" } as Record<string, string>,
+  chunks: [new Uint8Array([1])],
+});
+
+Deno.test("a record with kept plaintext is never decrypted again", async () => {
+  const m = await load();
+  const stored = {
+    ...sealedRaw("1"),
+    _plain: { text: "kept", contentMetadata: { e2eeVersion: "2", k: "v" } },
+  };
+  const tm = await m.wrap(stored, {});
+  assertEquals(m.calls.decrypt, 0);
+  assertEquals(tm.raw.text, "kept");
+  assertEquals(tm.raw.contentMetadata, { e2eeVersion: "2", k: "v" });
+  // The overlay key stays the store's; the message never carries it.
+  assertEquals("_plain" in tm.raw, false);
+});
+
+Deno.test("a successful decrypt of a sealed record is kept, once", async () => {
+  const m = await load();
+  const owner = {};
+  const raw = sealedRaw("1");
+  const tm = await m.wrap(raw, owner);
+  m.rememberPlaintext([raw], [tm], "C1", owner);
+  assertEquals(m.kept, [{
+    chat: "C1",
+    id: "1",
+    // Only what decrypting added: the wire's own keys are not snapshotted.
+    fields: { text: "plaintext", contentMetadata: { decrypted: "1" } },
+  }]);
+  // Already kept on the record: nothing to write.
+  const keptRaw = { ...raw, _plain: m.kept[0].fields };
+  m.rememberPlaintext([keptRaw], [await m.wrap(keptRaw, owner)], "C1", owner);
+  assertEquals(m.kept.length, 1);
+});
+
+Deno.test("a failed decrypt or an unsealed message keeps nothing", async () => {
+  const m = await load();
+  const owner = {};
+  const raw = sealedRaw("1");
+  m.failNext();
+  const failed = await m.wrap(raw, owner);
+  const plainRaw = { id: "2", text: "hi", contentMetadata: {} };
+  const plain = await m.wrap(plainRaw, owner);
+  m.rememberPlaintext([raw, plainRaw], [failed, plain], "C1", owner);
+  assertEquals(m.kept, []);
+});
+
+Deno.test("a recall after the plaintext was kept still reads as unsent", async () => {
+  const m = await load();
+  const stored = {
+    ...sealedRaw("1"),
+    contentMetadata: { e2eeVersion: "2", UNSENT: "true" },
+    _plain: { text: "kept", contentMetadata: { decrypted: "1" } },
+  };
+  const tm = await m.wrap(stored, {});
+  assertEquals(tm.raw.contentMetadata, {
+    e2eeVersion: "2",
+    UNSENT: "true",
+    decrypted: "1",
+  });
+});
+
+Deno.test("decrypts that run side by side on a fresh session are all kept", async () => {
+  const m = await load();
+  const owner = {};
+  const raws = ["1", "2", "3"].map(sealedRaw);
+  // The decrypt pool runs them concurrently; none has finished when the
+  // next starts.
+  const tms = await Promise.all(raws.map((r) => m.wrap(r, owner)));
+  m.rememberPlaintext(raws, tms, "C1", owner);
+  assertEquals(m.kept.map((k) => k.id), ["1", "2", "3"]);
+  await Promise.all(raws.map((r) => m.wrap(r, owner)));
+  assertEquals(m.calls.decrypt, 3);
 });
