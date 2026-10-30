@@ -133,6 +133,7 @@ Deno.test("every marker pair used by the suite is present and ordered", async ()
       "wrap",
       "pagenames",
       "warmrecent",
+      "keptnames",
       "statepublished",
       "pushsummary",
       "storageguard",

@@ -103,6 +103,7 @@ store.
 | `panel-drafts.json` | Text you typed but did not send. |
 | `panel-stickers.json` | Your recently used stickers. |
 | `avatars.json` | Which profile picture versions are already downloaded. |
+| `names.json` | The display names of people and chats the daemon looked up, including the nicknames you gave people, so chats open with names after a restart. Only the account that saved it reads it, and a name is looked up again after 7 days. |
 | `hidden.json` | The chats you hid. |
 | `sock` | The socket the panel talks to. |
 | `lock` | An empty file that stops a second daemon from starting. |
@@ -145,7 +146,7 @@ session keys able to fetch it.
 - **Log out** in the panel to end the session. The daemon asks LINE to end
   the session and deletes the login token fields (`.auth`, `refreshToken`,
   and `expire`) from `storage.json`. It keeps the E2EE keys, the login
-  certificate, the message history, and the media on disk.
+  certificate, the message history, the saved names, and the media on disk.
 - **To remove everything**, log out, then follow
   [Uninstall](README.md#uninstall). It stops the daemon and deletes the state
   directory. Then remove this device from the list of logged-in devices in

@@ -25,6 +25,7 @@ function sessionIsCurrent(value: Client, generation: number) {
 function midKind(_mid: string): "user" | "chat" { return "user"; }
 function noteAvatar() {}
 function noteNameFailure() {}
+function rememberName(mid: string, name: string) { nameCache.set(mid, name); }
 let restriction: unknown = null;
 function capMap<V>(_map: Map<string, V>, _max: number) {}
 function resolveUserName(_mid: string, _owner: Client, _generation: number) {
@@ -98,7 +99,27 @@ Deno.test("every name lookup that fails hands a refusal to the restriction halt"
     halted > 0 && halted < resolve.indexOf("resolveUserName("),
     true,
   );
-  assertEquals(halted < resolve.indexOf("nameCache.set("), true);
+  assertEquals(halted < resolve.indexOf("rememberName("), true);
   const warm = source.slice(source.indexOf("export async function warmNames("));
   assertEquals(warm.includes("if (!owner || restriction) return;"), true);
+});
+
+Deno.test("a rename seen live is dropped from names.json too", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./modules/names.ts", import.meta.url),
+  );
+  const fn = source.slice(source.indexOf("export function invalidateName("));
+  assertEquals(
+    /nameSavedAt\.delete\(mid\)\) scheduleNamesSave\(\)/.test(
+      fn.slice(0, fn.indexOf("\n}\n")),
+    ),
+    true,
+  );
+  // Every answer goes through rememberName, so every answer can be kept.
+  assertEquals(
+    /nameCache\.set\(/.test(
+      source.slice(source.indexOf("export async function resolveUserName(")),
+    ),
+    false,
+  );
 });

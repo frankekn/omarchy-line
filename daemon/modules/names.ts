@@ -10,6 +10,8 @@
  * socket), so the graph stays one-way.
  */
 import { classifyLoginError, errorLine } from "./text.ts";
+import { NAMES_PATH } from "./env.ts";
+import { createNameStore, type KeptName } from "./namestore.ts";
 import { haltForRestriction, restriction } from "./restriction.ts";
 import {
   capMap,
@@ -20,10 +22,108 @@ import {
   nameCache,
   nameCacheEpoch,
 } from "./caches.ts";
-import { noteAvatar } from "./avatars.ts";
+import { avatarTokens, noteAvatar } from "./avatars.ts";
 import { me } from "./state.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import type { Client } from "@evex/linejs";
+
+// The block between the enil:keptnames markers is sliced out verbatim by
+// keptnames_test.ts.
+// enil:keptnames-begin
+const keptNames = createNameStore(NAMES_PATH);
+/** When LINE answered each cached name; only these reach names.json. */
+const nameSavedAt = new Map<string, number>();
+const NAMES_SAVE_MS = 5_000;
+let namesSaveTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * The account the kept names belong to, from its login until its logout.
+ * Not me.mid: logout clears that before it gets here, and the last changes
+ * of the session still have to be written under the account that made them.
+ */
+let namesOwner = "";
+/** Saves run one at a time: they share writeAtomic's temp file. */
+let namesWriting: Promise<void> = Promise.resolve();
+
+/**
+ * Every name LINE answered goes through here: into the cache, and -- unless
+ * the lookup failed and left only the bare mid -- into names.json shortly.
+ */
+export function rememberName(mid: string, name: string): void {
+  nameCache.set(mid, name);
+  capMap(nameCache, NAME_CACHE_MAX);
+  if (name && name !== mid) nameSavedAt.set(mid, Date.now());
+  else nameSavedAt.delete(mid);
+  capMap(nameSavedAt, NAME_CACHE_MAX);
+  scheduleNamesSave();
+}
+
+function scheduleNamesSave(): void {
+  if (!namesOwner || namesSaveTimer !== null) return;
+  namesSaveTimer = setTimeout(() => {
+    namesSaveTimer = null;
+    queueNamesSave();
+  }, NAMES_SAVE_MS);
+}
+
+/** Snapshot now, write after whatever save is already on the disk. */
+function queueNamesSave(): void {
+  const owner = namesOwner;
+  if (!owner) return;
+  const rows = new Map<string, KeptName>();
+  for (const [mid, at] of nameSavedAt) {
+    const name = nameCache.get(mid);
+    if (!name) continue;
+    const token = avatarTokens.get(mid);
+    rows.set(mid, token ? { name, at, token } : { name, at });
+  }
+  namesWriting = namesWriting.then(() => keptNames.save(owner, rows));
+}
+
+/**
+ * After login, before the first round names anything: the names this account
+ * resolved on earlier runs, where they are still fresh, with the picture
+ * tokens their lookups carried. A name already in the cache (this session's
+ * own answer) wins.
+ */
+export async function loadKeptNames(owner: string): Promise<void> {
+  namesOwner = owner;
+  // A logout's last save may still be on its way to disk; reading before it
+  // lands would bring back the names that save was there to drop.
+  await namesWriting;
+  if (namesOwner !== owner) return;
+  const kept = await keptNames.load(owner);
+  if (namesOwner !== owner || String(me.mid ?? "") !== owner) return;
+  for (const [mid, { name, at, token }] of kept) {
+    if (nameCache.has(mid)) continue;
+    nameCache.set(mid, name);
+    nameSavedAt.set(mid, at);
+    if (token && !avatarTokens.has(mid)) avatarTokens.set(mid, token);
+  }
+  capMap(nameCache, NAME_CACHE_MAX);
+  capMap(nameSavedAt, NAME_CACHE_MAX);
+}
+
+/**
+ * Logout: what the session changed and has not written yet goes to disk
+ * first -- a rename it invalidated must not come back on the next login --
+ * then the in-memory names go. The file stays for the next login.
+ */
+export function forgetNames(): void {
+  if (namesSaveTimer !== null) {
+    clearTimeout(namesSaveTimer);
+    namesSaveTimer = null;
+    queueNamesSave();
+  }
+  nameCache.clear();
+  nameSavedAt.clear();
+  namesOwner = "";
+}
+
+/** Settles once every queued save is on disk (tests, shutdown). */
+export function namesSaved(): Promise<void> {
+  return namesWriting;
+}
+// enil:keptnames-end
 
 /**
  * A name lookup is cosmetic, so its failures are only logged -- except LINE
@@ -137,8 +237,7 @@ export async function resolveName(
     // lookup was on the wire. Resolve the new epoch before returning so
     // callers cannot cache the raw mid as a successful member label.
     if ((nameCacheEpoch.get(mid) ?? 0) !== metadataEpoch) continue;
-    nameCache.set(mid, name);
-    capMap(nameCache, NAME_CACHE_MAX);
+    rememberName(mid, name);
     return name;
   }
 }
@@ -175,10 +274,7 @@ export async function warmNames(mids: string[]): Promise<void> {
         } | undefined = entry;
         const name = names?.contact?.displayNameOverridden ||
           names?.contact?.displayName || names?.displayName;
-        if (name) {
-          nameCache.set(mid, String(name));
-          capMap(nameCache, NAME_CACHE_MAX);
-        }
+        if (name) rememberName(mid, String(name));
       }
     } catch (e) {
       if (!sessionIsCurrent(owner, generation)) return;
@@ -193,6 +289,8 @@ export async function warmNames(mids: string[]): Promise<void> {
 
 export function invalidateName(mid: string): void {
   nameCache.delete(mid);
+  // A rename seen live must not come back from names.json on the next start.
+  if (nameSavedAt.delete(mid)) scheduleNamesSave();
   nameCacheEpoch.set(mid, (nameCacheEpoch.get(mid) ?? 0) + 1);
   capMap(nameCacheEpoch, NAME_CACHE_MAX);
 }
