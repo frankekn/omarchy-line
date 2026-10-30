@@ -9,7 +9,8 @@
  * below names.ts imports it except upward (messages, push, notify, refresh,
  * socket), so the graph stays one-way.
  */
-import { errorLine } from "./text.ts";
+import { classifyLoginError, errorLine } from "./text.ts";
+import { haltForRestriction, restriction } from "./restriction.ts";
 import {
   capMap,
   CONTACT_BATCH,
@@ -23,6 +24,22 @@ import { noteAvatar } from "./avatars.ts";
 import { me } from "./state.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import type { Client } from "@evex/linejs";
+
+/**
+ * A name lookup is cosmetic, so its failures are only logged -- except LINE
+ * refusing the account: that stops automatic traffic here exactly as it does
+ * for a refresh (SAFETY.md), instead of letting the next lookups keep asking.
+ */
+function noteNameFailure(
+  e: unknown,
+  owner: Client,
+  generation: number,
+): void {
+  // A previous session's late refusal says nothing about the current one,
+  // and haltForRestriction acts on the global client.
+  if (!sessionIsCurrent(owner, generation)) return;
+  if (classifyLoginError(e) === "restricted") haltForRestriction(e);
+}
 
 /**
  * `User` exposes only `mid` and the raw Thrift response -- there is no
@@ -56,8 +73,9 @@ export async function resolveUserName(
     if (name) return String(name);
   } catch (e) {
     console.error("[name] v3:", errorLine(e));
+    noteNameFailure(e, owner, generation);
   }
-  if (!sessionIsCurrent(owner, generation)) return mid;
+  if (!sessionIsCurrent(owner, generation) || restriction) return mid;
   try {
     const res = await owner.base.talk.getContactsV2({ mids: [mid] });
     if (!sessionIsCurrent(owner, generation)) return mid;
@@ -75,6 +93,7 @@ export async function resolveUserName(
     if (name) return String(name);
   } catch (e) {
     console.error("[name] v2:", errorLine(e));
+    noteNameFailure(e, owner, generation);
   }
   return mid;
 }
@@ -88,6 +107,9 @@ export async function resolveName(
   for (;;) {
     const hit = nameCache.get(mid);
     if (hit) return hit;
+    // Restricted: no lookup goes out, and the bare mid is not cached as if it
+    // were the name -- the first lookup after the halt lifts gets the real one.
+    if (restriction) return mid;
     const metadataEpoch = nameCacheEpoch.get(mid) ?? 0;
     let name = mid;
     try {
@@ -108,6 +130,7 @@ export async function resolveName(
     } catch (e) {
       // A name we cannot resolve is cosmetic; never fail the whole refresh.
       console.error("[name]", errorLine(e));
+      noteNameFailure(e, owner, generation);
     }
     if (!sessionIsCurrent(owner, generation)) return mid;
     // A rename/profile operation may have invalidated this mid while its
@@ -130,7 +153,7 @@ export async function resolveName(
 export async function warmNames(mids: string[]): Promise<void> {
   const owner = client;
   const generation = sessionGeneration;
-  if (!owner) return;
+  if (!owner || restriction) return;
   const cold = mids.filter((m) => !nameCache.has(m) && !isMe(m));
   for (let i = 0; i < cold.length; i += CONTACT_BATCH) {
     const batch = cold.slice(i, i + CONTACT_BATCH);
@@ -162,6 +185,8 @@ export async function warmNames(mids: string[]): Promise<void> {
       // Cosmetic: resolveName still answers for every mid this missed, just
       // one round trip at a time.
       console.error("[name] bulk:", errorLine(e));
+      noteNameFailure(e, owner, generation);
+      if (restriction) return;
     }
   }
 }
