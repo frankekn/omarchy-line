@@ -371,6 +371,16 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
       }
     }
     capCursors();
+    // A picture that settled while this round ran was written into the list
+    // this round is about to replace (settleAvatar patches the published
+    // rows), so take it along -- otherwise it vanished until the next full
+    // round, up to five minutes later. Nothing awaits between here and
+    // setChats, so a later settle patches the published list itself.
+    for (const row of next) {
+      if (row.avatarPath) continue;
+      const avatar = avatarNow(row.mid, c, generation);
+      if (avatar) row.avatarPath = avatar;
+    }
     // Replace rather than merge: boxes that dropped out of the list must not
     // keep an entry forever.
     const sorted = next.sort((a, b) => b.lastTime - a.lastTime);

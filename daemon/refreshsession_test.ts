@@ -126,7 +126,17 @@ async function resolveName(v: string, _owner: typeof clientA, _generation: numbe
   calls.names++;
   return v;
 }
-function avatarNow() { return undefined; }
+// A picture whose file read settles while the round runs: the call that
+// builds the row starts it (nothing yet), a later call finds it settled.
+const settlingAvatars = new Set<string>();
+const settledAvatars = new Map<string, string>();
+export function avatarSettlesDuringRound(mid: string) { settlingAvatars.add(mid); }
+function avatarNow(mid: string) {
+  const hit = settledAvatars.get(mid);
+  if (hit) return hit;
+  if (settlingAvatars.has(mid)) settledAvatars.set(mid, "/avatars/" + mid);
+  return undefined;
+}
 async function e2eeFilePayload(
   _raw: unknown,
   _owner: typeof clientA,
@@ -1287,4 +1297,18 @@ Deno.test("a maintenance window halts nothing: the next poll runs a round", asyn
   m.succeed();
   assertEquals(await next, true);
   assertEquals(m.boxesCalled(), 2);
+});
+
+Deno.test("a picture that settles while the round runs is published with it", async () => {
+  const m = await loadModule();
+  m.avatarSettlesDuringRound("other");
+  const round = m.start();
+  m.succeedWithUnread();
+  assertEquals(await round, true);
+  // settleAvatar patched the list this round replaced; the round must not
+  // drop it until the next full round, five minutes later.
+  assertEquals(
+    m.state().chats.find((c: { mid: string }) => c.mid === "other")?.avatarPath,
+    "/avatars/other",
+  );
 });
