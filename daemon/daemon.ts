@@ -157,7 +157,9 @@ async function main() {
   // refreshChats() returns immediately when there is no session, so this is
   // free while logged out.
   setInterval(() => void refreshChats(), POLL_MS);
-  startSleepMonitor();
+  // logind exists only on Linux. Elsewhere, such as macOS with Homebrew dbus,
+  // dbus-monitor finds no system bus, exits, and is respawned every 30 s.
+  if (Deno.build.os === "linux") startSleepMonitor();
 }
 
 if (import.meta.main) await main();

@@ -195,5 +195,6 @@ Linux systemd unit 設有 `LimitNOFILE=8192`。更新已安裝的 plugin 後，�
 `daemon/install.sh`，安裝更新過的 unit 並重啟服務。檔案描述符耗盡時 daemon 會繼續
 運作，listener 會重試；描述符可用後就能再接受連線。
 
-launchd 設定沒有 macOS 原生通知或休眠整合。缺少 `notify-send` 和 `dbus-monitor`
-時，通知和休眠事件不會作用；watchdog 仍然會重建停滯的 push 連線。
+launchd 設定沒有 macOS 原生通知或休眠整合。daemon 只在 Linux 上透過 logind
+接收休眠事件，通知則需要 `notify-send`；在 macOS 上，watchdog 仍然會重建停滯的
+push 連線。
