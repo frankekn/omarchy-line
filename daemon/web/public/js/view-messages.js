@@ -8,6 +8,7 @@ export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
   const rowMessages = new WeakMap();
+  const selectionVisibility = new Map();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let renderedRows = [], renderedDesired = [], renderedToday = "";
   let renderedUnread = "";
@@ -128,6 +129,7 @@ export function createMessagesView(ctx) {
             `${reactionTypes[type] || type} ${Number(reaction.count || 0)}`,
           );
         button.type = "button";
+        button.dataset.reactionType = type;
         button.title = reaction.mine ? t("undoReaction") : t("reaction");
         button.addEventListener(
           "click",
@@ -135,7 +137,7 @@ export function createMessagesView(ctx) {
             command("react", {
               chat,
               messageId: String(message.id),
-              type: reaction.mine ? "UNDO" : type,
+              type: button.classList.contains("mine") ? "UNDO" : type,
             }).catch(displayError),
         );
         reactions.append(button);
@@ -253,13 +255,60 @@ export function createMessagesView(ctx) {
     row.append(column);
     return row;
   }
-  // Keep unchanged media and message actions connected across updates.
-  function updateMessageParts(oldRow, newRow, keepMedia, id) {
+  function updateReactions(oldReactions, newReactions) {
+    const oldButtons = [...oldReactions.children];
+    const available = new Map();
+    for (const button of oldButtons) {
+      const type = button.dataset.reactionType;
+      if (!available.has(type)) available.set(type, []);
+      available.get(type).push(button);
+    }
+    const buttons = [...newReactions.children].map((next) => {
+      const button = available.get(next.dataset.reactionType)?.shift();
+      if (!button) return next;
+      if (button.className !== next.className) {
+        button.className = next.className;
+      }
+      if (button.textContent !== next.textContent) {
+        button.textContent = next.textContent;
+      }
+      if (button.title !== next.title) button.title = next.title;
+      return button;
+    });
+    const focused = oldButtons.includes(document.activeElement)
+      ? document.activeElement
+      : null;
+    const retained = new Set(buttons);
+    for (const button of oldButtons) {
+      if (!retained.has(button)) button.remove();
+    }
+    let next = null;
+    for (let i = buttons.length - 1; i >= 0; i--) {
+      const button = buttons[i];
+      if (button.parentNode !== oldReactions || button.nextSibling !== next) {
+        oldReactions.insertBefore(button, next);
+      }
+      next = button;
+    }
+    if (
+      focused && retained.has(focused) && document.activeElement !== focused
+    ) {
+      focused.focus({ preventScroll: true });
+    }
+  }
+  // Keep unchanged interactive and media nodes connected across updates.
+  function updateMessageParts(
+    oldRow,
+    newRow,
+    keepMedia,
+    id,
+    oldMessage,
+    message,
+  ) {
     const oldColumn = oldRow.firstElementChild;
     const newColumn = newRow.firstElementChild;
     const oldBubble = oldColumn.querySelector(":scope > .bubble");
     const newBubble = newColumn.querySelector(":scope > .bubble");
-    const media = oldBubble.querySelector(":scope > .message-media");
     const oldMeta = oldColumn.querySelector(":scope > .message-meta");
     const newMeta = newColumn.querySelector(":scope > .message-meta");
     const oldActions = oldMeta.querySelector(":scope > .message-actions");
@@ -276,13 +325,30 @@ export function createMessagesView(ctx) {
     }
     oldRow.className = newRow.className;
     oldBubble.className = newBubble.className;
-    for (const child of [...oldBubble.children]) {
-      if (!keepMedia || child !== media) child.remove();
+    function updateBubblePart(selector, keep, before) {
+      const old = oldBubble.querySelector(`:scope > ${selector}`);
+      const fresh = newBubble.querySelector(`:scope > ${selector}`);
+      if (old && fresh && keep) return old;
+      if (old && fresh) old.replaceWith(fresh);
+      else if (old) old.remove();
+      else if (fresh) oldBubble.insertBefore(fresh, before);
+      return fresh;
     }
-    for (const child of [...newBubble.children]) {
-      if (keepMedia && child.classList.contains("message-media")) continue;
-      oldBubble.insertBefore(child, keepMedia ? media : null);
-    }
+    const oldText = oldBubble.querySelector(":scope > .message-text");
+    const newText = newBubble.querySelector(":scope > .message-text");
+    const oldQuote = oldBubble.querySelector(":scope > .quote");
+    const newQuote = newBubble.querySelector(":scope > .quote");
+    const keepText = oldText && newText && oldText.isEqualNode(newText) &&
+      Boolean(oldMessage.unsent) === Boolean(message.unsent) &&
+      Boolean(oldMessage.decryptFailed) === Boolean(message.decryptFailed) &&
+      JSON.stringify(oldMessage.mentions || []) ===
+        JSON.stringify(message.mentions || []);
+    const keepQuote = oldQuote && newQuote && oldQuote.isEqualNode(newQuote) &&
+      String(oldMessage.replyTo?.id || "") ===
+        String(message.replyTo?.id || "");
+    const media = updateBubblePart(".message-media", keepMedia, null);
+    const text = updateBubblePart(".message-text", keepText, media);
+    updateBubblePart(".quote", keepQuote, text || media);
     if (keepActions) {
       for (const child of [...oldMeta.children]) {
         if (child !== oldActions) child.remove();
@@ -293,18 +359,68 @@ export function createMessagesView(ctx) {
     } else {
       oldMeta.replaceWith(newMeta);
     }
+    const oldReactions = oldColumn.querySelector(":scope > .reactions");
+    const newReactions = newColumn.querySelector(":scope > .reactions");
+    let reactions = null;
+    if (oldReactions && newReactions) {
+      updateReactions(oldReactions, newReactions);
+      reactions = oldReactions;
+    } else if (oldReactions) oldReactions.remove();
+    else if (newReactions) {
+      reactions = newReactions;
+      oldColumn.insertBefore(reactions, keepActions ? oldMeta : newMeta);
+    }
     for (const child of [...oldColumn.children]) {
       if (
         child !== oldBubble && child !== (keepActions ? oldMeta : newMeta) &&
-        (!keepActions || child !== picker)
+        child !== reactions && (!keepActions || child !== picker)
       ) child.remove();
     }
     for (const child of [...newColumn.children]) {
-      if (child === newBubble || child === newMeta) continue;
+      if (child === newBubble || child === newMeta || child === newReactions) {
+        continue;
+      }
       if (child.classList.contains("sender")) {
         oldColumn.insertBefore(child, oldBubble);
       } else oldColumn.insertBefore(child, keepActions ? oldMeta : newMeta);
     }
+  }
+  function selectionIncludes(row, selection) {
+    if (!row.isConnected || !selection || selection.isCollapsed) return false;
+    for (let i = 0; i < selection.rangeCount; i++) {
+      if (selection.getRangeAt(i).intersectsNode(row)) return true;
+    }
+    return false;
+  }
+  function releaseSelectionVisibility() {
+    const selection = globalThis.getSelection();
+    for (const [row, previous] of selectionVisibility) {
+      if (selectionIncludes(row, selection)) continue;
+      if (previous.value) {
+        row.style.setProperty(
+          "content-visibility",
+          previous.value,
+          previous.priority,
+        );
+      } else row.style.removeProperty("content-visibility");
+      selectionVisibility.delete(row);
+    }
+  }
+  function keepSelectedTailVisible(list) {
+    releaseSelectionVisibility();
+    const tail = list.lastElementChild;
+    if (
+      !tail?.classList.contains("message-row") ||
+      selectionVisibility.has(tail) ||
+      !selectionIncludes(tail, globalThis.getSelection())
+    ) return;
+    // WebKit can temporarily lose selected text when the old last row
+    // changes from content-visibility: visible to auto on an append.
+    selectionVisibility.set(tail, {
+      value: tail.style.getPropertyValue("content-visibility"),
+      priority: tail.style.getPropertyPriority("content-visibility"),
+    });
+    tail.style.setProperty("content-visibility", "visible");
   }
   function protectedMessageIds(list) {
     const protectedIds = new Set();
@@ -486,6 +602,7 @@ export function createMessagesView(ctx) {
     pagingTimer = setTimeout(() => suppressPaging = false, delay);
   }
   function renderMessages(mode = "preserve") {
+    keepSelectedTailVisible($("messages"));
     if (model.noOlder) ctx.refreshOlderAvailability();
     if ((mode === "bottom" || mode === "anchor") && trimFrame) {
       cancelAnimationFrame(trimFrame);
@@ -524,6 +641,7 @@ export function createMessagesView(ctx) {
         record.node.remove();
       }
       records.clear();
+      releaseSelectionVisibility();
       order = [];
       renderedRows = [];
       renderedDesired = [];
@@ -710,7 +828,14 @@ export function createMessagesView(ctx) {
         let node = messageNode(item.message, !keepMedia);
         if (prior) {
           if (!keepMedia) ctx.unobservePreviews(prior.node);
-          updateMessageParts(prior.node, node, keepMedia, id);
+          updateMessageParts(
+            prior.node,
+            node,
+            keepMedia,
+            id,
+            prior.message,
+            item.message,
+          );
           rowMessages.set(prior.node, item.message);
           node = prior.node;
         }
@@ -784,6 +909,7 @@ export function createMessagesView(ctx) {
     if (deferTrim) scheduleTrim(list);
   }
   const list = $("messages");
+  document.addEventListener("selectionchange", releaseSelectionVisibility);
   function loadNearTop() {
     if (list.scrollTop < 150 && list.scrollHeight > list.clientHeight + 10) {
       ctx.loadOlder();

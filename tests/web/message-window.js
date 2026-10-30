@@ -1032,6 +1032,18 @@ export async function messageWindow(h) {
     ),
     true,
   );
+  const selectedRow = page.locator('article[data-message-id="10000499"]');
+  assert.equal(
+    await selectedRow.evaluate((row) =>
+      getComputedStyle(row).contentVisibility
+    ),
+    "visible",
+  );
+  await page.evaluate(() => getSelection().removeAllRanges());
+  await page.waitForFunction(() => {
+    const row = document.querySelector('article[data-message-id="10000499"]');
+    return getComputedStyle(row).contentVisibility === "auto";
+  });
   h.step("top trimming keeps selected text and retained image nodes");
 
   await fixture();

@@ -712,7 +712,180 @@ async function reactionPickerDuringUpdates(h) {
   h.step("reaction controls survive edits until the message is unsent");
 }
 
+async function messageInteractionsDuringUpdates(h) {
+  const initial = await h.state();
+  const now = Date.now();
+  const originA = row("origin-a", "Origin A", now - 3000);
+  const originB = row("origin-b", "Origin B", now - 2000);
+  const reactions = [
+    { type: "NICE", count: 1, mine: false },
+    { type: "LOVE", count: 1, mine: false },
+  ];
+  const message = {
+    ...row("interaction-update", "Hello @Alice", now),
+    from: initial.me.mid,
+    replyTo: { id: originA.id, fromName: "Peer", text: "Same quote" },
+    reactions,
+  };
+  const { context, page, tap, state } = await newPage(h, {
+    client(frame, channel) {
+      if (frame.cmd === "react" && frame.messageId === message.id) {
+        channel.socket.send(JSON.stringify({ id: frame.id, ok: true }));
+        return false;
+      }
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      channel.socket.send(JSON.stringify({
+        id: frame.id,
+        ok: true,
+        data: [originA, originB, message],
+      }));
+      return false;
+    },
+  });
+  await page.getByRole("button", { name: family }).click();
+  const messageRow = page.locator(
+    'article[data-message-id="interaction-update"]',
+  );
+  const text = messageRow.locator(".message-text");
+  const quote = messageRow.locator(".quote");
+  const nice = messageRow.locator(".reaction-pill").filter({ hasText: "👍" });
+  const love = messageRow.locator(".reaction-pill").filter({ hasText: "❤️" });
+  await text.waitFor();
+  const originalText = await text.elementHandle();
+  const originalQuote = await quote.elementHandle();
+  const originalNice = await nice.elementHandle();
+  const originalLove = await love.elementHandle();
+  let seq = Math.max(0, ...(state.events || []).map((event) => event.seq)) + 1;
+  const push = (event) =>
+    tap.socket.send(JSON.stringify({
+      boot: state.bootId,
+      event: { seq: seq++, chat: CHAT, ...event },
+    }));
+  const updateReactions = (items) =>
+    push({ kind: "reaction", messageId: message.id, reactions: items });
+
+  await text.evaluate((node) => {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+  });
+  assert.equal(
+    await page.evaluate(() => getSelection().toString()),
+    message.text,
+  );
+  updateReactions([{ ...reactions[0], count: 2 }, reactions[1]]);
+  await nice.filter({ hasText: "👍 2" }).waitFor();
+  assert.equal(await originalText.evaluate((node) => node.isConnected), true);
+  assert.equal(
+    await text.evaluate((node, old) => node === old, originalText),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(() => getSelection().toString()),
+    message.text,
+  );
+  push({ kind: "read", upTo: message.id, by: "u-peer" });
+  await messageRow.getByText(/Read/).waitFor();
+  assert.equal(
+    await text.evaluate((node, old) => node === old, originalText),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(() => getSelection().toString()),
+    message.text,
+  );
+  h.step("reaction and read updates keep selected message text");
+
+  const box = await quote.boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  updateReactions([{ ...reactions[0], count: 3 }, reactions[1]]);
+  await nice.filter({ hasText: "👍 3" }).waitFor();
+  assert.equal(
+    await quote.evaluate((node, old) => node === old, originalQuote),
+    true,
+  );
+  await page.mouse.up();
+  await page.locator('article[data-message-id="origin-a"].quote-target')
+    .waitFor();
+  h.step("quote press survives a reaction update");
+
+  await nice.focus();
+  updateReactions([reactions[1], { ...reactions[0], count: 4, mine: true }]);
+  await nice.filter({ hasText: "👍 4" }).waitFor();
+  assert.equal(
+    await nice.evaluate((node, old) => node === old, originalNice),
+    true,
+  );
+  assert.equal(
+    await love.evaluate((node, old) => node === old, originalLove),
+    true,
+  );
+  assert.equal(
+    await nice.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.keyboard.press("Enter");
+  await until(
+    () =>
+      tap.sent.some((frame) => frame.cmd === "react" && frame.type === "UNDO"),
+    "keyboard undo after reaction update",
+  );
+  updateReactions([{ ...reactions[0], count: 5 }, reactions[1]]);
+  await nice.filter({ hasText: "👍 5" }).waitFor();
+  assert.equal(
+    await nice.evaluate((node, old) => node === old, originalNice),
+    true,
+  );
+  assert.equal(
+    await nice.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.keyboard.press("Space");
+  await until(
+    () =>
+      tap.sent.some((frame) => frame.cmd === "react" && frame.type === "NICE"),
+    "keyboard reaction after mine changes",
+  );
+  h.step("reaction pills keep focus and use the current mine state");
+
+  await page.locator(".quote-target").evaluateAll((nodes) =>
+    nodes.forEach((node) => node.classList.remove("quote-target"))
+  );
+  const edited = {
+    ...message,
+    replyTo: { ...message.replyTo, id: originB.id },
+    reactions: [{ ...reactions[0], count: 6 }, reactions[1]],
+  };
+  push({ kind: "edit", message: edited });
+  await nice.filter({ hasText: "👍 6" }).waitFor();
+  await quote.click();
+  await page.locator('article[data-message-id="origin-b"].quote-target')
+    .waitFor();
+  assert.equal(
+    await page.locator('article[data-message-id="origin-a"].quote-target')
+      .count(),
+    0,
+  );
+  push({
+    kind: "edit",
+    message: { ...edited, mentions: [{ start: 6, end: 12, mid: "u-alice" }] },
+  });
+  await text.locator("strong.mention").waitFor();
+  assert.equal(await originalText.evaluate((node) => node.isConnected), false);
+  push({ kind: "edit", message: { ...edited, text: "Changed text" } });
+  await messageRow.getByText("Changed text").waitFor();
+  push({ kind: "unsend", messageId: message.id });
+  await messageRow.getByText("Message unsent").waitFor();
+  assert.equal(await quote.count(), 0);
+  assert.equal(await messageRow.locator(".reaction-pill").count(), 0);
+  await context.close();
+  h.step("changed quote target, mentions, text and unsend update normally");
+}
+
 export async function review(h) {
+  await messageInteractionsDuringUpdates(h);
   await reactionPickerAfterUpdates(h);
   await reactionPickerDuringUpdates(h);
   await olderEvent(h);
