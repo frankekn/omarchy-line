@@ -5996,9 +5996,12 @@ Panel {
           interactive: contentHeight > height
           ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          // 等模型與 delegate 排好再用訊息 id 還原；保護期間的 contentY 不是人捲的。
+          // 換完當場就用訊息 id 還原（restoreMessageViewport 自己會 forceLayout）。
+          // 不能 callLater：model reset 把 contentY 歸零之後、還原之前只要畫了一格，
+          // 送出時就會閃一下對話最上面再跳回底部（量過：連拍第 3 格）。
+          // 內容相同不發 modelChanged 的那種，由 setMessages 的 callLater 收尾。
           onModelChanged: {
-            Qt.callLater(root.restoreMessageViewport)
+            root.restoreMessageViewport()
           }
 
           // 縮圖、貼圖載完會把泡泡撐高。判斷用的是「變高之前」的高度：使用者捲動時
@@ -6354,7 +6357,12 @@ Panel {
                 }
                 var failed = String(source || "")
                 if (status !== Image.Error || !failed) return
-                root.retryPreview(messageId, true)
+                // 延後一輪：這顆 delegate 可能是換模型當場還原位置時生出來的，那時
+                // model 綁定還沒更新完，同步 setMessages 會變成 binding loop，清單就
+                // 停在舊模型。每次包一個新 closure —— callLater 對同一個函式一輪只跑
+                // 最後一次，同一輪壞掉好幾張時其他張的重試會被吃掉。
+                var retryId = messageId
+                Qt.callLater(function() { root.retryPreview(retryId, true) })
               }
               visible: status === Image.Ready
               // 打不開的附件連縮圖都不畫，跟 pictureList 同一條規則 ——

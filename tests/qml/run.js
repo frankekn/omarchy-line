@@ -8001,10 +8001,16 @@ ok(
   "oldest at the top, like every other chat window",
 );
 ok(
-  /onModelChanged: \{/.test(listBlock) &&
-    /Qt\.callLater\(root\.restoreMessageViewport\)/.test(listBlock) &&
+  /Qt\.callLater\(function\(\) \{ root\.retryPreview\(retryId, true\) \}\)/.test(listBlock) &&
+    !/^\s*root\.retryPreview\(messageId, true\)$/m.test(listBlock),
+  "a broken thumbnail retries a turn later -- delegates now appear inside the "
+    + "synchronous restore, where setMessages would be a model binding loop",
+);
+ok(
+  /onModelChanged: \{\n            root\.restoreMessageViewport\(\)\n          \}/.test(listBlock) &&
     /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex/.test(B.restoreMessageViewport),
-  "the prepend anchor is applied by index after the swap",
+  "the prepend anchor is applied by index right in the swap -- a callLater "
+    + "would paint one frame at contentY 0 (the top of the chat) first",
 );
 ok(
   /root\.keepContentY >= 0 \|\| root\.prependAnchorIndex >= 0\) return/.test(
@@ -16276,7 +16282,7 @@ ok(
 );
 ok(
   /property var previewDecodeRetries/.test(src) &&
-    /retryPreview\(messageId, true\)/.test(src) &&
+    /retryPreview\((messageId|retryId), true\)/.test(src) &&
     /if \(decodeRetries\[retryId\]\) return/.test(retryBlock),
   "automatic decode retry ownership survives delegate recreation",
 );
