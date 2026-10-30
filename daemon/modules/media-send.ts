@@ -342,6 +342,25 @@ function fileTargetRefusal(to: string): Json | null {
 const SEND_FILE_MAX_READS = 2;
 const sendFileSlot = limiter(SEND_FILE_MAX_READS);
 
+/** Check the file without holding its full contents in memory. */
+async function checkSendFile(
+  path: string,
+  name: string,
+): Promise<{ kind: MediaKind } | { rejection: Json }> {
+  try {
+    const size = await regularFileSize(path);
+    if (size === null) {
+      return { rejection: refusal(`不是一般檔案: ${path}`, "不是一般檔案") };
+    }
+    const kind = mediaKindOf(name, await readHead(path, MEDIA_HEAD_BYTES));
+    const tooBig = sizeRefusalText(kind, size);
+    if (tooBig) return { rejection: { ok: false, error: tooBig } };
+    return { kind };
+  } catch {
+    return { rejection: refusal(`找不到檔案: ${path}`, "找不到檔案") };
+  }
+}
+
 /**
  * `sendFile`, and the second half of `sendClipboardImage`.
  *
@@ -364,8 +383,11 @@ async function sendFilePath(
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }
+  const name = filename || path.split("/").pop() || "file";
+  const checked = await checkSendFile(path, name);
+  if ("rejection" in checked) return checked.rejection;
   return await sendFileSlot(() =>
-    readAndUpload(to, path, owner, generation, requestId, filename)
+    readAndUpload(to, path, owner, generation, requestId, name)
   );
 }
 
@@ -376,27 +398,18 @@ async function readAndUpload(
   owner: Client,
   generation: number,
   requestId: string,
-  filename: string,
+  name: string,
 ): Promise<Json> {
   // The wait for a slot can outlast the session; do not read for nobody.
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }
-  const name = filename || path.split("/").pop() || "file";
+  // The path may have changed while the send waited for a slot.
+  const checked = await checkSendFile(path, name);
+  if ("rejection" in checked) return checked.rejection;
+  const kind = checked.kind;
   let bytes: Uint8Array;
-  let kind: MediaKind;
   try {
-    // Stat and head first, whole file after: the refusal below has to land
-    // before the bytes are in memory, which is the only reason it exists. Both
-    // reads share this catch because a path that cannot be opened is the same
-    // answer whichever of them hits it first.
-    const size = await regularFileSize(path);
-    if (size === null) {
-      return refusal(`不是一般檔案: ${path}`, "不是一般檔案");
-    }
-    kind = mediaKindOf(name, await readHead(path, MEDIA_HEAD_BYTES));
-    const tooBig = sizeRefusalText(kind, size);
-    if (tooBig) return { ok: false, error: tooBig };
     bytes = await Deno.readFile(path);
   } catch {
     return refusal(`找不到檔案: ${path}`, "找不到檔案");

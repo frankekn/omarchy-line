@@ -16,11 +16,11 @@ The page is off by default. It starts when `ENIL_WEB_ADDR` is set.
 | `ENIL_WEB_ADDR` | `host:port` to listen on. Use the machine's Tailscale IP, for example `100.64.0.1:3440`. Do not use `0.0.0.0`: requests to the machine's actual IP will be refused. |
 | `ENIL_WEB_KEY` | The sign-in key: 16 or more of `A-Z a-z 0-9 - . _ ~`. If missing or invalid, each start makes a new key. |
 
-At start the daemon logs
-`[web] sign in: http://100.64.0.1:3440/?key=<ENIL_WEB_KEY>`. The log does not
-show a key set by `ENIL_WEB_KEY`. If the daemon made a new key, the line shows
-that key instead. In each browser, open the address and type the key. The
-browser then keeps a cookie for up to 400 days. Anyone with the key or a valid
+With a valid `ENIL_WEB_KEY`, the daemon logs
+`[web] sign in: http://100.64.0.1:3440/` at start, without showing the key.
+If the daemon made a new key, the line includes a link containing that key.
+In each browser, open the address and type the key. The browser then keeps a
+cookie for up to 400 days. Anyone with the key or a valid
 cookie and access to the address can read and send messages. Change the key
 and restart the daemon to sign out every browser. Leaving the web page clears
 that browser's cookie, but does not revoke a copy of it or log out of LINE.

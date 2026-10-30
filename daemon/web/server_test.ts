@@ -385,11 +385,11 @@ async function signInLog(key: string | undefined): Promise<string[]> {
   return lines;
 }
 
-Deno.test("the log names a key from the environment by its variable only", async () => {
+Deno.test("the log prints only the address for a configured key", async () => {
   const lines = await signInLog(KEY);
   const signIn = lines.find((l) => l.startsWith("[web] sign in: "));
   assert(signIn, lines.join("\n"));
-  assert(signIn.endsWith("/?key=<ENIL_WEB_KEY>"), signIn);
+  assert(/^\[web\] sign in: http:\/\/127\.0\.0\.1:\d+\/$/.test(signIn), signIn);
   assert(!lines.some((l) => l.includes(KEY)), "the key reached the log");
 });
 
@@ -398,8 +398,11 @@ Deno.test("the log carries a minted key, since nothing else does", async () => {
   assert(lines.some((l) => l.startsWith("[web] no usable ENIL_WEB_KEY")));
   const signIn = lines.find((l) => l.startsWith("[web] sign in: "));
   assert(signIn, lines.join("\n"));
-  const key = /\/\?key=([A-Za-z0-9._~-]{16,})$/.exec(signIn)?.[1];
-  assert(key && key !== "<ENIL_WEB_KEY>", signIn);
+  assert(
+    /^\[web\] sign in: http:\/\/127\.0\.0\.1:\d+\/\?key=[A-Za-z0-9._~-]{16,}$/
+      .test(signIn),
+    signIn,
+  );
 });
 
 Deno.test("only the page's own files are served", async () => {

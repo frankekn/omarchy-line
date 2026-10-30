@@ -365,7 +365,8 @@ export async function startWeb(opts: WebOptions): Promise<void> {
   const host = where.hostname.includes(":")
     ? `[${where.hostname}]`
     : where.hostname;
-  const shownKey = minted ? web.key : "<ENIL_WEB_KEY>";
+  const signIn = `http://${host}:${where.port}/` +
+    (minted ? `?key=${web.key}` : "");
   // A failed accept, such as EMFILE when descriptors run out, ends the
   // listener and rejects `finished`. Unhandled, that rejection would end the
   // daemon; handled without a new serve, the page would stay down.
@@ -374,8 +375,7 @@ export async function startWeb(opts: WebOptions): Promise<void> {
       const server = Deno.serve({
         hostname: where.hostname,
         port: where.port,
-        onListen: () =>
-          log(`[web] sign in: http://${host}:${where.port}/?key=${shownKey}`),
+        onListen: () => log(`[web] sign in: ${signIn}`),
         onError: (e) => {
           console.error(`[web] ${e instanceof Error ? e.message : String(e)}`);
           return status(500);

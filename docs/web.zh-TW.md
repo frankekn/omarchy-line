@@ -15,9 +15,10 @@ LINE 帳號裡多出裝置。
 | `ENIL_WEB_ADDR` | 要監聽的 `host:port`。請用這台機器的 Tailscale IP，例如 `100.64.0.1:3440`。不要用 `0.0.0.0`：對機器實際 IP 的請求會被拒絕。 |
 | `ENIL_WEB_KEY` | 登入用的 key：16 個以上的 `A-Z a-z 0-9 - . _ ~`。沒設定或格式不對時，每次啟動都會產生新的 key。 |
 
-daemon 啟動時會記錄 `[web] sign in: http://100.64.0.1:3440/?key=<ENIL_WEB_KEY>`。
-log 不會顯示由 `ENIL_WEB_KEY` 設定的 key；daemon 自行產生新 key 時，這行才會顯示
-那個 key。在每個瀏覽器開啟位址後，輸入 key。之後瀏覽器最多保留 cookie 400 天。
+設定有效的 `ENIL_WEB_KEY` 時，daemon 啟動會記錄
+`[web] sign in: http://100.64.0.1:3440/`，不會顯示 key。daemon 自行產生新 key 時，
+這行會包含帶有該 key 的連結。在每個瀏覽器開啟位址後，輸入 key。之後瀏覽器最多保留
+cookie 400 天。
 能連到位址且持有 key 或有效 cookie 的人都能讀取和傳送訊息。換掉 key 並重啟
 daemon，會讓所有瀏覽器登出。「離開網頁」只清除該瀏覽器的 cookie，不會撤銷已複製的
 cookie，也不會登出 LINE。如果 cookie 或 key 可能外洩，請更換 key。網頁使用

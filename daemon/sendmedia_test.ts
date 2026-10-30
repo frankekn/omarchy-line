@@ -1164,3 +1164,130 @@ Deno.test("at most two sends hold a whole file at once; the rest wait", async ()
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("invalid files bypass occupied send slots and queued files are rechecked", async () => {
+  const previousClient = client;
+  const dir = await Deno.makeTempDir({ prefix: "enil-sendcheck-test-" });
+  const gates: (() => void)[] = [];
+  const pending: Promise<unknown>[] = [];
+  let releaseReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => releaseReady = resolve);
+  let closing = false;
+  let originalOpen: PropertyDescriptor | undefined;
+  const owner = {
+    base: {
+      obs: {
+        uploadMediaByE2EE: () =>
+          new Promise<never>((_, reject) => {
+            if (closing) return reject(new Error("upload stopped"));
+            gates.push(() => reject(new Error("upload stopped")));
+            if (gates.length === 2) releaseReady();
+          }),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  async function timely<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("send waited for a slot")),
+            3000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  try {
+    const first = `${dir}/first.txt`, second = `${dir}/second.txt`;
+    const tooLarge = `${dir}/large.txt`, missing = `${dir}/missing.txt`;
+    const queuedDir = `${dir}/queued-dir.txt`;
+    const queuedLarge = `${dir}/queued-large.txt`;
+    for (const path of [first, second, queuedDir, queuedLarge]) {
+      await Deno.writeTextFile(path, "small file");
+    }
+    // The bytes, not the .txt name, make this an image with a 20 MiB cap.
+    await Deno.writeFile(tooLarge, PNG);
+    await Deno.truncate(tooLarge, 20 * 1024 * 1024 + 1);
+    setClient(owner);
+    const generation = sessionGeneration;
+    const holds = [first, second].map((path) =>
+      sendFilePath("uabc", path, owner, generation).then(
+        () => "resolved",
+        (error: Error) => error.message,
+      )
+    );
+    pending.push(...holds);
+    await timely(ready);
+
+    const invalid = [tooLarge, dir, missing].map((path) =>
+      sendFilePath("uabc", path, owner, generation)
+    );
+    pending.push(...invalid);
+    assertEquals(await timely(Promise.all(invalid)), [
+      { ok: false, error: "圖片太大（超過 20 MB）" },
+      { ok: false, error: `不是一般檔案: ${dir}`, logText: "不是一般檔案" },
+      { ok: false, error: `找不到檔案: ${missing}`, logText: "找不到檔案" },
+    ]);
+    assertEquals(gates.length, 2);
+
+    // Wait until both queued requests opened their original regular files.
+    const opened = new Map<string, () => void>();
+    const openedBoth = [queuedDir, queuedLarge].map((path) =>
+      new Promise<void>((resolve) => opened.set(path, resolve))
+    );
+    originalOpen = Object.getOwnPropertyDescriptor(Deno, "open");
+    assert(originalOpen);
+    const open = Deno.open;
+    Object.defineProperty(Deno, "open", {
+      configurable: true,
+      writable: true,
+      value: async (...args: Parameters<typeof Deno.open>) => {
+        const file = await open(...args);
+        const path = String(args[0]);
+        const resolve = opened.get(path);
+        if (resolve) {
+          opened.delete(path);
+          resolve();
+        }
+        return file;
+      },
+    });
+    const queued = [queuedDir, queuedLarge].map((path) =>
+      sendFilePath("uabc", path, owner, generation)
+    );
+    pending.push(...queued);
+    await timely(Promise.all(openedBoth));
+    await Deno.rename(queuedDir, `${dir}/original-dir.txt`);
+    await Deno.mkdir(queuedDir);
+    await Deno.rename(queuedLarge, `${dir}/original-large.txt`);
+    await Deno.writeFile(queuedLarge, PNG);
+    await Deno.truncate(queuedLarge, 20 * 1024 * 1024 + 1);
+    gates[0]();
+    gates[1]();
+    assertEquals(await timely(Promise.all(queued)), [
+      {
+        ok: false,
+        error: `不是一般檔案: ${queuedDir}`,
+        logText: "不是一般檔案",
+      },
+      { ok: false, error: "圖片太大（超過 20 MB）" },
+    ]);
+    assertEquals(await Promise.all(holds), [
+      "upload stopped",
+      "upload stopped",
+    ]);
+    assertEquals(gates.length, 2, "a changed file reached upload");
+  } finally {
+    closing = true;
+    for (const release of gates) release();
+    await Promise.allSettled(pending);
+    if (originalOpen) Object.defineProperty(Deno, "open", originalOpen);
+    setClient(previousClient);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
