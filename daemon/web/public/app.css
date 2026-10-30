@@ -1085,6 +1085,18 @@ textarea::placeholder {
   .composer textarea {
     min-height: 44px;
   }
+  .message-text a {
+    display: inline-block;
+    min-width: 44px;
+    min-height: 44px;
+    max-width: 100%;
+    padding: 10px 0;
+    vertical-align: middle;
+  }
+  .media-image[role="button"] {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 @media (max-width:700px) {
   .send-button {
