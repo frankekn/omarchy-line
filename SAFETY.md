@@ -103,7 +103,7 @@ store.
 | `panel-drafts.json` | Text you typed but did not send. |
 | `panel-stickers.json` | Your recently used stickers. |
 | `avatars.json` | Which profile picture versions are already downloaded. |
-| `names.json` | The display names of people and chats the daemon looked up, including the nicknames you gave people, so chats open with names after a restart. Only the account that saved it reads it, and a name is looked up again after 7 days. |
+| `names.json` | The display names of people and chats the daemon looked up, including the nicknames you gave people, so chats open with names after a restart. Only the account that saved it reads it. After each daemon start, a saved name is confirmed with LINE in the background the first time it is shown, and names that no chat has shown for 90 days are dropped. |
 | `hidden.json` | The chats you hid. |
 | `sock` | The socket the panel talks to. |
 | `lock` | An empty file that stops a second daemon from starting. |

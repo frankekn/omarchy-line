@@ -82,7 +82,7 @@ access token 原子發布完整的新 session。提交前登入失敗，原本�
 | `panel-drafts.json` | 打了但還沒送出的文字。 |
 | `panel-stickers.json` | 最近用過的貼圖。 |
 | `avatars.json` | 哪些版本的大頭貼已經下載過。 |
-| `names.json` | daemon 查過的聯絡人和聊天室顯示名稱，包括你替別人設的暱稱，讓 daemon 重新啟動後聊天室一打開就有名字。只有存它的那個帳號會讀它；名字超過 7 天會重新查一次。 |
+| `names.json` | daemon 查過的聯絡人和聊天室顯示名稱，包括你替別人設的暱稱，讓 daemon 重新啟動後聊天室一打開就有名字。只有存它的那個帳號會讀它。daemon 每次啟動後，存下來的名字第一次被顯示時會在背景跟 LINE 確認一次；90 天都沒有聊天室顯示過的名字會被刪掉。 |
 | `hidden.json` | 你隱藏的聊天室。 |
 | `sock` | 面板連線用的 socket。 |
 | `lock` | 空檔案，防止第二個 daemon 啟動。 |

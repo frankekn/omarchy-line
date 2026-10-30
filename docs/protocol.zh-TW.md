@@ -24,7 +24,7 @@
 | `media/avatars/` | 大頭貼快取（**不看時間**，只有 20 MB 上限，滿了先掃最舊的） |
 | `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |
 | `avatars.json` | 哪個 mid 的哪一版大頭貼已經處理過，重開不用重抓（daemon 專用） |
-| `names.json` | 這個帳號查過的顯示名稱，`{"v":1,"owner":"<我的 mid>","names":{"<mid>":["<名稱>",<存入時間 ms>,"<大頭貼 token>"?]}}`（token 是跟著查名字一起拿到的，重開後名字從這裡讀，大頭貼才不會不見）；只有同一個帳號會讀，超過 7 天的會重新查（原子寫入，`chmod 600`，daemon 專用，上限 5000） |
+| `names.json` | 這個帳號查過的顯示名稱，`{"v":1,"owner":"<我的 mid>","names":{"<mid>":["<名稱>",<存入時間 ms>,"<大頭貼 token>"?]}}`（token 是跟著查名字一起拿到的，重開後名字從這裡讀，大頭貼才不會不見）；只有同一個帳號會讀；存下來的名字直接拿來用，每次啟動後第一次被顯示時在背景跟 LINE 確認一次（一批 getContactsV2／getChats），90 天沒被顯示過的會被刪掉（原子寫入，`chmod 600`，daemon 專用，上限 5000） |
 | `hidden.json` | 被隱藏的聊天室 mid，`{"mids":[…]}`（原子寫入，daemon 專用，上限 1000） |
 | `panel-stickers.json` | 最近用過的貼圖，照帳號分（**外掛**寫的，原子寫入；daemon 不讀） |
 | `qr-<ts>.png` | 登入 QR；每次產生都換檔名（同名檔 QML `Image` 不會重載） |

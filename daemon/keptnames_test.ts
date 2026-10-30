@@ -31,6 +31,13 @@ interface Module {
   switchDuringLoad(mid: string): void;
   holdWrites(): () => void;
   writing: number;
+  noteKeptNameUsed(mid: string): void;
+  onNameChanged(listener: (mids: string[]) => void): void;
+  asked: { contacts: string[][]; chats: string[][] };
+  lineSays: Map<string, { name: string; token?: string }>;
+  restrict(): void;
+  renameWhileAsking(mid: string): void;
+  settle(): Promise<void>;
 }
 
 const PRELUDE = `
@@ -70,10 +77,56 @@ function createNameStore(_path: string) {
     },
   };
 }
+// What the confirmation reaches for.
+export const asked = { contacts: [] as string[][], chats: [] as string[][] };
+export const lineSays = new Map<string, { name: string; token?: string }>();
+export let restriction: unknown = null;
+export function restrict() { restriction = { code: "ABUSE_BLOCK" }; }
+let renameDuringAsk: string | null = null;
+export function renameWhileAsking(mid: string) { renameDuringAsk = mid; }
+export const nameCacheEpoch = new Map<string, number>();
+const CONTACT_BATCH = 100;
+function midKind(mid: string) { return mid.startsWith("c") ? "group" : "user"; }
+function isMe(mid: string) { return mid === "ME"; }
+function noteNameFailure() {}
+function errorLine(e: unknown) { return String(e); }
+function noteAvatar(mid: string, src: unknown) {
+  const t = (src as { picturePath?: string } | undefined)?.picturePath;
+  if (t) avatarTokens.set(mid, t); else avatarTokens.delete(mid);
+}
+const answer = (mid: string) => {
+  if (renameDuringAsk === mid) nameCacheEpoch.set(mid, 1);
+  return lineSays.get(mid);
+};
+export const owner = {
+  base: { talk: {
+    async getContactsV2({ mids }: { mids: string[] }) {
+      asked.contacts.push(mids);
+      const contacts: Record<string, unknown> = {};
+      for (const mid of mids) {
+        const a = answer(mid);
+        if (a) contacts[mid] = { contact: { displayName: a.name, picturePath: a.token } };
+      }
+      return { contacts };
+    },
+    async getChats({ chatMids }: { chatMids: string[] }) {
+      asked.chats.push(chatMids);
+      return { chats: chatMids.flatMap((mid) => {
+        const a = answer(mid);
+        return a ? [{ chatMid: mid, chatName: a.name, picturePath: a.token }] : [];
+      }) };
+    },
+  } },
+};
+const client = owner;
+const sessionGeneration = 1;
+function sessionIsCurrent(c: unknown, g: number) { return c === owner && g === 1; }
+export const changes: string[][] = [];
 let queued: Array<() => void> = [];
 function setTimeout(fn: () => void, _ms: number) { queued.push(fn); return queued.length; }
 function clearTimeout(_id: number) { queued = []; }
 export function runTimers() { const q = queued; queued = []; for (const f of q) f(); }
+export async function settle() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
 export function timers() { return queued.length; }
 `;
 
@@ -181,4 +234,88 @@ Deno.test("a login waits for the logout's save before reading the file", async (
   release();
   await relogin;
   assertEquals(m.nameCache.has("uA"), false);
+});
+
+async function keptSession(rows: Record<string, Kept>) {
+  const m = await loadBlock<Module>("keptnames", PRELUDE);
+  for (const [mid, k] of Object.entries(rows)) m.onDisk.set(mid, k);
+  await m.loadKeptNames("ME");
+  const changed: string[][] = [];
+  m.onNameChanged((mids) => changed.push(mids));
+  return { m, changed };
+}
+
+Deno.test("a kept name is served at once and confirmed once, in one batch", async () => {
+  const { m, changed } = await keptSession({
+    uA: { name: "Alice", at: 1 },
+    cG: { name: "Family", at: 1 },
+  });
+  m.lineSays.set("uA", { name: "Alice" });
+  m.lineSays.set("cG", { name: "Family" });
+  m.noteKeptNameUsed("uA");
+  m.noteKeptNameUsed("uA"); // shown twice, asked once
+  m.noteKeptNameUsed("cG");
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.asked.contacts, [["uA"]]);
+  assertEquals(m.asked.chats, [["cG"]]);
+  assertEquals(changed, []); // nothing moved: no refresh
+  m.noteKeptNameUsed("uA"); // later in the same session: never again
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.asked.contacts.length, 1);
+});
+
+Deno.test("a rename or new picture made while the daemon was off is caught", async () => {
+  const { m, changed } = await keptSession({
+    uA: { name: "Alice", at: 1, token: "old" },
+    uB: { name: "Bob", at: 1, token: "same" },
+  });
+  m.avatarTokens.set("uA", "old");
+  m.avatarTokens.set("uB", "same");
+  m.lineSays.set("uA", { name: "Alice", token: "new" }); // new picture only
+  m.lineSays.set("uB", { name: "Robert", token: "same" }); // renamed
+  m.noteKeptNameUsed("uA");
+  m.noteKeptNameUsed("uB");
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.nameCache.get("uB"), "Robert");
+  assertEquals(m.avatarTokens.get("uA"), "new");
+  assertEquals(changed, [["uA", "uB"]]);
+});
+
+Deno.test("a name nobody shows is never asked about", async () => {
+  const { m } = await keptSession({ uA: { name: "Alice", at: 1 } });
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.asked.contacts, []);
+});
+
+Deno.test("names LINE already answered this session are not confirmed again", async () => {
+  const { m } = await keptSession({ uA: { name: "Alice", at: 1 } });
+  m.rememberName("uA", "Alice"); // e.g. a member list lookup
+  m.noteKeptNameUsed("uA");
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.asked.contacts, []);
+});
+
+Deno.test("a restricted account confirms nothing", async () => {
+  const { m } = await keptSession({ uA: { name: "Alice", at: 1 } });
+  m.restrict();
+  m.noteKeptNameUsed("uA");
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.asked.contacts, []);
+});
+
+Deno.test("a rename operation during the ask wins over the answer", async () => {
+  const { m, changed } = await keptSession({ uA: { name: "Alice", at: 1 } });
+  m.lineSays.set("uA", { name: "Old answer" });
+  m.renameWhileAsking("uA");
+  m.noteKeptNameUsed("uA");
+  m.runTimers();
+  await m.settle();
+  assertEquals(m.nameCache.get("uA"), "Alice");
+  assertEquals(changed, []);
 });
