@@ -17,8 +17,10 @@ export function createMessagesView(ctx) {
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   let programmaticScroll = false, programmaticMoved = false;
   let programmaticTop = 0, programmaticTimer = 0;
+  let quoteJumpTarget = "";
   let followAfterProgrammatic = false;
-  let touching = false, touchSettling = false, touchTimer = 0;
+  let touchPhase = "idle", touchTimer = 0;
+  let touchPaging = false;
   let trimAfterTouch = false, followAfterTouch = false;
   const command = (...args) => ctx.command(...args);
   const displayError = (error) => ctx.displayError(error);
@@ -33,6 +35,15 @@ export function createMessagesView(ctx) {
     SAD: "😢",
     OMG: "😱",
   };
+  function alignQuoteTarget(target) {
+    target.scrollIntoView({
+      block: "center",
+      behavior:
+        globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ? "auto"
+          : "smooth",
+    });
+  }
   function scrollToMessage(id) {
     const list = $("messages");
     const target = [...list.querySelectorAll(".message-row")].find(
@@ -43,16 +54,10 @@ export function createMessagesView(ctx) {
       return;
     }
     interruptFollowing();
-    beginProgrammaticScroll();
+    beginProgrammaticScroll(String(id));
     // A quote jump can pass the paging threshold without the reader scrolling.
     suspendPaging(1000);
-    target.scrollIntoView({
-      block: "center",
-      behavior:
-        globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "auto"
-          : "smooth",
-    });
+    alignQuoteTarget(target);
     if (list.scrollHeight <= list.clientHeight) {
       endProgrammaticScroll();
     }
@@ -489,7 +494,7 @@ export function createMessagesView(ctx) {
       (followedTop !== null && Math.abs(list.scrollTop - followedTop) <= 2);
   }
   function followBottom(list) {
-    if (programmaticScroll || touching || touchSettling) return;
+    if (programmaticScroll || touchPhase !== "idle") return;
     if (followFrame) cancelAnimationFrame(followFrame);
     list.scrollTop = list.scrollHeight;
     followedTop = list.scrollTop;
@@ -499,7 +504,7 @@ export function createMessagesView(ctx) {
       followFrame = 0;
       if (
         chat !== renderedChat || account !== renderedAccount ||
-        programmaticScroll || touching || touchSettling ||
+        programmaticScroll || touchPhase !== "idle" ||
         followedTop === null || Math.abs(list.scrollTop - followedTop) > 2
       ) return;
       list.scrollTop = list.scrollHeight;
@@ -536,9 +541,10 @@ export function createMessagesView(ctx) {
     programmaticTimer = 0;
     programmaticScroll = false;
     programmaticMoved = false;
+    quoteJumpTarget = "";
     followAfterProgrammatic = false;
     if (
-      follow && !touching && !touchSettling && model.active === renderedChat &&
+      follow && touchPhase === "idle" && model.active === renderedChat &&
       model.account === renderedAccount && ctx.isViewingChat()
     ) {
       suspendPaging(200);
@@ -553,26 +559,29 @@ export function createMessagesView(ctx) {
   function cancelTouchSettling() {
     clearTimeout(touchTimer);
     touchTimer = 0;
-    touchSettling = false;
+    if (touchPhase !== "active") touchPhase = "idle";
+    touchPaging = false;
     trimAfterTouch = false;
     followAfterTouch = false;
   }
-  function beginProgrammaticScroll() {
+  function beginProgrammaticScroll(target = "") {
     cancelTouchSettling();
     programmaticScroll = true;
     programmaticMoved = false;
+    quoteJumpTarget = target;
     followAfterProgrammatic = false;
     programmaticTop = $("messages").scrollTop;
     // A scrollend is not emitted when the target is already in view.
     waitForProgrammaticScroll(1000);
   }
   function finishTouchScroll() {
-    if (touching || !touchSettling) return;
+    if (touchPhase !== "settling") return;
     clearTimeout(touchTimer);
     touchTimer = 0;
-    touchSettling = false;
+    touchPhase = "idle";
     const shouldFollow = followAfterTouch || isFollowing(list);
     const shouldTrim = trimAfterTouch;
+    touchPaging = false;
     followAfterTouch = false;
     trimAfterTouch = false;
     if (!programmaticScroll && shouldFollow) {
@@ -588,7 +597,7 @@ export function createMessagesView(ctx) {
     touchTimer = setTimeout(finishTouchScroll, 200);
   }
   function scheduleTrim(list) {
-    if (touching || touchSettling) {
+    if (touchPhase !== "idle") {
       trimAfterTouch = true;
       return;
     }
@@ -600,7 +609,7 @@ export function createMessagesView(ctx) {
         chat !== renderedChat || account !== renderedAccount ||
         chat !== model.active || account !== model.account ||
         model.loading || model.loadingOlder || $("lightbox").open ||
-        programmaticScroll || touching || touchSettling ||
+        programmaticScroll || touchPhase !== "idle" ||
         !ctx.isViewingChat()
       ) return;
       const top = list.scrollTop;
@@ -665,7 +674,7 @@ export function createMessagesView(ctx) {
           chat !== renderedChat || account !== renderedAccount ||
           chat !== model.active || account !== model.account ||
           model.loading || model.loadingOlder || $("lightbox").open ||
-          programmaticScroll || touching || touchSettling ||
+          programmaticScroll || touchPhase !== "idle" ||
           !ctx.isViewingChat()
         ) return;
         const current = list.scrollTop;
@@ -712,7 +721,7 @@ export function createMessagesView(ctx) {
       wasFollowing && Math.abs(oldTop - programmaticTop) <= 2
     ) followAfterProgrammatic = true;
     const following = !programmaticScroll && wasFollowing;
-    if (following && (touching || touchSettling)) followedTop = oldTop;
+    if (following && (touchPhase !== "idle")) followedTop = oldTop;
     const chatChanged = renderedChat !== model.active ||
       renderedAccount !== model.account;
     if (chatChanged) {
@@ -720,6 +729,8 @@ export function createMessagesView(ctx) {
       clearTimeout(pagingTimer);
       endProgrammaticScroll();
       cancelTouchSettling();
+      touchPhase = "idle";
+      touchY = null;
       if (followFrame) cancelAnimationFrame(followFrame);
       if (trimFrame) cancelAnimationFrame(trimFrame);
       followFrame = 0;
@@ -753,7 +764,7 @@ export function createMessagesView(ctx) {
       model.messages.length > HISTORY_LIMIT &&
       !$("lightbox").open && ctx.isViewingChat()
     ) {
-      if (touching || touchSettling) trimAfterTouch = true;
+      if (touchPhase !== "idle") trimAfterTouch = true;
       else if (model.messages.length > HISTORY_LIMIT + TRIM_BATCH) {
         deferTrim = true;
       } else {
@@ -978,15 +989,26 @@ export function createMessagesView(ctx) {
     order = keys;
     ctx.refreshLightbox();
     if (mode === "bottom" || (mode === "follow" && following)) {
-      if (mode === "bottom" && (touching || touchSettling)) {
+      if (mode === "bottom" && (touchPhase !== "idle")) {
         followAfterTouch = true;
       }
       followBottom(list);
+    } else if (mode === "anchor" && programmaticScroll && quoteJumpTarget) {
+      const target = [...list.querySelectorAll(".message-row")].find((row) =>
+        row.dataset.messageId === quoteJumpTarget
+      );
+      if (target) {
+        const distance = anchor?.isConnected
+          ? anchor.getBoundingClientRect().top - anchorTop
+          : list.scrollHeight - oldHeight;
+        if (distance) list.scrollTop += distance;
+        alignQuoteTarget(target);
+      }
     } else if (mode === "anchor" && !programmaticScroll) {
       if (!anchor?.isConnected) {
         const position = oldTop + list.scrollHeight - oldHeight;
         if (position !== list.scrollTop) {
-          if (!touching && !touchSettling) beginProgrammaticScroll();
+          if (touchPhase === "idle") beginProgrammaticScroll();
           list.scrollTop = position;
         }
       } else {
@@ -999,7 +1021,7 @@ export function createMessagesView(ctx) {
           ) return;
           const distance = anchor.getBoundingClientRect().top - anchorTop;
           if (distance) {
-            if (!programmaticScroll && !touching && !touchSettling) {
+            if (!programmaticScroll && touchPhase === "idle") {
               beginProgrammaticScroll();
             }
             list.scrollTop += distance;
@@ -1009,7 +1031,7 @@ export function createMessagesView(ctx) {
         };
         settleAnchor();
       }
-    } else if (!programmaticScroll && !touching && !touchSettling) {
+    } else if (!programmaticScroll && touchPhase === "idle") {
       list.scrollTop = oldTop;
     }
     if (deferTrim) scheduleTrim(list);
@@ -1039,14 +1061,16 @@ export function createMessagesView(ctx) {
       waitForProgrammaticScroll(200);
     } else if (list.scrollHeight - list.scrollTop - list.clientHeight <= 2) {
       followedTop = list.scrollTop;
-      if (!touching && !touchSettling && !followFrame) followBottom(list);
+      if (touchPhase === "idle" && !followFrame) followBottom(list);
     } else if (
       followedTop !== null && Math.abs(list.scrollTop - followedTop) > 2
     ) {
       followedTop = null;
       followAfterTouch = false;
     }
-    if (touchSettling && !touching) waitForTouchScroll();
+    if (touchPhase === "settling") waitForTouchScroll();
+    // Layout can dispatch scroll during a tap without a paging gesture.
+    if (touchPhase !== "idle" && !touchPaging) return;
     if (suppressPaging) {
       suspendPaging(200);
       return;
@@ -1057,12 +1081,12 @@ export function createMessagesView(ctx) {
     passive: true,
   });
   list.addEventListener("touchstart", (event) => {
-    if (!touching) {
+    if (touchPhase !== "active") {
       const following = isFollowing(list);
       if (trimFrame) trimAfterTouch = true;
       resumePaging(false, true);
-      touching = true;
-      touchSettling = true;
+      touchPhase = "active";
+      touchPaging = false;
       clearTimeout(touchTimer);
       if (following) followedTop = list.scrollTop;
     }
@@ -1072,6 +1096,7 @@ export function createMessagesView(ctx) {
     const y = event.touches[0]?.clientY;
     const up = touchY !== null && y > touchY;
     const following = isFollowing(list);
+    if (up) touchPaging = true;
     resumePaging(up, true);
     if (up) followAfterTouch = false;
     else if (following) followedTop = list.scrollTop;
@@ -1079,10 +1104,9 @@ export function createMessagesView(ctx) {
   }, { passive: true });
   for (const type of ["touchend", "touchcancel"]) {
     document.addEventListener(type, (event) => {
-      if (!touching || event.touches.length) return;
-      touching = false;
+      if (touchPhase !== "active" || event.touches.length) return;
+      touchPhase = "settling";
       touchY = null;
-      touchSettling = true;
       waitForTouchScroll();
     }, { passive: true });
   }

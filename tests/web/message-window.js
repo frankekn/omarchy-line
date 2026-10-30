@@ -1,6 +1,27 @@
 // Exercise trimming, paging and protected interactions in the real page.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
 
+async function exposeFollowContext(context) {
+  const appUrl = new URL("../../daemon/web/public/js/app.js", import.meta.url);
+  let app = await Deno.readTextFile(appUrl);
+  for (
+    const [old, replacement] of [
+      [
+        "  model = createModel();",
+        "  model = createModel();\nglobalThis.__followModel = model;",
+      ],
+      ["ctx = finish();", "ctx = finish();\nglobalThis.__followCtx = ctx;"],
+    ]
+  ) {
+    assert.equal(app.split(old).length, 2);
+    app = app.replace(old, replacement);
+  }
+  await context.route(
+    "**/js/app.js",
+    (route) => route.fulfill({ contentType: "text/javascript", body: app }),
+  );
+}
+
 async function reactDuringEmptyPage(h) {
   const context = await h.context({
     locale: "en-US",
@@ -69,6 +90,359 @@ async function reactDuringEmptyPage(h) {
   h.step("empty older page keeps React stable during pointer and touch input");
 }
 
+async function touchDuringAccountChange(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  await exposeFollowContext(context);
+  const page = await context.newPage();
+  const now = Date.now();
+  const messages = Array.from({ length: 50 }, (_, i) => ({
+    id: String(5000 + i),
+    chat: CHAT,
+    from: "u-window-peer",
+    time: now + i * 1000,
+    text: `Account touch message ${i}`,
+    contentType: "NONE",
+  }));
+  const tap = await tapSocket(page, {
+    client(frame, connection) {
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      connection.socket.send(JSON.stringify({
+        id: frame.id,
+        ok: true,
+        data: frame.before ? [] : messages,
+      }));
+      return false;
+    },
+  });
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  const row = page.locator('article[data-message-id="5049"] .message-text');
+  await row.waitFor();
+  await page.waitForFunction(() => {
+    const list = document.getElementById("messages");
+    return !globalThis.__followModel.loading &&
+      list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+  });
+  const cdp = h.browserName === "chromium"
+    ? await context.newCDPSession(page)
+    : null;
+  if (cdp) {
+    const box = await row.boundingBox();
+    assert.ok(box);
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{
+        x: box.x + box.width / 2,
+        y: box.y + box.height / 2,
+        id: 1,
+      }],
+    });
+  } else {
+    // The old touch target is removed before it can deliver touchend.
+    await row.evaluate((node) => {
+      const event = new Event("touchstart", { bubbles: true });
+      Object.defineProperty(event, "touches", { value: [{ clientY: 200 }] });
+      node.dispatchEvent(event);
+    });
+  }
+  const state = await h.state();
+  tap.socket.send(JSON.stringify({
+    web: "state",
+    state: { ...state, me: { mid: "u-touch-switch", displayName: "Other" } },
+  }));
+  await page.getByText("Other", { exact: true }).waitFor();
+  if (cdp) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+  }
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await row.waitFor();
+  await page.waitForFunction(() => !globalThis.__followModel.loading);
+  await page.locator("#messages").evaluate((list) => {
+    list.scrollTop = list.scrollHeight;
+  });
+  await page.waitForFunction(() => {
+    const list = document.getElementById("messages");
+    return list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+  });
+  await page.evaluate(() => {
+    const model = globalThis.__followModel;
+    globalThis.__followCtx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: {
+          id: "6000",
+          chat: model.active,
+          from: model.account,
+          time: Date.now() + 600000,
+          text: "Follow after account touch",
+          contentType: "NONE",
+        },
+      },
+    });
+  });
+  await page.getByText("Follow after account touch", { exact: true }).waitFor();
+  await page.waitForFunction(
+    () => {
+      const list = document.getElementById("messages");
+      return list.scrollHeight - list.clientHeight - list.scrollTop <= 2;
+    },
+    null,
+    { timeout: 5000 },
+  );
+  await cdp?.detach();
+  await context.close();
+  h.step("account change during touch does not block following");
+}
+
+async function touchPagingNearTop(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const messages = Array.from({ length: 30 }, (_, i) => ({
+    id: String(7000 + i),
+    chat: CHAT,
+    from: "u-window-peer",
+    time: Date.now() + i * 1000,
+    text: `Touch paging message ${i}`,
+    contentType: "NONE",
+  }));
+  const requests = [];
+  await tapSocket(page, {
+    client(frame, connection) {
+      if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+      requests.push(frame);
+      connection.socket.send(JSON.stringify({
+        id: frame.id,
+        ok: true,
+        data: frame.before ? [] : messages,
+      }));
+      return false;
+    },
+  });
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.getByText("Touch paging message 29", { exact: true }).waitFor();
+  await page.locator("#messages").evaluate((list) => {
+    list.scrollTop = 200;
+  });
+  const before = requests.length;
+  await page.locator("#messages").evaluate((list) => {
+    const touch = (type, touches) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      list.dispatchEvent(event);
+    };
+    touch("touchstart", [{ clientY: 200 }]);
+    touch("touchmove", [{ clientY: 220 }]);
+    // Model the browser applying the gesture after touchmove returns.
+    list.scrollTop = 100;
+    list.dispatchEvent(new Event("scroll"));
+    touch("touchend", []);
+  });
+  await until(() => requests.length > before, "touch paging");
+  assert.ok(requests.slice(before).some((frame) => frame.before));
+  await context.close();
+  h.step("touch movement toward older messages still pages");
+}
+
+async function quoteDuringOlder(h) {
+  const viewUrl = new URL(
+    "../../daemon/web/public/js/view-messages.js",
+    import.meta.url,
+  );
+  let view = await Deno.readTextFile(viewUrl);
+  const marker = "  return { renderMessages, closeOpenReactions };";
+  assert.equal(view.split(marker).length, 2);
+  view = view.replace(
+    marker,
+    "  globalThis.__jumpActive = () => programmaticScroll;\n" +
+      "  globalThis.__jumpState = () => ({ programmaticScroll, " +
+      "programmaticMoved, quoteJumpTarget });\n" + marker,
+  );
+  const anchor = '    if (mode === "anchor") {';
+  assert.equal(view.split(anchor).length, 2);
+  view = view.replace(
+    anchor,
+    anchor + "\n      globalThis.__anchorDuringJump = programmaticScroll;",
+  );
+  for (
+    const { motion, interrupt } of [
+      { motion: "no-preference", interrupt: false },
+      { motion: "reduce", interrupt: false },
+      { motion: "no-preference", interrupt: true },
+    ]
+  ) {
+    const context = await h.context({
+      locale: "en-US",
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    await exposeFollowContext(context);
+    await context.route(
+      "**/js/view-messages.js",
+      (route) => route.fulfill({ contentType: "text/javascript", body: view }),
+    );
+    await context.addInitScript(() => {
+      const original = Element.prototype.scrollIntoView;
+      globalThis.__quoteAlignments = [];
+      Element.prototype.scrollIntoView = function (options) {
+        if (this.dataset.messageId === "10002") {
+          globalThis.__quoteAlignments.push(options?.behavior);
+        }
+        return original.call(this, options);
+      };
+    });
+    const page = await context.newPage();
+    await page.emulateMedia({ reducedMotion: motion });
+    const now = Date.now();
+    const history = Array.from({ length: 50 }, (_, i) => ({
+      id: String(10000 + i),
+      chat: CHAT,
+      from: "u-window-peer",
+      time: now + i * 1000,
+      text: `Quote race message ${i}`,
+      contentType: "NONE",
+      ...(i === 5 ? { replyTo: { id: "10002", text: "origin" } } : {}),
+    }));
+    const older = Array.from({ length: 30 }, (_, i) => ({
+      id: String(9000 + i),
+      chat: CHAT,
+      from: "u-window-peer",
+      time: now - (30 - i) * 1000,
+      text: `Quote race older ${i}`,
+      contentType: "NONE",
+    }));
+    let releaseOlder;
+    await tapSocket(page, {
+      client(frame, connection) {
+        if (frame.cmd !== "history" || frame.chat !== CHAT) return true;
+        const reply = JSON.stringify({
+          id: frame.id,
+          ok: true,
+          data: frame.before ? older : history,
+        });
+        if (frame.before) releaseOlder = () => connection.socket.send(reply);
+        else connection.socket.send(reply);
+        return false;
+      },
+    });
+    await h.signIn(page);
+    await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+    await page.getByText("Quote race message 49", { exact: true }).waitFor();
+    await page.waitForFunction(() => !globalThis.__followModel.loading);
+    await page.waitForTimeout(300);
+    await page.locator("#messages").evaluate((list) => {
+      list.scrollTop = 0;
+      list.dispatchEvent(new Event("scroll"));
+    });
+    await until(() => releaseOlder, "held older response");
+    const quote = page.locator('article[data-message-id="10005"] .quote');
+    if (!interrupt) {
+      await page.exposeFunction("__releaseQuoteOlder", () => releaseOlder());
+      await quote.evaluate((node) => {
+        node.addEventListener("click", () => {
+          globalThis.__jumpAtClick = globalThis.__jumpActive();
+          void globalThis.__releaseQuoteOlder();
+        }, { once: true });
+      });
+    }
+    await quote.click();
+    let alignmentsBefore;
+    if (interrupt) {
+      await page.locator("#messages").focus();
+      await page.keyboard.press("End");
+      await page.waitForFunction(() => !globalThis.__jumpActive());
+      alignmentsBefore = await page.evaluate(() =>
+        globalThis.__quoteAlignments.length
+      );
+      releaseOlder();
+    } else {
+      assert.equal(await page.evaluate(() => globalThis.__jumpAtClick), true);
+    }
+    await page.waitForFunction(() =>
+      !globalThis.__followModel.loadingOlder &&
+      !!document.querySelector('article[data-message-id="9000"]')
+    );
+    if (interrupt) {
+      await page.waitForTimeout(300);
+      assert.equal(
+        await page.evaluate(() => globalThis.__quoteAlignments.length),
+        alignmentsBefore,
+        "older response restarted an interrupted quote jump",
+      );
+    } else {
+      assert.equal(
+        await page.evaluate(() => globalThis.__anchorDuringJump),
+        true,
+      );
+      try {
+        await page.waitForFunction(
+          () => {
+            const list = document.getElementById("messages")
+              .getBoundingClientRect();
+            const target = document.querySelector(
+              'article[data-message-id="10002"]',
+            ).getBoundingClientRect();
+            return target.bottom > list.top && target.top < list.bottom;
+          },
+          null,
+          { timeout: 5000 },
+        );
+      } catch (error) {
+        const detail = await page.evaluate(() => {
+          const list = document.getElementById("messages");
+          const area = list.getBoundingClientRect();
+          const target = list.querySelector(
+            'article[data-message-id="10002"]',
+          )?.getBoundingClientRect();
+          return {
+            top: list.scrollTop,
+            height: list.scrollHeight,
+            listTop: area.top,
+            listBottom: area.bottom,
+            targetTop: target?.top,
+            targetBottom: target?.bottom,
+            alignments: globalThis.__quoteAlignments,
+            jump: globalThis.__jumpState(),
+          };
+        });
+        throw new Error(`quote target not visible: ${JSON.stringify(detail)}`, {
+          cause: error,
+        });
+      }
+      const alignments = await page.evaluate(() =>
+        globalThis.__quoteAlignments
+      );
+      assert.ok(alignments.length >= 2);
+      assert.ok(
+        alignments.every((value) =>
+          value === (motion === "reduce" ? "auto" : "smooth")
+        ),
+      );
+    }
+    await context.close();
+    h.step(
+      `older reply during quote: ${motion}${interrupt ? " interrupted" : ""}`,
+    );
+  }
+}
+
 async function scrollFollow(h) {
   const context = await h.context({
     locale: "en-US",
@@ -76,24 +450,7 @@ async function scrollFollow(h) {
     isMobile: true,
     hasTouch: true,
   });
-  const appUrl = new URL("../../daemon/web/public/js/app.js", import.meta.url);
-  let app = await Deno.readTextFile(appUrl);
-  for (
-    const [old, replacement] of [
-      [
-        "  model = createModel();",
-        "  model = createModel();\nglobalThis.__followModel = model;",
-      ],
-      ["ctx = finish();", "ctx = finish();\nglobalThis.__followCtx = ctx;"],
-    ]
-  ) {
-    assert.equal(app.split(old).length, 2);
-    app = app.replace(old, replacement);
-  }
-  await context.route(
-    "**/js/app.js",
-    (route) => route.fulfill({ contentType: "text/javascript", body: app }),
-  );
+  await exposeFollowContext(context);
   const page = await context.newPage();
   const now = Date.now();
   const messages = Array.from({ length: 30 }, (_, i) => ({
@@ -663,6 +1020,8 @@ async function scrollFollow(h) {
       list.querySelector(".message-row:last-child .bubble").append(grow);
       const overflow = list.scrollHeight - list.clientHeight;
       grow.style.height = `${1000 - overflow + 60}px`;
+      // A delayed scroll from the previous layout can arrive during a tap.
+      list.scrollTop = 1;
     }, { once: true });
   });
   const beforeTouchGrowth = requests.length;
@@ -770,6 +1129,9 @@ async function scrollFollow(h) {
 
 export async function messageWindow(h) {
   await reactDuringEmptyPage(h);
+  await touchDuringAccountChange(h);
+  await touchPagingNearTop(h);
+  await quoteDuringOlder(h);
   await scrollFollow(h);
   const context = await h.context({
     locale: "en-US",
