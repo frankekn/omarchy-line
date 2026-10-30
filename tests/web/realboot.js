@@ -199,7 +199,7 @@ async function checkSocket(page) {
         reject(new Error("WebSocket state/reply timeout"));
       }, 10000);
       ws.onopen = () =>
-        ws.send(JSON.stringify({ id: "realboot", cmd: "realboot-probe" }));
+        ws.send(JSON.stringify({ id: "realboot", cmd: "sync" }));
       ws.onmessage = (event) => {
         const frame = JSON.parse(event.data);
         if (frame.web === "state" && frame.state?.login?.status === "idle") {

@@ -339,10 +339,17 @@ Deno.test("an unusable key is replaced by a minted one", async () => {
 /** The standalone server's log up to its sign-in line, then stop it. */
 async function signInLog(key: string | undefined): Promise<string[]> {
   const stateHome = await Deno.makeTempDir({ prefix: "enil-web-log-" });
+  // The server refuses port 0, so borrow a free port when none is given.
+  let port = TEST_PORT;
+  if (!port) {
+    const probe = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    port = probe.addr.port;
+    probe.close();
+  }
   const env: Record<string, string> = {
     HOME: Deno.env.get("HOME") ?? "/",
     XDG_STATE_HOME: stateHome,
-    ENIL_WEB_ADDR: `127.0.0.1:${TEST_PORT}`,
+    ENIL_WEB_ADDR: `127.0.0.1:${port}`,
   };
   const denoDir = Deno.env.get("DENO_DIR");
   if (denoDir) env.DENO_DIR = denoDir;
