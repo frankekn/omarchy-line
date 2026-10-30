@@ -34,6 +34,38 @@ function tag(head, at, length) {
   return String.fromCharCode(...head.subarray(at, at + length));
 }
 
+const NAME_MAX_BYTES = 200;
+
+function utf8Length(text) {
+  return new TextEncoder().encode(text).length;
+}
+
+function utf8Prefix(text, max) {
+  let bytes = 0, end = 0;
+  for (const ch of text) {
+    const point = ch.codePointAt(0) ?? 0;
+    const size = point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+    if (bytes + size > max) break;
+    bytes += size;
+    end += ch.length;
+  }
+  return text.slice(0, end);
+}
+
+// files.ts sanitizes and truncates the name before media-send sees it; this
+// is its uploadName, so the page predicts the same type.
+function uploadedName(raw) {
+  const base = raw.split(/[\\/]/).pop();
+  // deno-lint-ignore no-control-regex
+  const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  const name = (clean === "." || clean === ".." ? "" : clean) || "file";
+  if (utf8Length(name) <= NAME_MAX_BYTES) return name;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot) : "";
+  const stem = utf8Prefix(name.slice(0, dot), NAME_MAX_BYTES - utf8Length(ext));
+  return ext && stem ? stem + ext : utf8Prefix(name, NAME_MAX_BYTES);
+}
+
 export function mediaKind(name, head) {
   const starts = (bytes) =>
     head.length >= bytes.length &&
@@ -54,12 +86,7 @@ export function mediaKind(name, head) {
     }
   } else if (starts([0x1a, 0x45, 0xdf, 0xa3])) return "video";
 
-  // files.ts sanitizes and truncates the name before media-send sees it.
-  const base = String(name || "image.png").split(/[\\/]/).pop();
-  // deno-lint-ignore no-control-regex
-  const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  const safe = clean === "." || clean === ".." ? "" : clean;
-  const uploaded = (safe || "file").slice(0, 200);
+  const uploaded = uploadedName(String(name || "image.png"));
   const dot = uploaded.lastIndexOf(".");
   const extension = dot > 0 ? uploaded.slice(dot + 1).toLowerCase() : "";
   return Object.hasOwn(extensions, extension) ? extensions[extension] : "file";

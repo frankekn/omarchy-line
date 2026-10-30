@@ -49,13 +49,46 @@ export function sniffInline(b: Uint8Array): string | null {
   return null;
 }
 
+/**
+ * Stored names are cut to this many UTF-8 bytes. File systems limit a name
+ * to 255 bytes, not characters: 90 CJK characters are 270 bytes.
+ */
+const UPLOAD_NAME_MAX_BYTES = 200;
+
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** The longest prefix of `text` within `max` UTF-8 bytes, by code point. */
+function utf8Prefix(text: string, max: number): string {
+  let bytes = 0, end = 0;
+  for (const ch of text) {
+    const point = ch.codePointAt(0) ?? 0;
+    // A lone surrogate is encoded as U+FFFD, which is 3 bytes too.
+    const size = point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+    if (bytes + size > max) break;
+    bytes += size;
+    end += ch.length;
+  }
+  return text.slice(0, end);
+}
+
 /** One path component a user picked, safe to create under the upload dir. */
 export function uploadName(raw: string | null): string {
   const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
   // deno-lint-ignore no-control-regex
   const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  const name = clean === "." || clean === ".." ? "" : clean;
-  return (name || "file").slice(0, 200);
+  const name = (clean === "." || clean === ".." ? "" : clean) || "file";
+  if (utf8Length(name) <= UPLOAD_NAME_MAX_BYTES) return name;
+  // Keep the extension when it fits, so the page and LINE still know the
+  // file's type from its name.
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot) : "";
+  const stem = utf8Prefix(
+    name.slice(0, dot),
+    UPLOAD_NAME_MAX_BYTES - utf8Length(ext),
+  );
+  return ext && stem ? stem + ext : utf8Prefix(name, UPLOAD_NAME_MAX_BYTES);
 }
 
 function contentDisposition(name: string): string {

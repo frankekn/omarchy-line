@@ -78,6 +78,39 @@ Deno.test("an upload name is one safe path component", () => {
   assertEquals(uploadName(null), "file");
 });
 
+Deno.test("a long upload name is cut by UTF-8 bytes and keeps its type", async () => {
+  const bytes = (s: string) => new TextEncoder().encode(s).length;
+  const cjk = uploadName("照".repeat(90) + ".txt");
+  assertEquals(cjk, "照".repeat(65) + ".txt");
+  assert(bytes(cjk) <= 200);
+  // Four-byte code points are never split into a lone surrogate.
+  for (const raw of ["😀".repeat(60), "a" + "😀".repeat(60) + ".png"]) {
+    const name = uploadName(raw);
+    assert(bytes(name) <= 200 && name.isWellFormed(), name);
+  }
+  assert(uploadName("a" + "😀".repeat(60) + ".png").endsWith(".png"));
+  // An extension that cannot fit is cut with the rest of the name.
+  assertEquals(uploadName("a." + "b".repeat(300)), "a." + "b".repeat(198));
+  assertEquals(uploadName("a".repeat(300)), "a".repeat(200));
+
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-name-" });
+  const uploads = await Uploads.open(stateDir);
+  try {
+    const name = "照".repeat(90) + ".txt";
+    const res = await uploads.receive(
+      new Request("http://box/api/upload", { method: "POST", body: "x" }),
+      new URL(`http://box/api/upload?name=${encodeURIComponent(name)}`),
+    );
+    assertEquals(res.status, 200);
+    const { path } = await res.json();
+    assertEquals(path.split("/").pop(), cjk);
+    assertEquals(await Deno.readTextFile(path), "x");
+  } finally {
+    uploads.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("an upload can be claimed once, until it is discarded", async () => {
   const stateDir = await Deno.makeTempDir({ prefix: "enil-web-claim-" });
   const uploads = await Uploads.open(stateDir);
