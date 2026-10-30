@@ -41,6 +41,7 @@ interface Module {
   ): Promise<void>;
   owner: unknown;
   events: Array<{ kind: string; chat: string; messages: Msg[] }>;
+  errors: string[];
   readRanges: Map<string, Map<string, bigint>>;
   setRange(entries: Record<string, bigint>): void;
   setPage(ids: string[]): void;
@@ -95,8 +96,10 @@ function readRangeToMap(entry: { ranges: Record<string, bigint> }) {
 const me: Json = { mid: "${ME}" };
 const stored = new Map<string, { id: string; text?: string }>();
 const messageStore = {
+  // The real store's contract: the held record per row, in order.
   append(_me: string, _chat: string, rows: Array<{ id: string; text?: string }>) {
     for (const r of rows) stored.set(r.id, r);
+    return rows.map((r) => stored.get(r.id)!);
   },
   async tail(_me: string, _chat: string, n: number) {
     const rows = [...stored.values()].sort((a, b) => Number(a.id) - Number(b.id));
@@ -120,7 +123,10 @@ async function convertHistoryPage(raws: unknown[], chat: string): Promise<Plugin
   return out;
 }
 function pushEvent(ev: { kind: string; chat: string; messages: PluginMessage[] }) { events.push(ev); }
-const console = { error() {} };
+// Recorded, not dropped: a success path that throws inside the outer catch
+// would otherwise pass every assertion that only checks for silence.
+export const errors: string[] = [];
+const console = { error(...args: unknown[]) { errors.push(args.map(String).join(" ")); } };
 function errorLine(e: unknown) { return String(e); }
 export { loadReadRange, revalidateHistory };
 `;
@@ -175,6 +181,7 @@ Deno.test("an unchanged page publishes nothing", async () => {
     load1,
   );
   assertEquals(m.events.length, 0);
+  assertEquals(m.errors, []);
 });
 
 Deno.test("two background paths for one chat publish the same page once", async () => {
@@ -202,6 +209,7 @@ Deno.test("two background paths for one chat publish the same page once", async 
   );
   await Promise.all([first, second]);
   assertEquals(m.events.length, 1);
+  assertEquals(m.errors, []);
 });
 
 Deno.test("a conversion that straddles a logout publishes nothing", async () => {
@@ -256,4 +264,5 @@ Deno.test("a slower open's republish neither repeats nor rolls back a newer page
   await second;
   assertEquals(m.events.length, 1);
   assertEquals(m.events[0].messages[1].text, "edited");
+  assertEquals(m.errors, []);
 });
