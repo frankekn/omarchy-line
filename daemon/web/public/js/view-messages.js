@@ -797,9 +797,10 @@ export function createMessagesView(ctx) {
     if (up) loadNearTop();
   }
   list.addEventListener("scroll", () => {
-    // Remember a reader's return to the bottom before deferred layout grows.
+    // Settle after a reader reaches the bottom, including deferred layout.
     if (list.scrollHeight - list.scrollTop - list.clientHeight <= 2) {
       followedTop = list.scrollTop;
+      if (!followFrame) followBottom(list);
     } else if (
       followedTop !== null && Math.abs(list.scrollTop - followedTop) > 2
     ) {

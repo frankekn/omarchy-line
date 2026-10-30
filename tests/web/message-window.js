@@ -345,6 +345,67 @@ export async function messageWindow(h) {
   });
   console.log(`  browser features ${JSON.stringify(features)}`);
   if (features.overflowAnchor) assert.equal(features.computedAnchor, "none");
+  await page.locator("#messages").evaluate((list) => {
+    const rows = [...list.querySelectorAll(".message-row")];
+    const visibility = rows.map((row) => row.style.contentVisibility);
+    for (const row of rows) row.style.contentVisibility = "visible";
+    const grow = document.createElement("div");
+    grow.style.height = "0px";
+    list.querySelector(".message-row:last-child .bubble").append(grow);
+    const state = { grow, rows, visibility, started: false, done: false };
+    state.onScroll = () => {
+      if (
+        !state.started &&
+        list.scrollHeight - list.clientHeight - list.scrollTop <= 2
+      ) {
+        state.started = true;
+        requestAnimationFrame(() => {
+          grow.style.height = "87px";
+          state.done = true;
+        });
+      }
+    };
+    globalThis.__bottomGrowth = state;
+    list.addEventListener("scroll", state.onScroll);
+    list.scrollTop = list.scrollHeight;
+  });
+  await page.waitForFunction(() => globalThis.__bottomGrowth.done);
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  const afterGrowth = await current();
+  if (afterGrowth.bottom > 2) await reportBottom(afterGrowth);
+  assert.ok(
+    afterGrowth.bottom <= 2,
+    `bottom after growth ${afterGrowth.bottom}`,
+  );
+  const readingTop = await page.locator("#messages").evaluate((list) => {
+    list.dispatchEvent(new Event("scroll"));
+    list.scrollTop -= 200;
+    list.dispatchEvent(new Event("scroll"));
+    globalThis.__bottomGrowth.grow.style.height = "174px";
+    return list.scrollTop;
+  });
+  await page.evaluate(() =>
+    new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    )
+  );
+  const reading = await current();
+  assert.ok(reading.bottom > 2);
+  assert.ok(Math.abs(reading.scrollTop - readingTop) <= 2);
+  await page.locator("#messages").evaluate((list) => {
+    const state = globalThis.__bottomGrowth;
+    list.removeEventListener("scroll", state.onScroll);
+    state.grow.remove();
+    state.rows.forEach((row, i) => {
+      row.style.contentVisibility = state.visibility[i];
+    });
+    delete globalThis.__bottomGrowth;
+  });
+  h.step("returning to bottom settles deferred layout without pulling readers");
   await atBottom();
   const initialBottom = await current();
   if (initialBottom.bottom > 2) await reportBottom(initialBottom);
@@ -938,6 +999,7 @@ export async function messageWindow(h) {
   await fixture({ image: true, imageAt: 498 });
   await page.locator('article[data-message-id="10000498"] img.media-image')
     .evaluate((node) => node.decode());
+  await atBottom();
   const selectedTail = await page.evaluate(() => {
     const text = document.querySelector(
       'article[data-message-id="10000499"] .message-text',
@@ -952,7 +1014,6 @@ export async function messageWindow(h) {
     return getSelection().toString();
   });
   assert.ok(selectedTail.includes("Fixture 499"));
-  await atBottom();
   await fixtureMessage();
   await fixtureMessage();
   state = await current();
