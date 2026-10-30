@@ -146,7 +146,8 @@ mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/enil"
 chmod 700 "$HOME/Library/Logs/enil"
 cp "$checkout/daemon/enil.plist" "$plist"
 chmod 600 "$plist"
-plutil -replace ProgramArguments.1 \
+plutil -remove ProgramArguments.1 "$plist"
+plutil -insert ProgramArguments.1 \
   -string "$checkout/daemon/enil-run.sh" "$plist"
 plutil -replace WorkingDirectory -string "$checkout/daemon" "$plist"
 plutil -replace EnvironmentVariables.HOME -string "$HOME" "$plist"
