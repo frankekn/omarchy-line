@@ -303,6 +303,65 @@ Deno.test("an unusable key is replaced by a minted one", async () => {
   assert(auth.key !== "short" && auth.key.length >= 16);
 });
 
+/** The standalone server's log up to its sign-in line, then stop it. */
+async function signInLog(key: string | undefined): Promise<string[]> {
+  const stateHome = await Deno.makeTempDir({ prefix: "enil-web-log-" });
+  const env: Record<string, string> = {
+    HOME: Deno.env.get("HOME") ?? "/",
+    XDG_STATE_HOME: stateHome,
+    ENIL_WEB_ADDR: `127.0.0.1:${TEST_PORT}`,
+  };
+  const denoDir = Deno.env.get("DENO_DIR");
+  if (denoDir) env.DENO_DIR = denoDir;
+  if (key !== undefined) env.ENIL_WEB_KEY = key;
+  const child = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", new URL("./server.ts", import.meta.url).pathname],
+    clearEnv: true,
+    env,
+    stdin: "null",
+    stdout: "piped",
+    stderr: "null",
+  }).spawn();
+  const lines: string[] = [];
+  const reader = child.stdout.pipeThrough(new TextDecoderStream())
+    .pipeThrough(new TextLineStream()).getReader();
+  const timer = setTimeout(() => child.kill("SIGTERM"), 30_000);
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      lines.push(value);
+      if (value.startsWith("[web] sign in: ")) break;
+    }
+  } finally {
+    clearTimeout(timer);
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already gone */ }
+    await child.status;
+    await reader.cancel().catch(() => {});
+    await Deno.remove(stateHome, { recursive: true });
+  }
+  return lines;
+}
+
+Deno.test("the log names a key from the environment by its variable only", async () => {
+  const lines = await signInLog(KEY);
+  const signIn = lines.find((l) => l.startsWith("[web] sign in: "));
+  assert(signIn, lines.join("\n"));
+  assert(signIn.endsWith("/?key=<ENIL_WEB_KEY>"), signIn);
+  assert(!lines.some((l) => l.includes(KEY)), "the key reached the log");
+});
+
+Deno.test("the log carries a minted key, since nothing else does", async () => {
+  const lines = await signInLog(undefined);
+  assert(lines.some((l) => l.startsWith("[web] no usable ENIL_WEB_KEY")));
+  const signIn = lines.find((l) => l.startsWith("[web] sign in: "));
+  assert(signIn, lines.join("\n"));
+  const key = /\/\?key=([A-Za-z0-9._~-]{16,})$/.exec(signIn)?.[1];
+  assert(key && key !== "<ENIL_WEB_KEY>", signIn);
+});
+
 Deno.test("only the page's own files are served", async () => {
   const { stateDir, web } = await fixture();
   try {

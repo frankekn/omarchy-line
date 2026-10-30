@@ -352,7 +352,11 @@ export async function startWeb(opts: WebOptions): Promise<void> {
     return;
   }
   const web = await createWeb(opts);
-  if (!usableKey(opts.key)) {
+  // A key from the environment stays out of the log: the log can go to the
+  // journal, which other accounts may read. Only a minted key is printed,
+  // because the log is the only place to find it.
+  const minted = !usableKey(opts.key);
+  if (minted) {
     log(
       "[web] no usable ENIL_WEB_KEY (16+ of A-Z a-z 0-9 - . _ ~); " +
         "this run's key is in the sign-in link",
@@ -361,6 +365,7 @@ export async function startWeb(opts: WebOptions): Promise<void> {
   const host = where.hostname.includes(":")
     ? `[${where.hostname}]`
     : where.hostname;
+  const shownKey = minted ? web.key : "<ENIL_WEB_KEY>";
   // A failed accept, such as EMFILE when descriptors run out, ends the
   // listener and rejects `finished`. Unhandled, that rejection would end the
   // daemon; handled without a new serve, the page would stay down.
@@ -370,7 +375,7 @@ export async function startWeb(opts: WebOptions): Promise<void> {
         hostname: where.hostname,
         port: where.port,
         onListen: () =>
-          log(`[web] sign in: http://${host}:${where.port}/?key=${web.key}`),
+          log(`[web] sign in: http://${host}:${where.port}/?key=${shownKey}`),
         onError: (e) => {
           console.error(`[web] ${e instanceof Error ? e.message : String(e)}`);
           return status(500);
