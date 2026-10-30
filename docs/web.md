@@ -163,6 +163,8 @@ remain available after sign-in.
 - If the daemon's local message cache has gaps, messages removed from the
   page's window may not load again when you scroll up. This can happen if the
   daemon stops before pending cache writes are flushed.
+- A signed-in browser can send WebSocket frames of up to about 64 MiB, which
+  the server buffers in memory before its 1 MiB check refuses them.
 
 ## Run it on a Mac
 
