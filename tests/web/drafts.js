@@ -1,5 +1,15 @@
 // Empty drafts are removed while text, replies and pending sends stay scoped.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
+import { draftPointer } from "./drafts-pointer.js";
+import { draftsTouch } from "./drafts-touch.js";
+
+async function openChat(page, row, chat) {
+  await row.click();
+  await page.waitForFunction(
+    (id) => document.querySelector(".chat-row.active")?.dataset.chatId === id,
+    chat,
+  );
+}
 
 export async function drafts(h) {
   const state = await h.state();
@@ -72,16 +82,37 @@ export async function drafts(h) {
   let data = await saved();
   assert.equal(data[accountA][alice.mid].text, "Alice draft");
   assert.equal(data[accountB][CHAT].pending[0].status, "failed");
-  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  const family = page.getByRole("button", { name: /STUB 家庭群組/ });
+  const aliceRow = page.getByRole("button", { name: /STUB Alice/ });
+  await family.locator(".badge").waitFor();
+  await openChat(page, family, CHAT);
   await page.getByRole("log").getByText("晚上回來吃飯嗎？").waitFor();
+  // The read update moves the row below the remaining unread chats.
+  await family.locator(".badge").waitFor({ state: "detached" });
   const input = page.getByLabel("Message", { exact: true });
   assert.equal(await input.inputValue(), "");
-  await page.getByRole("button", { name: /STUB Alice/ }).click();
+  await openChat(page, aliceRow, alice.mid);
   assert.equal(await input.inputValue(), "Alice draft");
-  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  const historyStart = tap.sent.length;
+  await openChat(page, family, CHAT);
   assert.equal(await input.inputValue(), "");
+  await until(
+    () =>
+      tap.sent.slice(historyStart).some((frame) =>
+        frame.cmd === "history" && frame.chat === CHAT
+      ),
+    "family history request",
+  );
+  const history = tap.sent.slice(historyStart).find((frame) =>
+    frame.cmd === "history" && frame.chat === CHAT
+  );
+  await until(
+    () => tap.received.some((frame) => frame.id === history.id),
+    "family history reply",
+  );
   data = await saved();
   assert.equal(data[accountA]?.[CHAT], undefined);
+  assert.equal(data[accountA][alice.mid].text, "Alice draft");
 
   await input.fill("temporary draft");
   assert.equal((await saved())[accountA][CHAT].text, "temporary draft");
@@ -90,9 +121,13 @@ export async function drafts(h) {
   const incoming = page.locator("article.message-row").filter({
     hasText: "晚上回來吃飯嗎？",
   });
-  await incoming.getByRole("button", { name: "Reply", exact: true }).click();
+  await incoming.getByRole("button", { name: "Reply", exact: true }).press(
+    "Enter",
+  );
+  await page.locator("#reply-target").waitFor();
   assert.ok((await saved())[accountA][CHAT].reply);
   await page.locator("#cancel-reply").click();
+  await page.locator("#reply-target").waitFor({ state: "hidden" });
   assert.equal((await saved())[accountA]?.[CHAT], undefined);
 
   await input.fill("Account A failed");
@@ -110,7 +145,7 @@ export async function drafts(h) {
     JSON.stringify({ web: "state", state: { ...state, me: activeAccount } }),
   );
   await page.getByText("Other account", { exact: true }).waitFor();
-  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await openChat(page, family, CHAT);
   assert.equal(await input.inputValue(), "Other draft");
   await page.locator("article.message-row").filter({ hasText: "Other failed" })
     .waitFor();
@@ -123,7 +158,7 @@ export async function drafts(h) {
     JSON.stringify({ web: "state", state: { ...state, me: activeAccount } }),
   );
   await page.getByText(state.me.displayName, { exact: true }).waitFor();
-  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await openChat(page, family, CHAT);
   await page.locator("article.message-row").filter({
     hasText: "Account A failed",
   }).waitFor();
@@ -133,6 +168,10 @@ export async function drafts(h) {
   assert.equal(data[accountB][CHAT].pending[0].status, "failed");
   await context.close();
   h.step("draft-pruning-preserves-account-and-pending");
+
+  await draftPointer(h, accountA, alice.mid);
+  await draftsTouch(h, accountA, alice.mid);
+  await delayedHistory(h, accountA, alice.mid);
 
   const unavailable = await h.context({ locale: "en-US" });
   await unavailable.addInitScript(({ origin, account, chat }) => {
@@ -158,4 +197,66 @@ export async function drafts(h) {
   ).waitFor();
   await unavailable.close();
   h.step("draft-cleanup-storage-failure-keeps-startup-working");
+}
+async function delayedHistory(h, account, alice) {
+  const context = await h.context({ locale: "en-US" });
+  await context.addInitScript(({ origin, account, chat, alice }) => {
+    if (location.origin !== origin || sessionStorage.getItem("draft-history")) {
+      return;
+    }
+    sessionStorage.setItem("draft-history", "1");
+    localStorage.setItem(
+      "enil.web.drafts.v1",
+      JSON.stringify({
+        [account]: {
+          [chat]: { text: "Family draft", reply: null, pending: [] },
+          [alice]: { text: "Alice draft", reply: null, pending: [] },
+        },
+      }),
+    );
+  }, { origin: h.base, account, chat: CHAT, alice });
+  const page = await context.newPage();
+  let held;
+  const tap = await tapSocket(page, {
+    client(frame) {
+      if (!held && frame.cmd === "history" && frame.chat === CHAT) {
+        held = frame;
+        return false;
+      }
+      return true;
+    },
+  });
+  await h.signIn(page);
+  const family = page.getByRole("button", { name: /STUB 家庭群組/ });
+  const aliceRow = page.getByRole("button", { name: /STUB Alice/ });
+  const input = page.getByLabel("Message", { exact: true });
+  await openChat(page, family, CHAT);
+  await until(() => held, "held family history");
+  assert.equal(await input.inputValue(), "Family draft");
+  await input.fill("Family updated");
+  await openChat(page, aliceRow, alice);
+  assert.equal(await input.inputValue(), "Alice draft");
+  await input.fill("Alice updated");
+  const rows = await h.request({
+    id: 1,
+    cmd: "history",
+    chat: CHAT,
+    count: 50,
+    markRead: false,
+  });
+  tap.socket.send(JSON.stringify({ id: held.id, ok: true, data: rows }));
+  const state = await h.state();
+  state.me.displayName = "Late history delivered";
+  tap.socket.send(JSON.stringify({ web: "state", state }));
+  await page.getByText("Late history delivered", { exact: true }).waitFor();
+  assert.equal(await input.inputValue(), "Alice updated");
+  const stored = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("enil.web.drafts.v1") || "{}")
+  );
+  assert.equal(stored[account][CHAT].text, "Family updated");
+  assert.equal(stored[account][alice].text, "Alice updated");
+  await openChat(page, family, CHAT);
+  assert.equal(await input.inputValue(), "Family updated");
+  await context.close();
+  h.step("late-history-keeps-drafts-in-their-chats");
 }

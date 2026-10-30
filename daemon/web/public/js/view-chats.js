@@ -7,6 +7,43 @@ export function createChatsView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
   let order = [], initialFocusDone = false;
+  const list = $("chat-list");
+  let pressed = null;
+  list.addEventListener("pointerdown", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    const row = target?.closest(".chat-row");
+    pressed = row && list.contains(row) && event.isPrimary && event.button === 0
+      ? {
+        id: event.pointerId,
+        type: event.pointerType,
+        account: model.account,
+        row,
+        at: performance.now(),
+        accountChanged: false,
+      }
+      : null;
+  }, true);
+  list.addEventListener("pointercancel", (event) => {
+    if (pressed?.id === event.pointerId) pressed = null;
+  }, true);
+  list.addEventListener("click", (event) => {
+    const press = pressed;
+    pressed = null;
+    const target = event.target instanceof Element ? event.target : null;
+    const row = target?.closest(".chat-row");
+    if (
+      !press || !row || event.detail === 0 ||
+      event.pointerId !== press.id || !event.pointerType ||
+      event.pointerType !== press.type || performance.now() - press.at > 1000
+    ) return;
+    if (
+      press.row !== row || press.accountChanged ||
+      press.account !== model.account
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
   function chatRecord(chat) {
     const mid = String(chat.mid), button = el("button", "chat-row");
     button.type = "button";
@@ -106,6 +143,9 @@ export function createChatsView(ctx) {
     }
   }
   function renderChats() {
+    if (pressed && pressed.account !== model.account) {
+      pressed.accountChanged = true;
+    }
     const list = $("chat-list"),
       rows = visibleChats(model.chats, $("search").value);
     if (!rows.some((chat) => String(chat.mid) === model.selectedChat)) {
