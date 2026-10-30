@@ -57,6 +57,21 @@ function safeLine(fields: Json): string {
   }
 }
 
+/**
+ * One spelling for "the same record" whichever side it came from: a wire raw
+ * carries Buffer and bigint, a record parsed back from disk carries Uint8Array
+ * (reviveJson) and the bigint's decimal string (safeLine). Comparison only --
+ * what is written stays safeLine's.
+ */
+function comparableLine(fields: Json): string {
+  return JSON.stringify(fields, (_k, v: unknown) => {
+    if (typeof v === "bigint") return v.toString();
+    // Buffer has already become {type, data} through its toJSON by now.
+    if (v instanceof Uint8Array) return { type: "Buffer", data: Array.from(v) };
+    return v;
+  });
+}
+
 function messageIdOf(line: Json): string {
   const id = line.id;
   return id === undefined || id === null ? "" : String(id);
@@ -426,8 +441,19 @@ export function createMessageStore(
 
   return {
     append(myMid, chat, raws) {
+      const f = storable(myMid, chat) ? fileFor(myMid, chat) : null;
       for (const raw of raws) {
-        appendLine(myMid, chat, { chatMid: chat, ...(raw as Json) });
+        const line: Json = { chatMid: chat, ...(raw as Json) };
+        // A head-page revalidation re-sends the page it just served, almost
+        // always unchanged. Writing it again would grow the file by a page
+        // per open and swap every record for an equal new object -- which is
+        // what the decrypted-message cache is keyed by.
+        if (f?.loaded) {
+          const id = messageIdOf(line);
+          const prev = id ? f.recs.get(id) : undefined;
+          if (prev && comparableLine(prev) === comparableLine(line)) continue;
+        }
+        appendLine(myMid, chat, line);
       }
     },
     tombstone(myMid, chat, id) {

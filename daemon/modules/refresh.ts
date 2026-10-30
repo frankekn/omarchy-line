@@ -390,6 +390,7 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     setChatListHealth(nextListHealth);
     // Before the write, so the fresh `at` and the fresh chats land together.
     noteRefreshOk();
+    fullRoundListener?.(c, generation);
     // Most full rounds answer exactly what the list already shows -- a read
     // receipt or an own-device read forces one just to settle unread -- and
     // rewriting ~64 KB with an fsync made every open panel re-parse the whole
@@ -802,6 +803,18 @@ async function runIncrementalRefresh(
   }
 }
 // enil:incremental-end
+
+/**
+ * Told after every published full round. socket.ts uses the first one of a
+ * session to warm the most recent chats; the hook keeps refresh.ts from
+ * importing socket.ts, which already imports it.
+ */
+let fullRoundListener: ((c: Client, generation: number) => void) | null = null;
+export function onFullRound(
+  listener: (c: Client, generation: number) => void,
+): void {
+  fullRoundListener = listener;
+}
 
 /** Login resets the round bookkeeping it retires; see logoutClaimed. */
 export function resetRefreshRound(generation: number): void {

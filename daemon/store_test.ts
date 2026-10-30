@@ -8,6 +8,7 @@
  * contract, so faking it would test nothing.
  */
 import { assert, assertEquals } from "@std/assert";
+import { Buffer } from "node:buffer";
 import { createMessageStore } from "./modules/store.ts";
 
 const ME = "u" + "0".repeat(31) + "1";
@@ -57,6 +58,55 @@ Deno.test("tail survives a cold reload from disk", async () => {
     const second = createMessageStore(`${dir}/messages`);
     const tail = await second.tail(ME, CHAT, 10);
     assertEquals(tail?.map((m) => m.text), ["a", "b"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("re-appending an unchanged page keeps the records and the file", async () => {
+  await withStore(async (store, dir) => {
+    store.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    await store.flush();
+    const before = await store.tail(ME, CHAT, 10);
+    const path = `${dir}/messages/${ME}/${CHAT}.jsonl`;
+    const size = (await Deno.stat(path)).size;
+    // What a head-page revalidation does on every open.
+    store.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    await store.flush();
+    const after = await store.tail(ME, CHAT, 10);
+    assertEquals((await Deno.stat(path)).size, size);
+    assert(before && after && before[0] === after[0] && before[1] === after[1]);
+    // A changed copy still lands.
+    store.append(ME, CHAT, [msg(2, "b2")]);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.map((m) => m.text), [
+      "a",
+      "b2",
+    ]);
+  });
+});
+
+Deno.test("a record reloaded from disk still matches LINE's copy of it", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    // The wire shapes a sealed message really has: Buffer chunks, bigint time.
+    const wire = () => ({
+      ...msg(1, ""),
+      deliveredTime: 1700000000001n,
+      chunks: [Buffer.from([1, 2, 3]), Buffer.from([4])],
+    });
+    const first = createMessageStore(`${dir}/messages`);
+    first.append(ME, CHAT, [wire()]);
+    await first.flush();
+    const path = `${dir}/messages/${ME}/${CHAT}.jsonl`;
+    const size = (await Deno.stat(path)).size;
+    // A restart: the record now comes back through reviveJson.
+    const second = createMessageStore(`${dir}/messages`);
+    const before = await second.tail(ME, CHAT, 10);
+    second.append(ME, CHAT, [wire()]);
+    await second.flush();
+    assertEquals((await Deno.stat(path)).size, size);
+    assert(before && before[0] === (await second.tail(ME, CHAT, 10))?.[0]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

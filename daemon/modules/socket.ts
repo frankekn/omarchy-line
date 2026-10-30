@@ -61,6 +61,7 @@ import {
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
+  nameCache,
   rawsById,
   readRanges,
   rememberGoneMedia,
@@ -87,6 +88,7 @@ import {
 } from "./state.ts";
 import { loadReadRange } from "./push.ts";
 import {
+  onFullRound,
   refreshChats,
   scheduleRefresh,
   setForceFullRefresh,
@@ -102,7 +104,7 @@ import type {
   TalkMsg,
 } from "./types.ts";
 import { resolveName, warmNames } from "./names.ts";
-import { haltForRestriction } from "./restriction.ts";
+import { haltForRestriction, restriction } from "./restriction.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import {
   asMessageId,
@@ -819,16 +821,46 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
  * page of history, so fall back to the plain constructor the library also
  * exposes (`new TalkMessage({ client, raw })`) and let toPluginMessage flag it.
  */
+// The block between the enil:wrap markers is sliced out verbatim by
+// wrapcache_test.ts.
+// enil:wrap-begin
+/**
+ * Decrypted messages, per session and per raw object. Opening a chat used to
+ * run every E2EE message of the page through decryptE2EEMessage again --
+ * 100-500 ms for a page of a sealed chat, on every open. LINE's own app keeps
+ * what it decrypted; this keeps it for as long as the raw it came from lives.
+ * The store hands back the same raw object while the chat stays indexed, and
+ * an edit replaces it, so a stale plaintext cannot outlive its message. Keyed
+ * by the client too: a new login never reads the previous session's results.
+ * Only successes are kept -- a key that was missing a moment ago may be there
+ * on the next open.
+ */
+const decrypted = new WeakMap<Client, WeakMap<object, TalkMsg>>();
+
 async function wrap(
   raw: TalkMessage["raw"],
   owner: Client,
 ): Promise<TalkMsg> {
+  let known = decrypted.get(owner);
+  const hit = known?.get(raw);
+  if (hit) return hit;
   try {
-    return await TalkMessage.fromRawTalk(raw, owner);
+    // A copy: decryptE2EEMessage writes the plaintext into the object it is
+    // given. Handed the store's own record, it put plaintext into what the
+    // store compacts back to disk, and made the record differ from LINE's
+    // next copy of it -- so every revalidation swapped it and missed above.
+    const tm = await TalkMessage.fromRawTalk({
+      ...raw,
+      contentMetadata: { ...(raw.contentMetadata ?? {}) },
+    }, owner);
+    if (!known) decrypted.set(owner, known = new WeakMap());
+    known.set(raw, tm);
+    return tm;
   } catch {
     return new TalkMessage({ client: owner, raw });
   }
 }
+// enil:wrap-end
 
 /**
  * preview/download need the TalkMessage an id came from. The lookup ladder is
@@ -920,12 +952,88 @@ function warmPagePreviews(
  * line only exists once its target has been converted. null means the
  * session died mid-conversion; callers answer 尚未登入.
  */
+// The block between the enil:warmrecent markers is sliced out verbatim by
+// warmrecent_test.ts.
+// enil:warmrecent-begin
+/** How many of the most recent chats a new session prepares ahead of a click. */
+const WARM_RECENT_CHATS = 12;
+/** Messages per chat: the panel's usual page, not the protocol's ceiling. */
+const WARM_PAGE = 100;
+let warmedGeneration = -1;
+
+/**
+ * What LINE's own app has ready before you tap a chat: its newest messages
+ * decrypted and its senders named. Once per session, after the first full
+ * round has sorted the list, the store's tail of each of the most recent chats
+ * goes through the same conversion an open would run -- so the first open of
+ * the day is a cache hit instead of a decrypt and a name lookup per sender.
+ * Store-only: no message is fetched from LINE, and only the name and key
+ * lookups an open would have made anyway can reach it. One chat at a time,
+ * behind anything the panel asks for.
+ */
+async function warmRecentChats(owner: Client, generation: number) {
+  if (warmedGeneration === generation) return;
+  warmedGeneration = generation;
+  const myMid = String(me.mid ?? "");
+  const recent = [...chats]
+    .sort((a, b) => Number(b.lastTime || 0) - Number(a.lastTime || 0))
+    .slice(0, WARM_RECENT_CHATS);
+  for (const row of recent) {
+    if (!sessionIsCurrent(owner, generation) || restriction) return;
+    const tail = await messageStore.tail(myMid, row.mid, WARM_PAGE);
+    if (!tail?.length) continue;
+    await convertHistoryPage(tail, row.mid, owner, generation);
+  }
+}
+// enil:warmrecent-end
+
+onFullRound((owner, generation) => {
+  void warmRecentChats(owner, generation).catch((e) =>
+    console.error("[history] warm:", errorLine(e))
+  );
+});
+
+// The block between the enil:pagenames markers is sliced out verbatim by
+// pagenames_test.ts.
+// enil:pagenames-begin
+/**
+ * Names for a page's senders in as few round trips as LINE allows: one
+ * getContactsV2 batch for all of them, then the few it could not answer in
+ * parallel through the per-mid path resolveName would have taken anyway.
+ */
+async function warmPageNames(
+  page: TalkMsg[],
+  owner: Client,
+  generation: number,
+): Promise<void> {
+  const cold = [
+    ...new Set(page.map((tm) => String(tm.raw.from ?? ""))),
+  ].filter((mid) => mid && !nameCache.has(mid));
+  // A restricted account sends nothing automatic; the page falls back to
+  // whatever the per-message lookups below still get to answer.
+  const live = () => sessionIsCurrent(owner, generation) && !restriction;
+  if (!cold.length || !live()) return;
+  await warmNames(cold);
+  if (!live()) return;
+  const left = cold.filter((mid) => !nameCache.has(mid));
+  await pooledMap(
+    left,
+    DECRYPT_WIDTH,
+    (mid) => resolveName(mid, owner, generation),
+    live,
+  );
+}
+// enil:pagenames-end
+
 async function convertHistoryPage(
   raws: unknown[],
   chatMid: string,
   owner: Client,
   generation: number,
 ): Promise<PluginMessage[] | null> {
+  // Split so state.json's timings say which half a slow open spent its time
+  // in: decryption, or names/media lookups in the conversion.
+  const started = performance.now();
   const wrapped = await pooledMap(
     raws,
     DECRYPT_WIDTH,
@@ -933,6 +1041,12 @@ async function convertHistoryPage(
     () => sessionIsCurrent(owner, generation),
   );
   if (wrapped === null) return null;
+  const decryptedAt = performance.now();
+  timings.record("history.decrypt", decryptedAt - started);
+  // Every sender's name before the loop below asks for them one by one: a
+  // cold daemon (fresh boot, new login) otherwise paid one getUser round trip
+  // per distinct sender in sequence -- six seconds for a busy group's page.
+  await warmPageNames(wrapped, owner, generation);
   const out: PluginMessage[] = [];
   for (const tm of wrapped) {
     // Return text and metadata before any media transfer. Visible image
@@ -940,6 +1054,7 @@ async function convertHistoryPage(
     if (!sessionIsCurrent(owner, generation)) return null;
     out.push(await toPluginMessage(tm, chatMid, false, owner, generation));
   }
+  timings.record("history.convert", performance.now() - decryptedAt);
   return out;
 }
 

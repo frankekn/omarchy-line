@@ -24,6 +24,8 @@ function sessionIsCurrent(value: Client, generation: number) {
 }
 function midKind(_mid: string): "user" | "chat" { return "user"; }
 function noteAvatar() {}
+function noteNameFailure() {}
+let restriction: unknown = null;
 function capMap<V>(_map: Map<string, V>, _max: number) {}
 function resolveUserName(_mid: string, _owner: Client, _generation: number) {
   calls++;
@@ -56,4 +58,47 @@ export function cached() { return nameCache.get("u1"); }
   } finally {
     await Deno.remove(file).catch(() => {});
   }
+});
+
+Deno.test("every name lookup that fails hands a refusal to the restriction halt", async () => {
+  const source = await Deno.readTextFile(
+    new URL("./modules/names.ts", import.meta.url),
+  );
+  // v3, v2, the chat lookup and the bulk batch: four catches, four calls.
+  const catches = source.match(/\} catch \(e\) \{/g) ?? [];
+  const noted = source.match(/noteNameFailure\(e, owner, generation\);/g) ??
+    [];
+  assertEquals(catches.length, 4);
+  assertEquals(noted.length, catches.length);
+  const helper = source.slice(
+    source.indexOf("function noteNameFailure("),
+    source.indexOf("\n}\n", source.indexOf("function noteNameFailure(")),
+  );
+  assertEquals(
+    /classifyLoginError\(e\) === "restricted"\) haltForRestriction\(e\)/.test(
+      helper,
+    ),
+    true,
+  );
+  // Only the current session's refusal halts anything.
+  assertEquals(
+    helper.indexOf("sessionIsCurrent(owner, generation)") <
+      helper.indexOf("haltForRestriction(e)"),
+    true,
+  );
+  assertEquals(helper.includes("sessionIsCurrent(owner, generation)"), true);
+  // While halted, resolveName answers from the cache or with the bare mid,
+  // before any lookup, and does not cache the mid as a name.
+  const resolve = source.slice(
+    source.indexOf("export async function resolveName("),
+    source.indexOf("export async function warmNames("),
+  );
+  const halted = resolve.indexOf("if (restriction) return mid;");
+  assertEquals(
+    halted > 0 && halted < resolve.indexOf("resolveUserName("),
+    true,
+  );
+  assertEquals(halted < resolve.indexOf("nameCache.set("), true);
+  const warm = source.slice(source.indexOf("export async function warmNames("));
+  assertEquals(warm.includes("if (!owner || restriction) return;"), true);
 });
