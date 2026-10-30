@@ -78,6 +78,30 @@ Deno.test("an upload name is one safe path component", () => {
   assertEquals(uploadName(null), "file");
 });
 
+Deno.test("an upload can be claimed once, until it is discarded", async () => {
+  const stateDir = await Deno.makeTempDir({ prefix: "enil-web-claim-" });
+  const uploads = await Uploads.open(stateDir);
+  const upload = async () => {
+    const res = await uploads.receive(
+      new Request("http://box/api/upload", { method: "POST", body: "x" }),
+      new URL("http://box/api/upload?name=test"),
+    );
+    return (await res.json()).path as string;
+  };
+  try {
+    const one = await upload(), two = await upload();
+    assertEquals(uploads.claim(one), true);
+    assertEquals(uploads.claim(one), false);
+    assertEquals(uploads.claim(two), true, "claims are per upload");
+    assertEquals(uploads.claim(`${stateDir}/storage.json`), false);
+    await uploads.discard(one);
+    assertEquals(await uploads.owned(one), null);
+  } finally {
+    uploads.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("only images and mp4 are served inline", () => {
   assertEquals(
     sniffInline(new Uint8Array([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
@@ -1206,6 +1230,128 @@ Deno.test("duplicate request IDs cannot release an upload on another reply", asy
       peer?.close();
     } catch { /* already closed */ }
     daemon.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("an upload is claimed by one sendFile across connections", async () => {
+  const { stateDir, web, server, addr } = await served();
+  const seen: Record<string, unknown>[] = [];
+  let answerSend!: (ok: boolean) => void;
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const peers: Deno.UnixConn[] = [];
+  const accept = (async () => {
+    for await (const conn of daemon) {
+      peers.push(conn);
+      (async () => {
+        const lines = conn.readable.pipeThrough(new TextDecoderStream())
+          .pipeThrough(new TextLineStream());
+        const enc = new TextEncoder();
+        for await (const line of lines) {
+          const req = JSON.parse(line);
+          seen.push(req);
+          // A send is held until the test answers it, like a slow upload.
+          const ok = req.cmd === "sendFile"
+            ? await new Promise<boolean>((r) => answerSend = r)
+            : true;
+          await conn.write(
+            enc.encode(JSON.stringify({ id: req.id, ok }) + "\n"),
+          );
+        }
+      })().catch(() => {});
+    }
+  })().catch(() => {});
+  const sockets: WebSocket[] = [];
+  try {
+    const cookie = await signedInCookie(web, addr);
+    const port = server.addr.port;
+    const uploadFile = async () => {
+      const res = await web.handle(get("/api/upload?name=a.txt", {
+        method: "POST",
+        headers: { cookie },
+        body: "hello",
+      }, addr));
+      return (await res.json()).path as string;
+    };
+    const open = async () => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+        headers: { cookie, origin: `http://127.0.0.1:${port}` },
+      });
+      sockets.push(ws);
+      const frames: Record<string, unknown>[] = [];
+      ws.onmessage = (ev) => frames.push(JSON.parse(ev.data));
+      await new Promise((r) => ws.onopen = r);
+      const reply = (id: number) =>
+        new Promise<Record<string, unknown>>((resolve, reject) => {
+          const deadline = Date.now() + 5_000;
+          const check = () => {
+            const hit = frames.find((f) => f.id === id);
+            if (hit) resolve(hit);
+            else if (Date.now() > deadline) reject(new Error(`no reply ${id}`));
+            else setTimeout(check, 10);
+          };
+          check();
+        });
+      const sendFile = (id: number, path: string) => {
+        ws.send(JSON.stringify({ id, cmd: "sendFile", chat: "c", path }));
+        return reply(id);
+      };
+      return { ws, reply, sendFile };
+    };
+    const sends = () => seen.filter((r) => r.cmd === "sendFile").length;
+    const waitForSends = async (n: number) => {
+      for (let i = 0; i < 200 && sends() < n; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assertEquals(sends(), n);
+    };
+
+    const path = await uploadFile();
+    const a = await open(), b = await open();
+    const first = a.sendFile(1, path);
+    await waitForSends(1);
+    // Another connection, and the same connection again, are both refused,
+    // and neither refusal removes the file the first send is reading.
+    const refused = {
+      ok: false,
+      error: "每個從網頁上傳的檔案只能傳送一次",
+    };
+    assertEquals(await b.sendFile(1, path), { id: 1, ...refused });
+    assertEquals(await a.sendFile(2, path), { id: 2, ...refused });
+    assert((await Deno.stat(path)).isFile);
+    assertEquals(sends(), 1);
+
+    // The holder's failed send still discards the upload, as before; the
+    // page retries by uploading the file again, and that upload can be sent.
+    answerSend(false);
+    assertEquals((await first).ok, false);
+    await Deno.stat(path).then(
+      () => Promise.reject(new Error("upload kept")),
+      () => {},
+    );
+    const retry = await uploadFile();
+    assert(retry !== path);
+    const second = b.sendFile(2, retry);
+    await waitForSends(2);
+    answerSend(true);
+    assertEquals((await second).ok, true);
+    await Deno.stat(retry).then(
+      () => Promise.reject(new Error("upload kept")),
+      () => {},
+    );
+  } finally {
+    web.close();
+    for (const ws of sockets) {
+      if (ws.readyState === WebSocket.OPEN) ws.close();
+    }
+    daemon.close();
+    await accept;
+    for (const peer of peers) {
+      try {
+        peer.close();
+      } catch { /* already closed */ }
+    }
     await server.shutdown();
     await Deno.remove(stateDir, { recursive: true });
   }

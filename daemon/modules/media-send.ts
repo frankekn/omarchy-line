@@ -6,12 +6,14 @@
  * clipboard path also uses.
  *
  * Dependency direction: imports video (duration + thumbnail), session
- * (sessionIsCurrent), text (refusal), env, refresh (refreshChats) and types.
+ * (sessionIsCurrent), caches (limiter), text (refusal), env, refresh
+ * (refreshChats) and types.
  * socket.ts dispatches into sendFilePath/sendArgs; nothing reaches back up.
  */
 import { tagAt, videoLength, videoThumbnail } from "./video.ts";
 import { refreshChats } from "./refresh.ts";
 import { sessionIsCurrent } from "./session.ts";
+import { limiter } from "./caches.ts";
 import { refusal } from "./text.ts";
 import type { Client } from "@evex/linejs";
 import type { Json } from "./types.ts";
@@ -331,6 +333,16 @@ function fileTargetRefusal(to: string): Json | null {
 }
 
 /**
+ * How many sends may hold a whole file in memory at once, process-wide. A
+ * file can be 1 GiB, and every panel or browser connection can ask for one.
+ * A send keeps its slot from the read until the upload ends, because the
+ * bytes stay in memory that long. Further sends wait for a slot; they do not
+ * fail.
+ */
+const SEND_FILE_MAX_READS = 2;
+const sendFileSlot = limiter(SEND_FILE_MAX_READS);
+
+/**
  * `sendFile`, and the second half of `sendClipboardImage`.
  *
  * One function rather than two callers of uploadMediaByE2EE so that a pasted
@@ -349,6 +361,24 @@ async function sendFilePath(
   if (bad) return bad;
   // Read here as well as at the gate in handle(): a logout can land between
   // the two, and the words are the panel's either way.
+  if (!sessionIsCurrent(owner, generation)) {
+    return { ok: false, error: "尚未登入" };
+  }
+  return await sendFileSlot(() =>
+    readAndUpload(to, path, owner, generation, requestId, filename)
+  );
+}
+
+/** sendFilePath's body, run while it holds a sendFileSlot. */
+async function readAndUpload(
+  to: string,
+  path: string,
+  owner: Client,
+  generation: number,
+  requestId: string,
+  filename: string,
+): Promise<Json> {
+  // The wait for a slot can outlast the session; do not read for nobody.
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }

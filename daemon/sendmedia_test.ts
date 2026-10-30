@@ -14,6 +14,7 @@ import { loadBlock, loadBlocks } from "./slice_test.ts";
 import { createClipboardStages } from "./clipboard.ts";
 import { nameCache } from "./modules/caches.ts";
 import { previewText } from "./modules/messages.ts";
+import { sendFilePath } from "./modules/media-send.ts";
 import { lastNotified, notify } from "./modules/notify.ts";
 import { refreshChats } from "./modules/refresh.ts";
 import { client, sessionGeneration, setClient } from "./modules/session.ts";
@@ -1100,6 +1101,66 @@ Deno.test("only a regular file has a size worth sending", async () => {
     assertEquals(await m.regularFileSize("/dev/zero"), null);
     assertEquals(await m.regularFileSize(dir), null);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("at most two sends hold a whole file at once; the rest wait", async () => {
+  const previousClient = client;
+  const readFile = Object.getOwnPropertyDescriptor(Deno, "readFile");
+  assert(readFile);
+  const dir = await Deno.makeTempDir({ prefix: "enil-sendslot-test-" });
+  const gates: (() => void)[] = [];
+  let reads = 0;
+  const owner = {
+    base: {
+      obs: {
+        // Holds the bytes until the test lets go, like a slow upload. It
+        // rejects so that no chat refresh runs against this fake client.
+        uploadMediaByE2EE: () =>
+          new Promise<never>((_, reject) =>
+            gates.push(() => reject(new Error("upload stopped")))
+          ),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  Object.defineProperty(Deno, "readFile", {
+    configurable: true,
+    writable: true,
+    value: (...args: Parameters<typeof Deno.readFile>) => {
+      reads++;
+      return readFile.value(...args);
+    },
+  });
+  setClient(owner);
+  const settle = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 5));
+  };
+  try {
+    const sends = [];
+    for (let i = 0; i < 3; i++) {
+      await Deno.writeTextFile(`${dir}/${i}.txt`, `file ${i}`);
+      sends.push(
+        sendFilePath("uabc", `${dir}/${i}.txt`, owner, sessionGeneration)
+          .then(() => "resolved", (e: Error) => e.message),
+      );
+    }
+    await settle(10);
+    assertEquals([reads, gates.length], [2, 2], "a third send read its file");
+    gates[0]();
+    await settle(10);
+    assertEquals([reads, gates.length], [3, 3], "the queued send never ran");
+    gates[1]();
+    gates[2]();
+    assertEquals(await Promise.all(sends), [
+      "upload stopped",
+      "upload stopped",
+      "upload stopped",
+    ]);
+  } finally {
+    for (const release of gates) release();
+    Object.defineProperty(Deno, "readFile", readFile);
+    setClient(previousClient);
     await Deno.remove(dir, { recursive: true });
   }
 });

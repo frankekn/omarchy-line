@@ -119,12 +119,18 @@ export async function serveFile(stateDir: string, url: URL): Promise<Response> {
 /**
  * media/web-uploads/<uuid>/<name>: one directory per upload, removed once
  * the daemon has answered the sendFile, or by the sweep a day later.
+ *
+ * Each upload can be claimed for one sendFile, across every WebSocket, and
+ * only the claim holder discards it. Otherwise each browser connection could
+ * make the daemon read the same 1 GiB file again, and one reply would remove
+ * a file another send was still reading.
  */
 export class Uploads {
   readonly dir: string;
   #timer: ReturnType<typeof setInterval> | undefined;
   readonly #sizes = new Map<string, number>();
   readonly #active = new Set<string>();
+  readonly #claimed = new Set<string>();
   readonly #readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
   readonly #idleMs: number;
   readonly #maxMs: number;
@@ -240,12 +246,21 @@ export class Uploads {
     return real && inside(this.dir, real) ? real : null;
   }
 
+  /**
+   * Reserve the upload that `path` (from owned()) belongs to for one send.
+   * False when another send already holds it.
+   */
+  claim(path: string): boolean {
+    const dir = this.#uploadDir(path);
+    if (!dir || this.#claimed.has(dir)) return false;
+    this.#claimed.add(dir);
+    return true;
+  }
+
   /** Remove the upload that `path` belongs to. */
   async discard(path: string): Promise<void> {
-    const rest = path.slice(this.dir.length + 1);
-    const id = rest.split("/")[0];
-    if (!path.startsWith(this.dir + "/") || !id) return;
-    const dir = `${this.dir}/${id}`;
+    const dir = this.#uploadDir(path);
+    if (!dir) return;
     try {
       await Deno.remove(dir, { recursive: true });
     } catch (error) {
@@ -253,6 +268,14 @@ export class Uploads {
     }
     this.#bytes -= this.#sizes.get(dir) ?? 0;
     this.#sizes.delete(dir);
+    this.#claimed.delete(dir);
+  }
+
+  #uploadDir(path: string): string | null {
+    const rest = path.slice(this.dir.length + 1);
+    const id = rest.split("/")[0];
+    if (!path.startsWith(this.dir + "/") || !id) return null;
+    return `${this.dir}/${id}`;
   }
 
   async sweep(): Promise<void> {

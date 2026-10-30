@@ -12,8 +12,8 @@
  * Close code 4001 means the daemon is not there; the page reconnects.
  *
  * What the bridge refuses: the clipboard commands (they read the daemon
- * host's clipboard, not the browser's) and a sendFile whose path is not an
- * upload this server stored.
+ * host's clipboard, not the browser's), a sendFile whose path is not an
+ * upload this server stored, and a second sendFile of the same upload.
  *
  * Dependency direction: imports ./files.ts for the upload check.
  */
@@ -376,6 +376,11 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
     if (cmd === "sendFile") {
       const real = await deps.uploads.owned(req.path);
       if (!real) return refuse(req.id, "只能傳送從網頁上傳的檔案");
+      // One send per upload, across all connections. A retry after a failed
+      // send uploads the file again, so it gets a new path.
+      if (!deps.uploads.claim(real)) {
+        return refuse(req.id, "每個從網頁上傳的檔案只能傳送一次");
+      }
       req.path = real;
       sentUploads.set(req.id, real);
     }
