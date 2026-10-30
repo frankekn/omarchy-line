@@ -528,6 +528,7 @@ function onTalkOp(op: RawOperationFields): void {
  * keep it current from then on. Failures are silent by design -- 已讀 is a
  * decoration, and a chat with no ranges simply has no readBy fields.
  */
+// enil:rangeload-begin
 async function loadReadRange(
   chatMid: string,
   owner: Client,
@@ -546,6 +547,16 @@ async function loadReadRange(
       // Keyed by the mid we asked about rather than the reply's chatId: one
       // chat was requested, and the panel looks this up by the box it opened.
       if (map.size) {
+        // Forward only, per member, like applyReadOp: a range answered before
+        // a markRead or a read op that has since moved a cursor must not pull
+        // it back -- the history open no longer waits for it to land.
+        const known = readRanges.get(chatMid);
+        if (known) {
+          for (const [mid, id] of known) {
+            const fetched = map.get(mid);
+            if (fetched === undefined || fetched < id) map.set(mid, id);
+          }
+        }
         readRanges.set(chatMid, map);
         readIndex.delete(chatMid);
       }
@@ -554,6 +565,7 @@ async function loadReadRange(
     console.error("[read] range:", errorLine(e));
   }
 }
+// enil:rangeload-end
 
 export {
   loadReadRange,
