@@ -52,6 +52,7 @@ Item {
   width: 600; height: 400
   property var messages: []
   property bool atBottom: true
+  property int unseenBelow: 0
   property int prependAnchorIndex: -1
   property real keepContentY: -1
   property var messageAnchor: null
@@ -124,6 +125,7 @@ Item {
       root.failedMessagesByChat = ({})
       root.ambiguousSendsByChat = ({})
       root.pending = ({})
+      root.unseenBelow = 0
       root.setMessages(root.rows(0, 120), true)
       wait(80)
       root.olderRequests = 0
@@ -336,6 +338,26 @@ Item {
       }
       wait(100)
       verify(msgList.atYEnd)
+    }
+    function test_new_messages_below_a_reader_are_counted() {
+      reading()
+      root.applyEvents([incoming("new1")])
+      root.applyEvents([incoming("new2")])
+      wait(50)
+      compare(root.unseenBelow, 2)
+      verify(!msgList.atYEnd)
+      // Back to the bottom by hand: the count goes.
+      msgList.positionViewAtEnd()
+      wait(50)
+      verify(msgList.atYEnd)
+      compare(root.unseenBelow, 0)
+    }
+    function test_a_reader_at_the_bottom_counts_nothing() {
+      root.unseenBelow = 0
+      root.applyEvents([incoming("new")])
+      wait(80)
+      verify(msgList.atYEnd)
+      compare(root.unseenBelow, 0)
     }
     function test_identical_model_releases_swap_guard() {
       var anchor = reading()

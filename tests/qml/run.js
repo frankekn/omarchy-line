@@ -17394,6 +17394,93 @@ group("(y3) err() translates daemon wire strings for display only");
   );
 }
 
+group("(ux1) consecutive messages share one header, like any messenger");
+{
+  const T0 = new Date(2026, 9, 31, 21, 24, 0).getTime();
+  const at = (id, from, min, extra) =>
+    Object.assign({ id, from, text: id, time: T0 + min * 60000 }, extra || {});
+  const clock = (t) => String(Math.floor(Number(t) / 60000));
+  const read = (m) => m.read || "";
+  const run = [
+    at("a1", "A", 0),
+    at("a2", "A", 1), // next minute: time only
+    at("a3", "A", 1), // same minute, same 已讀: no header at all
+    at("a4", "A", 9), // nine minutes later: a new run, name again
+    at("b1", "B", 9),
+    at("s1", "A", 9, { contentType: "CHATEVENT" }),
+    at("b2", "B", 10), // a join notice between is not somebody speaking
+    at("m1", "ME", 11, { read: "已讀 2" }),
+    at("m2", "ME", 11, { read: "已讀 1" }), // same minute, different 已讀
+    at("m3", "ME", 11, { read: "已讀 1", edited: true }),
+  ];
+  const h = (i, unread) => EventLog.headerAt(run, i, !!unread, clock, read);
+  ok(h(0).shown && h(0).full, "the first of a run prints time and name");
+  ok(h(1).shown && !h(1).full, "a continuation a minute later prints only the time");
+  ok(!h(2).shown, "a continuation in the same minute with the same 已讀 prints nothing");
+  ok(h(3).full, "more than five minutes later starts a new run");
+  ok(h(4).full, "another person starts a new run");
+  ok(!h(5).shown, "a system event has no header line");
+  ok(!h(6).full && EventLog.continuesRun(run, 6),
+     "a system event between two lines of the same person does not split them");
+  ok(h(8).shown && !h(8).full,
+     "our own continuation keeps its line when its 已讀 differs from the one before");
+  ok(h(9).shown, "an edited message keeps its line for the 已編輯 mark");
+  ok(h(2, true).full, "the first message under the unread divider starts a new run");
+  ok(!EventLog.continuesRun(run, 0) && !EventLog.continuesRun(null, 1) &&
+     !EventLog.continuesRun(run, 99), "edges continue nothing");
+  ok(EventLog.showAvatarAt(run, 3, true, "ME") === true &&
+     EventLog.showAvatarAt(run, 1, true, "ME") === false,
+     "the face goes where the name goes: back after a five-minute gap");
+}
+
+group("(ux2) messages that land below a reader who scrolled up are counted");
+{
+  const page = [{ id: "1" }, { id: "2" }];
+  ok(EventLog.appendedCount(page, page.concat([{ id: "3" }, { id: "4" }])) === 2,
+     "two new messages at the tail are two");
+  ok(EventLog.appendedCount(page,
+       page.concat([{ id: "s", contentType: "CHATEVENT" }, { id: "p", pending: true }])) === 0,
+     "a system event or our own pending bubble is nothing to look at");
+  ok(EventLog.appendedCount(
+       [{ id: "1" }, { id: "p1", pending: true, from: "ME" }],
+       [{ id: "1" }, { id: "wire-p1", from: "ME" }, { id: "x", from: "B" }], "ME") === 1,
+     "our pending bubble turning into its echo in the same batch as another's message still counts that one");
+  ok(EventLog.appendedCount(page, page.concat([{ id: "e", from: "ME" }]), "ME") === 0,
+     "our own echo, or a send from our other device, is nothing new to look at");
+  ok(EventLog.appendedCount(page, [{ id: "0" }].concat(page)) === 0,
+     "an older page prepended above is not new below");
+  ok(EventLog.appendedCount(page, [{ id: "9" }]) === 0,
+     "a page that no longer holds the old tail says nothing (changed chat, reload)");
+  ok(EventLog.appendedCount([], page) === 0 && EventLog.appendedCount(page, []) === 0,
+     "nothing before or after is nothing new");
+  const setBody = body("  function setMessages(list, follow) {");
+  ok(/if \(follow === true\) root\.unseenBelow = 0\n\s+else if \(!root\.atBottom\) root\.unseenBelow \+= EventLog\.appendedCount\(before, list, root\.myMid\)/.test(setBody),
+     "setMessages counts them only for a reader who is not following, and an open resets it");
+  ok(/onAtYEndChanged: if \(atYEnd && root\.keepContentY < 0\) root\.unseenBelow = 0/.test(src),
+     "reaching the bottom by hand clears the count, but a model swap's own scroll does not");
+  ok(/id: jumpLatest[\s\S]*visible: msgList\.count > 0 && !msgList\.atYEnd\n\s+&& \(hasNew \|\| behind > msgList\.height\)/.test(src) &&
+     /onClicked: root\.jumpToLatest\(\)/.test(src) &&
+     /Accessible\.onPressAction: root\.jumpToLatest\(\)/.test(src),
+     "a floating button says how many are below, or offers the way back after a screen of scrolling");
+  ok(/if \(t === "G"\) \{\n\s+if \(root\.activeChat && msgList\.count > 0\) root\.jumpToLatest\(\)/.test(src) &&
+     /Accessible\.description: tr\("chat\.toLatestKey"\)/.test(src),
+     "the keyboard gets there with G, and the button says so to a screen reader");
+  ok(Strings.fmt("chat.newBelow", "zh", 3) === "↓ 3 則新訊息" &&
+     Strings.fmt("chat.newBelow", "en", 3) === "↓ 3 new",
+     "its label in both languages");
+}
+
+group("(ux3) readable rows");
+{
+  ok(/id: msgBody\n\s+width: Math\.min\(parent\.width, root\.readableWidth\)/.test(src),
+     "a message body stops at a readable line length in a wide window");
+  ok(/width: Math\.min\(implicitWidth, Math\.max\(0, parent\.width - x/.test(src),
+     "the header text takes only its own width, so 已讀 sits right after the time");
+  ok(/id: rowBadge[\s\S]{0,400}text: root\.agoText\(modelData\.lastTime\)/.test(src) &&
+     /id: unreadCount[\s\S]{0,120}"99\+"/.test(src),
+     "the chat list shows the time above an unread badge, not '2  12 分' on one line");
+}
+
 require("./supervisor.js");
 console.log("\n" + (failed === 0 ? "ALL PASS" : failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

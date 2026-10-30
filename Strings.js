@@ -46,6 +46,9 @@ var STRINGS = {
   "chat.loading":       { zh: "載入中…", en: "Loading…" },
   "chat.noHistory":     { zh: "這個聊天室讀不到歷史訊息", en: "Couldn't load this chat's history" },
   "chat.unreadDivider": { zh: "未讀訊息", en: "Unread" },
+  "chat.newBelow":      { zh: "↓ %1 則新訊息", en: "↓ %1 new" },
+  "chat.toLatest":      { zh: "↓ 回到最新", en: "↓ Latest" },
+  "chat.toLatestKey":   { zh: "按 G 回到最新一則", en: "Press G to jump to the latest" },
 
   // 訊息列
   "msg.edited":        { zh: "已編輯", en: "edited" },

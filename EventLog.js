@@ -419,6 +419,77 @@ function recordFailure(byChat, chat, message) {
 // 這一則旁邊要不要掛大頭貼：群組裡（isGroup 由呼叫端判定）、不是自己講的、
 // 而且是同一個人連著講的那一串的第一則。1:1 只有兩個人，每一則都掛一張臉
 // 只是噪音。
+// 同一個人、同一天、跟他上一句話隔不到 RUN_GAP_MS：接著講的那幾則。通訊軟體只在
+// 一串的第一則掛名字和臉，後面的直接接著畫 —— 每一則都重印「21:25 陳怡君」，一長
+// 串下來畫面上一半是重複的標頭。夾在中間的系統訊息（入群通知）不算有人講話，跳過
+// 它往前看，跟大頭貼一直以來的算法一樣。
+var RUN_GAP_MS = 5 * 60 * 1000
+function previousSpoken(list, i) {
+  for (var j = i - 1; j >= 0; j--) {
+    var p = list[j]
+    if (p && !isSystemEvent(p)) return p
+  }
+  return null
+}
+
+function continuesRun(list, i) {
+  if (!list || i <= 0 || i >= list.length) return false
+  var m = list[i]
+  if (!m || isSystemEvent(m)) return false
+  var p = previousSpoken(list, i)
+  if (!p) return false
+  var from = String(m.from || "")
+  if (from.length === 0 || from !== String(p.from || "")) return false
+  var t = Number(m.time || 0)
+  var pt = Number(p.time || 0)
+  if (dayStart(t) !== dayStart(pt)) return false
+  return t - pt >= 0 && t - pt <= RUN_GAP_MS
+}
+
+// 一則訊息的標頭那一行要畫什麼。full：時間加名字（群組裡別人的還有臉）。接著講
+// 的那幾則只剩時間和已讀；跟上一句完全一樣（同一分鐘、同樣的已讀、沒編輯過）就
+// 整行省掉。未讀分隔線底下第一則重新起一串。clock／read 是面板的格式化函式。
+function headerAt(list, i, firstUnread, clock, read) {
+  var m = list && i >= 0 && i < list.length ? list[i] : null
+  if (!m || isSystemEvent(m)) return { shown: false, full: false }
+  if (firstUnread || !continuesRun(list, i)) return { shown: true, full: true }
+  var p = previousSpoken(list, i)
+  var shown = m.edited === true || clock(m.time) !== clock(p.time) || read(m) !== read(p)
+  return { shown: shown, full: false }
+}
+
+// 換一份訊息之後，尾巴多出來幾則別人傳來、還沒看過的新訊息。錨點是舊的那份裡最後
+// 一則已經確認的訊息：還在送的泡泡會被回音換成正式 id，拿它當錨點的話，回音跟別人
+// 的新訊息擠在同一批進來時就整個找不到、少報。錨點之後、舊的那份沒有的 id 才算，
+// 自己的（回音、別台裝置送的）、系統訊息、還在送的不算。錨點找不到（整份換掉、換
+// 聊天室）就說不準，回 0 —— 寧可少報，也不要叫人往下看一則不存在的新訊息。
+function appendedCount(before, after, myMid) {
+  if (!before || !before.length || !after || !after.length) return 0
+  var anchor = ""
+  var seen = {}
+  for (var i = before.length - 1; i >= 0; i--) {
+    var b = before[i] || {}
+    var bid = String(b.id || "")
+    if (bid) seen[bid] = true
+    if (!anchor && bid && !b.pending) anchor = bid
+  }
+  if (!anchor) return 0
+  var at = -1
+  for (var j = after.length - 1; j >= 0; j--) {
+    if (String((after[j] || {}).id || "") === anchor) { at = j; break }
+  }
+  if (at < 0) return 0
+  var n = 0
+  for (var k = at + 1; k < after.length; k++) {
+    var m = after[k]
+    if (!m || m.pending || isSystemEvent(m)) continue
+    if (seen[String(m.id || "")]) continue
+    if (myMid && String(m.from || "") === String(myMid)) continue
+    n++
+  }
+  return n
+}
+
 function showAvatarAt(list, i, isGroup, myMid) {
   if (!isGroup) return false
   if (!list || i < 0 || i >= list.length) return false
@@ -426,13 +497,6 @@ function showAvatarAt(list, i, isGroup, myMid) {
   if (!m || isSystemEvent(m)) return false
   var from = String(m.from || "")
   if (from.length === 0 || from === myMid) return false
-  for (var j = i - 1; j >= 0; j--) {
-    var p = list[j]
-    // 中間夾一則入群通知，不該把同一個人講的那一串切成兩段。
-    if (!p || isSystemEvent(p)) continue
-    // 隔了一天就重新算一串：日期分隔線底下第一則沒有臉，會像是接在分隔線上面那串。
-    if (dayStart(Number(p.time || 0)) !== dayStart(Number(m.time || 0))) return true
-    return String(p.from || "") !== from
-  }
-  return true
+  // 臉跟著名字走：一串的第一則（換了人、隔了一天、或隔了 RUN_GAP_MS）才掛。
+  return !continuesRun(list, i)
 }
