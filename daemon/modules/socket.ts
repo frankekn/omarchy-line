@@ -377,12 +377,13 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     // Once per open, not once per page: this is the only moment 已讀 can be
     // put on a bubble, and after it the read ops keep it current -- paging
     // back through a year of history must not pay a round trip per page.
-    if (!before || !readRanges.has(chatMid)) {
-      await loadReadRange(chatMid, owner, generation);
-    }
-    if (!sessionIsCurrent(owner, generation)) {
-      return { ok: false, error: "尚未登入" };
-    }
+    // Started, not awaited: a head page the store can answer goes out at once
+    // and the background revalidation waits for the range instead, pushing a
+    // `history` event when 已讀 moved. Every other path awaits it before it
+    // converts, overlapped with its own fetch.
+    const readRangeLoad = !before || !readRanges.has(chatMid)
+      ? loadReadRange(chatMid, owner, generation)
+      : null;
 
     let out: PluginMessage[] | null = null;
     let pageRaws: unknown[] | null = null;
@@ -399,6 +400,7 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       );
       if (stored && stored.length) {
         pageRaws = stored;
+        await readRangeLoad;
         out = await convertHistoryPage(stored, chatMid, owner, generation);
       }
     } else {
@@ -406,7 +408,15 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       if (tail && tail.length) {
         pageRaws = tail;
         out = await convertHistoryPage(tail, chatMid, owner, generation);
-        void revalidateHistory(chatMid, count, owner, generation, out);
+        void revalidateHistory(
+          chatMid,
+          count,
+          owner,
+          generation,
+          out,
+          tail,
+          readRangeLoad,
+        );
       }
     }
 
@@ -415,16 +425,19 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       if (!end || end.chat !== chatMid) {
         return { ok: false, error: "沒有這個聊天室的游標" };
       }
-      const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
-        request: {
-          messageBoxId: chatMid,
-          endMessageId: {
-            messageId: end.messageId,
-            deliveredTime: end.deliveredTime,
+      const [raws] = await Promise.all([
+        owner.base.talk.getPreviousMessagesV2WithRequest({
+          request: {
+            messageBoxId: chatMid,
+            endMessageId: {
+              messageId: end.messageId,
+              deliveredTime: end.deliveredTime,
+            },
+            messagesCount: count,
           },
-          messagesCount: count,
-        },
-      });
+        }),
+        readRangeLoad,
+      ]);
       if (!sessionIsCurrent(owner, generation)) {
         return { ok: false, error: "尚未登入" };
       }
@@ -440,10 +453,19 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       if (out === null) return { ok: false, error: "尚未登入" };
     }
 
+    // Behind the answer, like the thumbnails: the page is what the reader is
+    // waiting for, and the unread count reaches the panel through state.json
+    // either way. After the range, so a stale range cannot land on top of the
+    // cursor markChatRead just moved forward.
     if (req.markRead && out.length) {
       const newest = out[out.length - 1];
-      const marked = await markChatRead(owner, generation, chatMid, newest.id);
-      if (marked === null) return { ok: false, error: "尚未登入" };
+      void (async () => {
+        await readRangeLoad;
+        await markChatRead(owner, generation, chatMid, newest.id);
+      })().catch((e) => console.error("[read]", errorLine(e)));
+    }
+    if (!sessionIsCurrent(owner, generation)) {
+      return { ok: false, error: "尚未登入" };
     }
 
     // Thumbnails land behind the answer, not in front of it.
@@ -926,6 +948,9 @@ async function convertHistoryPage(
  * order, each carrying the same visible content. readBy is compared too: a
  * read op is exactly the kind of thing that lands between two opens.
  */
+// The block between the enil:revalidate markers is sliced out verbatim by
+// historyopen_test.ts.
+// enil:revalidate-begin
 function sameHistoryPage(a: PluginMessage[], b: PluginMessage[]): boolean {
   if (a.length !== b.length) return false;
   const shape = (m: PluginMessage) =>
@@ -953,8 +978,36 @@ async function revalidateHistory(
   owner: Client,
   generation: number,
   served: PluginMessage[] | null,
+  servedRaws: unknown[] = [],
+  readRangeLoad: Promise<void> | null = null,
 ): Promise<void> {
-  if (historyRevalidations.has(chatMid)) return;
+  const servedAt = ++historyServeSeq;
+  const republish = async () => {
+    await readRangeLoad;
+    if (!served?.length || !servedRaws.length) return;
+    if (!sessionIsCurrent(owner, generation)) return;
+    // The store as it is now, not the raws this open was served: a
+    // revalidation that finished meanwhile has appended LINE's newer copy,
+    // and re-publishing the old one would roll an edit back on screen.
+    const now = await messageStore.tail(
+      String(me.mid ?? ""),
+      chatMid,
+      servedRaws.length,
+    );
+    const fresh = await convertHistoryPage(
+      now?.length ? now : servedRaws,
+      chatMid,
+      owner,
+      generation,
+    );
+    publishHistoryPage(chatMid, owner, generation, served, servedAt, fresh);
+  };
+  if (historyRevalidations.has(chatMid)) {
+    // Another revalidation owns the fetch; the range this open started still
+    // has to reach the bubbles if it moved 已讀.
+    if (readRangeLoad) await republish();
+    return;
+  }
   historyRevalidations.add(chatMid);
   try {
     const myMid = String(me.mid ?? "");
@@ -963,17 +1016,35 @@ async function revalidateHistory(
     // pointed at LINE's newest delivery, so the fetch below includes whatever
     // arrived while nobody was looking.
     const cursor = cursors.get(`box:${chatMid}`);
-    if (!cursor || cursor.chat !== chatMid) return;
-    const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
-      request: {
-        messageBoxId: chatMid,
-        endMessageId: {
-          messageId: cursor.messageId,
-          deliveredTime: cursor.deliveredTime,
+    if (!cursor || cursor.chat !== chatMid) {
+      await republish();
+      return;
+    }
+    // The page was served before the read range came back; convert only after
+    // it has, so the comparison below sees 已讀 as it is now.
+    const fetched = await Promise.all([
+      owner.base.talk.getPreviousMessagesV2WithRequest({
+        request: {
+          messageBoxId: chatMid,
+          endMessageId: {
+            messageId: cursor.messageId,
+            deliveredTime: cursor.deliveredTime,
+          },
+          messagesCount: count,
         },
-        messagesCount: count,
-      },
+      }),
+      readRangeLoad,
+    ]).catch((e: unknown) => {
+      console.error("[history] revalidate:", errorLine(e));
+      return null;
     });
+    if (fetched === null) {
+      // The page could not be re-read, but a range that did land still owes
+      // the served page its 已讀; no read op will come to carry it later.
+      await republish();
+      return;
+    }
+    const [raws] = fetched;
     if (!sessionIsCurrent(owner, generation)) return;
     raws.reverse();
     if (raws.length) {
@@ -981,14 +1052,51 @@ async function revalidateHistory(
       messageStore.append(myMid, chatMid, raws);
     }
     const fresh = await convertHistoryPage(raws, chatMid, owner, generation);
-    if (fresh === null || sameHistoryPage(served, fresh)) return;
-    pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+    publishHistoryPage(chatMid, owner, generation, served, servedAt, fresh);
   } catch (e) {
     console.error("[history] revalidate:", errorLine(e));
   } finally {
     historyRevalidations.delete(chatMid);
   }
 }
+
+/** Orders served pages against the history events published after them. */
+let historyServeSeq = 0;
+/** The last history page published per chat, stamped on the same counter. */
+const publishedHistory = new Map<
+  string,
+  { page: PluginMessage[]; after: number }
+>();
+
+/**
+ * One `history` event for a page that differs from what the panel was served.
+ * Two background paths can land on the same answer for the same chat (an
+ * open's range republish and an older revalidation); the second one is
+ * dropped when a page published after this serve already says the same.
+ */
+function publishHistoryPage(
+  chatMid: string,
+  owner: Client,
+  generation: number,
+  served: PluginMessage[],
+  servedAt: number,
+  fresh: PluginMessage[] | null,
+): void {
+  // A conversion that straddled a logout can still hand back a page; it must
+  // not reach the next account's event stream.
+  if (fresh === null || !sessionIsCurrent(owner, generation)) return;
+  if (sameHistoryPage(served, fresh)) return;
+  const prior = publishedHistory.get(chatMid);
+  if (prior && prior.after > servedAt && sameHistoryPage(prior.page, fresh)) {
+    return;
+  }
+  publishedHistory.set(chatMid, { page: fresh, after: ++historyServeSeq });
+  if (publishedHistory.size > 64) {
+    publishedHistory.delete(publishedHistory.keys().next().value!);
+  }
+  pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+}
+// enil:revalidate-end
 
 async function serve(conn: Deno.Conn): Promise<void> {
   notePanelOpened();
