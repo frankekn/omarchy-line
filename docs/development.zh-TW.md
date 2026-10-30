@@ -16,7 +16,8 @@ git submodule update --init
 ```
 
 daemon 需要 [Deno](https://deno.com) 2。面板的測試需要 Node.js。按鍵測試需要
-`qt6-declarative` 裡的 `qmltestrunner`，沒裝的話會直接跳過。
+`qt6-declarative` 裡的 `qmltestrunner`，沒裝的話會直接跳過。如果 Qt 工具放在
+`/usr/lib/qt6/bin`，請將該目錄加入 `PATH`，讓按鍵測試和 `qmllint` 找到工具。
 
 ## 跑檢查
 
@@ -28,7 +29,10 @@ node tests/qml/run.js
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+qml_imports="$(mktemp -d)"
+ln -s /usr/share/omarchy/shell "$qml_imports/qs"
+qmllint -I "$qml_imports" Panel.qml LinePanel.qml LineWindow.qml
+rm -rf -- "$qml_imports"
 ```
 
 - `deno task check` 做 daemon 的型別檢查。`deno task no-any` 和 `deno task lint`
@@ -39,7 +43,8 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   state 目錄。
 - `tests/qml/keytest/run.sh` 在 offscreen 的 `qmltestrunner` 下跑列表的按鍵路徑。
 - `python3 daemon/stub_test.py` 拿 stub 對照協定，在自己的暫存 `XDG_STATE_HOME` 裡跑。
-- `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。
+- `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。暫時建立的
+  `qs` 連結讓 `qmllint` 能找到 QML import 的正確根目錄。
 
 這些都證明不了畫面是對的。改完之後要在實機上確認：
 
@@ -62,7 +67,8 @@ LINE session 也能改 UI。
 
 ```bash
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # 已登入
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # 未登入，可以試 QR 流程
+# 未登入，可以試 QR 流程
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
@@ -119,6 +125,150 @@ stub 多一個真 daemon **沒有**的指令 `poke`：`{"cmd":"poke","chat":"<mi
 
 **別讓 stub 指到真的 state 目錄**，它會蓋掉 `state.json`。
 
+## 開發網頁版
+
+網頁版的程式在 `daemon/web/`：
+
+| 路徑 | 內容 |
+|---|---|
+| `server.ts` | 路由，以及 `daemon.ts` 呼叫的 `startWeb`。 |
+| `auth.ts` | web key、cookie 和同源規則。 |
+| `bridge.ts` | 一條瀏覽器 WebSocket 對應一條 daemon socket 連線，並推送 `state.json` 的變動。 |
+| `files.ts` | `/api/file`（媒體快取和登入 QR）和 `/api/upload`。 |
+| `http.ts` | 安全標頭和簡單的回應。 |
+| `public/` | 網頁本身：`index.html`、`app.css`，以及 `public/js/` 裡的原生 ES module，沒有建置步驟。 |
+
+`public/js/` 裡的 `protocol.js`、`text.js`、`drafts.js`、`connection.js` 和
+`i18n.js` 等輔助模組可由 `ui_test.ts` 在 Deno 裡直接 import 測試，不需要瀏覽器。
+`controller-*.js` 負責改共用的 model，`view-*.js` 負責畫面，
+`app.js` 把它們組起來。伺服器只提供 `public/js/<name>.js` 這一層，不支援子目錄。
+
+伺服器啟動時會將網頁資源與依內容計算的 ETag 存成快照。修改 HTML、CSS 或 JavaScript
+後請重啟 web server；瀏覽器重新載入時會重新驗證快取。API 回應使用
+`Cache-Control: no-store`；只有登入後由 `/api/file` 取得的媒體和登入 QR，瀏覽器
+可以私下保留一天。
+HTML 回應（包括 304）會在載入模組時預載 `/api/session`，session 仍是 `no-store`。
+啟動時網頁只在 session 確認 cookie 後才開 WebSocket；session 檢查失敗時，登入畫面
+會顯示連線錯誤。如果 socket 在第一個 frame 前關閉，網頁會在重連時再檢查 session。
+確認 session 已失效時會停止重連，保留原頁並顯示登入連結。使用者可在點擊連結前複製
+輸入框草稿；已存入瀏覽器的草稿在重新登入後仍可使用。網路錯誤則維持原本的重連間隔。
+
+不用 LINE 帳號，接 stub 跑網頁：
+
+```bash
+cd daemon
+stub_state="$(mktemp -d)"
+set -m
+XDG_STATE_HOME="$stub_state" ./stub.py &
+stub_pid=$!
+XDG_STATE_HOME="$stub_state" ENIL_WEB_ADDR=127.0.0.1:18470 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run --frozen -A web/server.ts &
+web_pid=$!
+```
+
+然後開 `http://127.0.0.1:18470/?key=devkey-0123456789abcdef`。
+用完後停止兩個 process group，並刪除它們的暫存 state：
+
+```bash
+kill -- "-$web_pid" "-$stub_pid"
+wait "$web_pid" "$stub_pid" 2>/dev/null || true
+rm -rf -- "$stub_state"
+```
+
+`deno task test` 會連同 `web/server_test.ts` 和 `web/ui_test.ts` 一起跑。
+
+stub 的 socket 也接受 `{"cmd":"poke","chat":"cstub-family","text":"hello"}`，
+用來加入一則收到的文字訊息。不帶 `text` 時，`poke` 維持上面說的通知交接行為。
+
+瀏覽器測試會各自啟動 stub 和 web server，並使用暫存的 state 目錄。stub 的外部貼圖和
+FLEX 圖片網址會以本機 fixture 回覆。在 repo 根目錄安裝 Playwright 的 Chromium 後，
+可以執行全部測試，或只指定要跑的 suite：
+
+```bash
+npx --yes playwright@1.64.1 install --with-deps chromium
+deno run -A tests/web/run.js
+deno run -A tests/web/run.js media mentions
+```
+
+設定 `CHROMIUM=/usr/bin/chromium` 可以改用本機 Chromium。harness 預設選一個空的
+port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 state，失敗時會留下
+截圖和 log。非預期的 console error 和所有 page error 都會讓測試失敗；少數符合條件的
+預期瀏覽器訊息除外。
+設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
+暫存目錄。請使用短路徑，讓測試目錄內的 Unix socket 路徑不超過系統上限。
+啟動認證的獨立測試使用相同設定：
+
+```bash
+deno run --frozen -A tests/web/boot-rtt.js
+```
+
+`run.js` 註冊了 16 個 suite。要執行與 CI 相同的 12 個 WebKit suite 和啟動測試，先安裝
+相同版本 Playwright 的 WebKit，再執行：
+
+```bash
+npx --yes playwright@1.64.1 install webkit
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/run.js \
+  main edge media mentions parity review a11y state-wire state-wire-resync \
+  preview-cache drafts message-window
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/boot-rtt.js
+```
+
+預設是 Chromium；`CHROMIUM` 只會改變 Chromium 的執行檔。WebKit 的手機 context
+使用 iPhone 13 設定和各 suite 指定的 viewport。兩種瀏覽器都透過 IPv4-mapped IPv6
+loopback 位址連接 IPv4 listener，因此機器必須支援該位址。在受支援的 Linux 發行版，
+Playwright 的 `install --with-deps webkit` 可以安裝所需的系統套件。
+
+真 daemon 的 smoke test 也使用空的暫存 state 目錄，不含 LINE 帳號。它用
+`enil-run.sh` 啟動原始碼，並在暫存副本中編譯執行檔。編譯後會移除副本的網頁檔案，
+再檢查執行檔內的頁面、session、socket 和上傳，不會啟動 LINE 登入：
+
+```bash
+deno run -A tests/web/realboot.js
+```
+
+同樣可以設定 `CHROMIUM`、`ENIL_WEB_TEST_PORT` 和 `ENIL_WEB_TEST_TMPDIR`。
+原始碼測試要求 `enil-run.sh` 會選用 Deno，而不是現有且符合目前版本的 `daemon/enil`
+執行檔。成功時會刪除暫存 state；失敗時會保留 state 和 log。
+
+要檢查 daemon 將 state 立即送到瀏覽器，可執行以下獨立測試。它使用空的暫存
+state，並且不登入 LINE：
+
+```bash
+deno run --frozen -A tests/web/state-notify.js
+```
+
+要檢查檔案描述符耗盡後 daemon 與 listener 的復原：
+
+```bash
+ENIL_WEB_TEST_PORT=18475 deno run --frozen -A tests/web/fd-exhaustion.js
+```
+
+測試會以空的暫存 state 啟動另一個 daemon，將描述符上限設為 256，開啟閒置連線直到
+達到上限，再關閉連線並檢查 web 和 daemon socket。不會登入 LINE。安裝用的 launchd
+和 systemd 設定將上限設為 8192。
+
+要以手機大小的 viewport 對 stub 量測網頁載入：
+
+```bash
+CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
+  deno run --frozen -A tests/web/loadperf.js
+```
+
+腳本用 Chromium 模擬 150 和 300 毫秒延遲、5 Mbps 頻寬，量測冷、熱快取載入並
+開啟 stub 聊天室，回報回應數量、傳輸位元組和 runtime import 圖的深度。腳本會量測
+未登入的首次載入，其餘計時在登入後開始；回應位元組不含 WebSocket 流量。它也會在
+HTML 已快取時檢查登出和重新登入。這是本機模擬，不是 Tailscale relay 的實測。
+`ENIL_WEB_TEST_TMPDIR` 可指定隔離暫存 state 的上層目錄。
+
+要確認編譯後 daemon 的內容 ETag 和 304 回應，並從暫存副本移除原始網頁資源：
+
+```bash
+ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
+```
+
+此測試使用空的暫存 state，不會啟動 LINE 登入。CI 會跑 compiled-assets 測試；
+載入量測不屬於 CI 必跑項目。
+
 ## 截圖
 
 文件用的截圖一律對著 stub 拍，不要用真的帳號。真實截圖會拍到沒同意公開的人的名字、
@@ -168,9 +318,11 @@ dispatcher。另外還需要 `omarchy-shell`、`quickshell`、`grim`、`hyprctl`
 
 `.github/workflows/ci.yml` 在 GitHub 提供的 `ubuntu-24.04` runner 上跑，對象是推到
 `main` 的 commit，以及每一個 pull request（包括從 fork 來的 pull request）。它不用任何
-secret，對 repo 只有唯讀權限。它跑上面那些檢查，但不跑需要 Omarchy shell 的
-`omarchy plugin validate` 和 `qmllint`。另外還跑 `sh -n daemon/enil-run.sh`，
-以及檢查 `manifest.json` 有沒有 `id`、`name` 和 `version`。
+secret，對 repo 只有唯讀權限。它跑本機檢查，但不跑需要 Omarchy shell 的
+`omarchy plugin validate` 和 `qmllint`。它會跑 Chromium 瀏覽器測試、真 daemon
+smoke test、啟動、compiled-assets、state-notify 和描述符耗盡測試。另一個 job 會跑指定的
+WebKit 瀏覽器測試和啟動測試。另外還跑 `sh -n daemon/enil-run.sh`，以及檢查
+`manifest.json` 有沒有 `id`、`name` 和 `version`。
 
 ## 調校用的環境變數
 
@@ -187,6 +339,8 @@ daemon 會讀下面這些環境變數。要替 systemd unit 設定，執行 `sys
 `ENIL_DEVICE` 會覆寫 daemon 註冊時用的裝置類型，預設是 `ANDROIDSECONDARY`。這是開發
 用的參數，不在支援範圍內：換成別的裝置類型會改變 LINE 允許的事，有些類型還會少掉
 功能，例如查詢聯絡人名稱。
+
+`ENIL_WEB_ADDR` 和 `ENIL_WEB_KEY` 會開啟網頁版，見 [web.zh-TW.md](web.zh-TW.md)。
 
 ## 編譯執行檔
 

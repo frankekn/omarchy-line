@@ -59,7 +59,12 @@ function safeLine(fields: Json): string {
 
 function messageIdOf(line: Json): string {
   const id = line.id;
-  return id === undefined || id === null ? "" : String(id);
+  if (id === undefined || id === null) return "";
+  try {
+    return String(id);
+  } catch {
+    return "";
+  }
 }
 
 /** Numeric id comparison; LINE ids are decimal strings or i64 numbers. */
@@ -79,6 +84,7 @@ interface ChatFile {
   /** `${myMid}/${chat}` -- the live-entry check for a deferred rewrite. */
   key: string;
   loaded: boolean;
+  loading: Promise<void> | null;
   /** Non-empty lines currently on disk; the compaction trigger's dividend. */
   diskLines: number;
   /** ids in ascending message order. */
@@ -91,6 +97,8 @@ interface ChatFile {
   pending: string[];
   /** A rewrite is in flight -- eviction must skip this file (see compact). */
   compacting: boolean;
+  /** Queued or running disk work; eviction must keep its file owner. */
+  busy: number;
   writing: Promise<void>;
   timer: ReturnType<typeof setTimeout> | null;
 }
@@ -114,6 +122,18 @@ function reviveJson(_k: string, v: unknown): unknown {
     return Uint8Array.from(Object.values(o) as number[]);
   }
   return v;
+}
+
+function parseLine(line: string): Json | null {
+  try {
+    const value: unknown = JSON.parse(line, reviveJson);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    return value as Json;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -181,26 +201,26 @@ function stripped(rec: Json): Json {
 }
 
 async function loadFile(f: ChatFile): Promise<void> {
-  if (f.loaded) return;
-  f.loaded = true;
   let text = "";
   try {
     text = await Deno.readTextFile(f.path);
   } catch {
-    return; // missing or unreadable == empty cache
+    // Missing or unreadable == empty disk cache; pending writes still apply.
   }
-  for (const line of text.split("\n")) {
+  const replay = (line: string) => {
     const t = line.trim();
-    if (!t) continue;
-    f.diskLines++;
-    let parsed: Json;
-    try {
-      parsed = JSON.parse(t, reviveJson) as Json;
-    } catch {
-      continue; // a torn tail line loses only itself
-    }
-    applyLine(f.recs, f.order, f.seen, parsed);
+    if (!t) return;
+    const parsed = parseLine(t);
+    if (parsed) applyLine(f.recs, f.order, f.seen, parsed);
+  };
+  for (const line of text.split("\n")) {
+    if (line.trim()) f.diskLines++;
+    replay(line);
   }
+  // The writing chain prevents a flush from moving these lines to disk while
+  // the snapshot is read. No append can interleave with this synchronous loop.
+  for (const line of f.pending) replay(line);
+  f.loaded = true;
 }
 
 export interface MessageStore {
@@ -262,6 +282,33 @@ export function createMessageStore(
     return SEGMENT_RE.test(myMid) && SEGMENT_RE.test(chat);
   }
 
+  function trimFiles(keep?: ChatFile): void {
+    while (files.size > STORE_FILES_MAX) {
+      let oldest: string | undefined;
+      for (const [key, file] of files) {
+        if (
+          file !== keep && !file.loading && !file.busy && !file.compacting &&
+          !file.pending.length && file.timer === null
+        ) {
+          oldest = key;
+          break;
+        }
+      }
+      // A busy or dirty file owns its path until the queued work settles.
+      if (oldest === undefined) return;
+      files.delete(oldest);
+    }
+  }
+
+  function queueWork(f: ChatFile, work: () => Promise<void>): Promise<void> {
+    f.busy++;
+    f.writing = f.writing.then(work).finally(() => {
+      f.busy--;
+      trimFiles();
+    });
+    return f.writing;
+  }
+
   function fileFor(myMid: string, chat: string): ChatFile {
     const key = `${myMid}/${chat}`;
     let f = files.get(key);
@@ -270,12 +317,14 @@ export function createMessageStore(
         path: `${rootDir}/${myMid}/${chat}.jsonl`,
         key,
         loaded: false,
+        loading: null,
         diskLines: 0,
         order: [],
         seen: new Set(),
         recs: new Map(),
         pending: [],
         compacting: false,
+        busy: 0,
         writing: Promise.resolve(),
         timer: null,
       };
@@ -283,23 +332,7 @@ export function createMessageStore(
       files.delete(key);
     }
     files.set(key, f);
-    while (files.size > STORE_FILES_MAX) {
-      // Skip a file mid-rewrite: dropping it would let a re-created ChatFile
-      // append to the old inode while compact's rename is still in flight.
-      let oldest: string | undefined;
-      for (const k of files.keys()) {
-        if (!files.get(k)?.compacting) {
-          oldest = k;
-          break;
-        }
-      }
-      if (oldest === undefined) break;
-      const drop = files.get(oldest);
-      files.delete(oldest);
-      // A pending append must still reach disk even though the in-memory
-      // index is gone -- flush it before forgetting the file object.
-      if (drop && drop.pending.length) void flushFile(drop);
-    }
+    trimFiles(f);
     return f;
   }
 
@@ -332,12 +365,8 @@ export function createMessageStore(
       for (const line of text.split("\n")) {
         const t = line.trim();
         if (!t) continue;
-        let parsed: Json;
-        try {
-          parsed = JSON.parse(t, reviveJson) as Json;
-        } catch {
-          continue;
-        }
+        const parsed = parseLine(t);
+        if (!parsed) continue;
         // Uncapped replay: compaction answers to the disk file, not the
         // in-memory index -- a capped index would silently drop old rows.
         applyLine(recs, order, seen, parsed, Number.POSITIVE_INFINITY);
@@ -400,10 +429,19 @@ export function createMessageStore(
    * one compaction exists to shrink.
    */
   async function openFile(f: ChatFile): Promise<void> {
-    await loadFile(f);
+    if (!f.loaded) {
+      if (!f.loading) {
+        f.loading = queueWork(f, () => loadFile(f)).finally(() => {
+          f.loading = null;
+          trimFiles();
+        });
+      }
+      await f.loading;
+    }
     if (maybeCompact(f)) {
-      f.writing = f.writing.then(() => compactFile(f));
-      void f.writing;
+      void queueWork(f, async () => {
+        if (maybeCompact(f)) await compactFile(f);
+      });
     }
   }
 
@@ -412,8 +450,7 @@ export function createMessageStore(
     if (f.timer !== null) return;
     f.timer = setTimeout(() => {
       f.timer = null;
-      f.writing = f.writing.then(() => flushFile(f));
-      void f.writing;
+      void queueWork(f, () => flushFile(f));
     }, FLUSH_MS);
   }
 
@@ -468,7 +505,7 @@ export function createMessageStore(
         if (f.timer !== null) {
           clearTimeout(f.timer);
           f.timer = null;
-          f.writing = f.writing.then(() => flushFile(f));
+          void queueWork(f, () => flushFile(f));
         }
         await f.writing;
       }

@@ -44,7 +44,45 @@ jobs:
       - name: stub tests
         working-directory: daemon
         run: python3 stub_test.py
+      - name: Install Playwright Chromium
+        # Keep this version in sync with tests/web/harness.js.
+        run: npx --yes playwright@1.64.1 install --with-deps chromium
+      - name: web browser tests
+        run: deno run -A tests/web/run.js
+      - name: web real daemon smoke
+        run: deno run -A tests/web/realboot.js
+      - name: web startup and cache tests
+        run: |
+          deno test -A tests/web/boot-connection_test.js
+          deno run -A tests/web/boot-rtt.js
+          deno run -A tests/web/compiled-assets.js
+          deno run -A tests/web/state-notify.js
+          deno run -A tests/web/fd-exhaustion.js
       - name: shell syntax
         run: sh -n daemon/enil-run.sh
       - name: manifest sanity
         run: node -e 'const m = require("./manifest.json"); for (const k of ["id", "name", "version"]) if (!m[k]) throw new Error("manifest.json missing " + k)'
+
+  webkit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: v2.x
+      - name: Install Playwright WebKit
+        # Keep this version in sync with tests/web/harness.js.
+        run: npx --yes playwright@1.64.1 install --with-deps webkit
+      - name: web browser tests
+        env:
+          ENIL_WEB_BROWSER: webkit
+        run: |
+          deno run --frozen -A tests/web/run.js main edge media mentions parity review a11y state-wire state-wire-resync preview-cache drafts message-window
+          deno run --frozen -A tests/web/boot-rtt.js

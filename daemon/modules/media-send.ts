@@ -6,12 +6,14 @@
  * clipboard path also uses.
  *
  * Dependency direction: imports video (duration + thumbnail), session
- * (sessionIsCurrent), text (refusal), env, refresh (refreshChats) and types.
+ * (sessionIsCurrent), caches (limiter), text (refusal), env, refresh
+ * (refreshChats) and types.
  * socket.ts dispatches into sendFilePath/sendArgs; nothing reaches back up.
  */
 import { tagAt, videoLength, videoThumbnail } from "./video.ts";
 import { refreshChats } from "./refresh.ts";
 import { sessionIsCurrent } from "./session.ts";
+import { limiter } from "./caches.ts";
 import { refusal } from "./text.ts";
 import type { Client } from "@evex/linejs";
 import type { Json } from "./types.ts";
@@ -178,7 +180,10 @@ function extOf(path: string): string {
  * the extension only gets a say where they say nothing we recognise.
  */
 function mediaKindOf(path: string, head: Uint8Array): MediaKind {
-  return magicKind(head) ?? KIND_BY_EXT[extOf(path)] ?? "file";
+  const magic = magicKind(head);
+  if (magic) return magic;
+  const ext = extOf(path);
+  return Object.hasOwn(KIND_BY_EXT, ext) ? KIND_BY_EXT[ext] ?? "file" : "file";
 }
 // enil:mediakind-end
 
@@ -328,6 +333,35 @@ function fileTargetRefusal(to: string): Json | null {
 }
 
 /**
+ * How many sends may hold a whole file in memory at once, process-wide. A
+ * file can be 1 GiB, and every panel or browser connection can ask for one.
+ * A send keeps its slot from the read until the upload ends, because the
+ * bytes stay in memory that long. Further sends wait for a slot; they do not
+ * fail.
+ */
+const SEND_FILE_MAX_READS = 2;
+const sendFileSlot = limiter(SEND_FILE_MAX_READS);
+
+/** Check the file without holding its full contents in memory. */
+async function checkSendFile(
+  path: string,
+  name: string,
+): Promise<{ kind: MediaKind } | { rejection: Json }> {
+  try {
+    const size = await regularFileSize(path);
+    if (size === null) {
+      return { rejection: refusal(`不是一般檔案: ${path}`, "不是一般檔案") };
+    }
+    const kind = mediaKindOf(name, await readHead(path, MEDIA_HEAD_BYTES));
+    const tooBig = sizeRefusalText(kind, size);
+    if (tooBig) return { rejection: { ok: false, error: tooBig } };
+    return { kind };
+  } catch {
+    return { rejection: refusal(`找不到檔案: ${path}`, "找不到檔案") };
+  }
+}
+
+/**
  * `sendFile`, and the second half of `sendClipboardImage`.
  *
  * One function rather than two callers of uploadMediaByE2EE so that a pasted
@@ -350,20 +384,32 @@ async function sendFilePath(
     return { ok: false, error: "尚未登入" };
   }
   const name = filename || path.split("/").pop() || "file";
+  const checked = await checkSendFile(path, name);
+  if ("rejection" in checked) return checked.rejection;
+  return await sendFileSlot(() =>
+    readAndUpload(to, path, owner, generation, requestId, name)
+  );
+}
+
+/** sendFilePath's body, run while it holds a sendFileSlot. */
+async function readAndUpload(
+  to: string,
+  path: string,
+  owner: Client,
+  generation: number,
+  requestId: string,
+  name: string,
+): Promise<Json> {
+  // The wait for a slot can outlast the session; do not read for nobody.
+  if (!sessionIsCurrent(owner, generation)) {
+    return { ok: false, error: "尚未登入" };
+  }
+  // The path may have changed while the send waited for a slot.
+  const checked = await checkSendFile(path, name);
+  if ("rejection" in checked) return checked.rejection;
+  const kind = checked.kind;
   let bytes: Uint8Array;
-  let kind: MediaKind;
   try {
-    // Stat and head first, whole file after: the refusal below has to land
-    // before the bytes are in memory, which is the only reason it exists. Both
-    // reads share this catch because a path that cannot be opened is the same
-    // answer whichever of them hits it first.
-    const size = await regularFileSize(path);
-    if (size === null) {
-      return refusal(`不是一般檔案: ${path}`, "不是一般檔案");
-    }
-    kind = mediaKindOf(name, await readHead(path, MEDIA_HEAD_BYTES));
-    const tooBig = sizeRefusalText(kind, size);
-    if (tooBig) return { ok: false, error: tooBig };
     bytes = await Deno.readFile(path);
   } catch {
     return refusal(`找不到檔案: ${path}`, "找不到檔案");

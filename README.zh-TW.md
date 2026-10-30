@@ -11,7 +11,7 @@
 [linejs](https://github.com/evex-dev/linejs) 為基礎打造。
 
 | ![英文介面：聊天列表與開著的對話](docs/images/panel-en.png) | ![繁體中文介面](docs/images/panel-zh.png) |
-| :-: | :-: |
+|---|---|
 | English | 繁體中文 |
 
 ![bar 上顯示未讀數的圖示](docs/images/bar-badge.png)
@@ -27,12 +27,14 @@
   條款，LINE 可以限制或停用這個帳號。本軟體不附任何保證（見 [LICENSE](LICENSE)）。
 - **它會佔一個裝置名額。** 你用手機掃 QR 碼登入。daemon 註冊成次要裝置，所以它會
   出現在手機的已登入裝置清單裡。它從不走帳號轉移流程，所以你的手機一直是主要裝置。
-- **它把你的 session 和訊息存在磁碟上。** 全部都在 `~/.local/state/enil/`（或
+- **它把你的 session 和訊息存在磁碟上。** daemon 資料都在 `~/.local/state/enil/`（或
   `$XDG_STATE_HOME/enil/`），權限 `0700`。`storage.json`（權限 `0600`）存登入
   token 與 E2EE 金鑰。`messages/` 保存 daemon 看過的每一則訊息，`media/` 保存下載的
-  檔案與縮圖。外掛不加密這些檔案。
-- **它在這台電腦上存的資料，你都可以移除。** 在面板登出會結束 session 並刪掉登入
-  token。要連其他資料一起移除，請照[解除安裝](#解除安裝)的步驟做。
+  檔案與縮圖。外掛不加密這些檔案。使用網頁版的瀏覽器也會保留網站資料，包括草稿。
+- **它在這台電腦上存的資料，你都可以移除。** 在面板或網頁登出 LINE 會結束 session
+  並刪掉登入 token。要移除 daemon 的其他資料，在 Omarchy 上請照[解除安裝](#解除安裝)
+  的步驟做；Mac 請看 [SAFETY.zh-TW.md](SAFETY.zh-TW.md#移除你的資料)。各瀏覽器的
+  網站資料與快取也要清除。
 - **怎麼使用由你負責。** 請遵守 LINE 的使用條款。存在你磁碟上的訊息也包含別人傳的
   訊息，請像傳訊息給你的人所期待的那樣保護它們。
 
@@ -53,6 +55,8 @@
 - 聊天列表太窄時，搜尋框旁邊那排顯示設定會移到搜尋框下方，並折成兩行，不會被切掉。
 - 繁體中文或英文介面。
 - 歷史紀錄存在磁碟上，重開之後打開聊天室不必等 LINE。
+- 選用的網頁版可在其他裝置使用，也有 macOS launchd 設定。見
+  [docs/web.zh-TW.md](docs/web.zh-TW.md)。
 
 鍵盤操作、設定和傳檔案的說明在 [docs/usage.zh-TW.md](docs/usage.zh-TW.md)。
 
@@ -163,12 +167,12 @@ omarchy restart shell
 ## 常見問題
 
 **LINE 會因為這個停用我的帳號嗎？** 有可能。LINE 沒有提供這種存取方式，允不允許由
-LINE 決定。daemon 以次要裝置登入，除非你在面板上操作，它不會送出任何訊息、表情回應
-或已讀。LINE 回 `ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS` 時，daemon 會結束 push
-迴圈，也不會自己發出任何 LINE 請求。面板會顯示
-`LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`。在你點那一行（會執行一次手動
-同步）或重新登入之前，什麼都不會重試。你自己傳的訊息還是會送到 LINE，LINE 拒絕的話，
-面板會顯示 LINE 的錯誤。
+LINE 決定。daemon 以次要裝置登入。訊息和表情回應由面板或網頁版的操作送出；在任一
+介面查看聊天室也可能送出已讀。LINE 回 `ABUSE_BLOCK`、`BANNED` 或 `EXCESSIVE_ACCESS`
+時，daemon 會結束 push 迴圈，也不會自己發出任何 LINE 請求。面板會顯示
+`LINE 限制了這個帳號（<代碼>），已暫停連線，點此重試`，網頁版也會顯示限制提示。
+在你點提示執行同步或重新登入之前，什麼都不會重試。你自己傳的訊息還是會送到 LINE，
+LINE 拒絕的話，面板或網頁版會顯示 LINE 的錯誤。
 [docs/architecture.zh-TW.md](docs/architecture.zh-TW.md#line-限制帳號的時候) 說明
 哪些會停、哪些會留著。
 
@@ -182,9 +186,10 @@ LINE 決定。daemon 以次要裝置登入，除非你在面板上操作，它�
 **會把我的手機登出嗎？** 不會。daemon 以次要裝置用 QR 碼登入，從不使用帳號轉移，而
 帳號轉移才是會更換主要裝置的流程。
 
-**可以在好幾台電腦上用嗎？** 每台電腦各自掃 QR 碼登入，每一台都會是獨立的裝置。不要
-把 state 目錄從一台電腦複製到另一台：LINE 每次登入都會換 refresh token，所以一個
-session 只能有一個 daemon 使用。
+**可以在好幾台電腦上用嗎？** 若每台都執行 daemon，請各自掃 QR 碼登入，每一台都會是
+獨立的裝置。也可以讓 tailnet 上的瀏覽器使用同一個 daemon 的
+[網頁版](docs/web.zh-TW.md)，共用它的 LINE session。不要在電腦之間複製 state 目錄：
+LINE 每次登入都會換 refresh token，所以一個 session 只能有一個 daemon 使用。
 
 **支援 Letter Sealing（端對端加密）嗎？** 支援。daemon 持有這台裝置的 Letter Sealing
 金鑰，會解密開啟 Letter Sealing 的聊天室裡的訊息。你傳訊息時，如果對方要求加密，
@@ -213,6 +218,7 @@ bridge 能把 LINE 跟你其他的聊天放在一起。
 - [docs/usage.zh-TW.md](docs/usage.zh-TW.md)：鍵盤操作、設定、檔案與通知。
 - [docs/architecture.zh-TW.md](docs/architecture.zh-TW.md)：面板和 daemon 怎麼合作。
 - [docs/protocol.zh-TW.md](docs/protocol.zh-TW.md)：state 檔案與 socket 指令。
+- [docs/web.zh-TW.md](docs/web.zh-TW.md)：給其他裝置用的網頁版（選用）。
 - [docs/vendoring.zh-TW.md](docs/vendoring.zh-TW.md)：內附的 linejs fork。
 - [docs/development.zh-TW.md](docs/development.zh-TW.md)：檢查、stub daemon 與 CI。
 - [CONTRIBUTING.zh-TW.md](CONTRIBUTING.zh-TW.md)：pull request 的規則。

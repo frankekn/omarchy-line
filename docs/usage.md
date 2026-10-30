@@ -273,21 +273,25 @@ your value, so a hand-set 37 moves to 60. The daemon also accepts at most 200.
 It limits a `count` from the socket to 1 through 200, and it uses 30 when
 `count` is not a number.
 
-A bigger page loads the first page of a chat more slowly, but it needs fewer
-requests when you scroll back. At 30, one page barely fills the screen, so
-almost every scroll up waits for the network. That is why the default is 60.
+A bigger page can take longer to load, but needs fewer requests when you
+scroll back. At 30, one page barely fills the screen, so scrolling up needs
+more requests. The daemon can serve a page from its local cache; a cache miss
+may require a network request. The default is 60.
 
 The panel asks for the next older page when you are one screen away from the
 top, so the page is usually there before you reach the top. The panel sends
-one request at a time. When the daemon returns an empty page, the panel has
-the oldest message and stops asking. Opening the chat again or a sync starts
-over.
+one request at a time. When the daemon returns an empty page or a page with
+no previously unseen messages, the panel stops asking. A short non-empty cache
+page does not mean there are no older messages. Gaps in the daemon's local
+cache can cause paging to skip messages. Opening the chat again or a sync
+starts over.
 
 ### Panel position
 
-`placement` has three values. The button to the right of the search box shows
-the current one, and each click moves to the next. The table shows the
-setting value and the button label in the English panel.
+`placement` has three values. Its button is beside the search box, or below it
+when the list is narrow. It shows the current value; each click moves to the
+next. The table shows the setting value and the button label in the English
+panel.
 
 | Setting value | Button label | Layout | Use it for |
 |---|---|---|---|

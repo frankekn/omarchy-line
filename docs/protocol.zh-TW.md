@@ -41,32 +41,37 @@
     "pin": "…",                        // 只有 status=pin
     "error": "…",                      // 只有 status=error，給人看的訊息
     "reason": "…",                     // 選用，status=error 時的分類
-    "attempt": "logout",               // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
+    // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
+    "attempt": "logout",
     "settled": true                     // 選用；true 代表登入／登出收尾已完成
   },
   "chats": [                           // 未讀在前，其次照 lastTime
     { "mid": "u…", "name": "…", "unread": 0,
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
       "avatarPath": "…/media/avatars/<sha1>.jpg",    // 選用，沒有就是沒設大頭貼
-      "hidden": true }                               // 選用，只有被隱藏的那幾間才有
+      // 選用，只有被隱藏的那幾間才有
+      "hidden": true }
   ],
   "chatsRevision": 12,                 // chats／chatList 有變才遞增；心跳不動
-  "chatList": { "complete": true, "loaded": 80 }, // 選用；false 代表伺服器還有下一頁
+  // 選用；false 代表伺服器還有下一頁
+  "chatList": { "complete": true, "loaded": 80 },
   "timings": {                         // 選用；最近 64 次的 daemon 延遲統計
     "chats.refresh": { "samples": 18, "lastMs": 241.3,
                        "p50Ms": 205.1, "p95Ms": 390.8, "maxMs": 411.2 },
     "cmd.history": { "samples": 6, "lastMs": 92.4,
                      "p50Ms": 88.0, "p95Ms": 131.7, "maxMs": 131.7 }
   },
-  "stateBytes": {                      // 選用；state.json 最近 64 次寫入的大小統計
+  // 選用；state.json 最近 64 次寫入的大小統計
+  "stateBytes": {
     "samples": 64, "last": 253412,
     "p50": 251190, "p95": 258871, "max": 260112,
     "chats": 80                        // 這份檔案序列化時的 chats 列數
   },
-  "link": { "push": "up", "since": 1735000000000 },  // 選用，push 連線狀態；
-                                                     //   reason 和 code 只在因限制暫停時才有
+  // 選用，push 連線狀態；reason 和 code 只在因限制暫停時才有
+  "link": { "push": "up", "since": 1735000000000 },
   "refresh": { "at": 1735000000000, "failures": 0,   // 選用，聊天室清單的新鮮度
-               "reason": "network" },                //   reason 只在 failures > 0 才有
+               // reason 只在 failures > 0 才有
+               "reason": "network" },
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // 選用，見下
 }
 ```
@@ -188,6 +193,7 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | cmd | 參數 | 成功時的 `data` |
 |---|---|---|
 | `history` | `chat`, `count`（1–200，超界夾住、非數字當 30）, `before?`（往前翻頁的訊息 id）, `markRead?` | 訊息陣列，舊的在前 |
+| `markRead` | `chat`, `upTo`（已讀到最新訊息 id 的十進位字串） | `{ "marked": bool }`。若已讀位置已涵蓋 `upTo`、該列已是 0 未讀且沒有尚未計入的訊息，或 LINE 拒絕標記，就會是 `false` |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | 無 |
 | `reply` | `chat`, `text`, `replyTo`（要回覆的訊息 id）, `mentions?`, `requestId?` | 無 |
 | `react` | `chat`, `messageId`, `type` | 無 |
@@ -207,6 +213,41 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `login` | 無 | 無 |
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
+
+web server 會檢查請求的 `Host` 是否符合 `ENIL_WEB_ADDR`，不符時回 421。比較前會將
+URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
+`Sec-Fetch-Site: cross-site` 或 `same-site` 時會回 403，不計入錯誤 key 次數。
+帶有 `Origin` 的 POST 和 WebSocket 請求也必須與網頁同源。登入需要 web key；即使
+沒有這些標頭，受保護的 API 路由仍需要有效 cookie。
+
+網頁 bridge 每個 WebSocket 文字幀送一個指令，並轉送 daemon 的回覆和推播。daemon
+原子寫入 `state.json` 後，會通知其內建 web server 的共用 feed。網頁連線時，feed 也
+每 500 毫秒檢查一次檔案，作為獨立 server 和外部變動的後備；中間的寫入可能略過。
+瀏覽器提出
+`enil-state-delta-v1` WebSocket 子協定後，會收到帶版本的 state 幀：
+
+- `{ "web": "state", "generation": "…", "version": N, "state": … }`
+  是完整快照。新連線先檢查檔案再送出完整快照；檔案不存在或無效時會等待。
+- `{ "web": "state-delta", "generation": "…", "base": N,
+  "version": N+1, "state": …, "remove": [ … ], "put": [ … ] }` 更新大型
+  快照。`state` 取代除了 `chats` 以外的所有頂層欄位；已移除的欄位不會保留。
+  `remove` 列出刪除的聊天 mid。每筆 `put` 是 `{ "index": I, "chat": … }`：
+  先從舊清單移除這些 mid，再按 index 遞增順序插入其聊天列。index 以最後的清單為準。
+  完整快照幀小於 20 KiB、帳號或 boot 變更、清單不相容，或 patch 沒有比較小時，
+  bridge 會改送完整快照。時間戳記（包括心跳）仍留在 `state` 中。
+
+沒有該子協定時，bridge 只送完整的 `{ "web": "state", "state": … }` 快照，
+供已開啟的舊版網頁使用。
+
+`generation` 識別共用 feed，`version` 隨每次偵測到的變更遞增。網頁將快照與即時
+聊天推播分開保存，忽略舊幀；delta 的 base 或 generation 缺失或不相容時會立即重新
+連線，取得完整快照。該連線失敗時套用一般重連退避。daemon 的 `bootId` 與
+`chatsRevision` 仍決定快照能否取代較新的聊天
+推播。連線時 bridge 也會送出存在的 `{ "web": "events", "events": … }`。
+指令的 `id` 必須是安全整數或最多 128 個 UTF-16 code unit 的字串；重複使用尚未
+完成的 id，或超過 256 筆未完成指令，會關閉連線。這個用來對應回覆的 `id` 和下方
+傳送用的 `requestId` 不同。bridge 拒絕剪貼簿指令，`sendFile` 只接受 web server
+持有的上傳檔。
 
 ## 推播幀
 
@@ -232,15 +273,19 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 還沒接上就拒絕。兩個都是**冪等**的（已經隱藏的再隱藏一次照樣 `{ok:true}`，只是不寫
 檔），`chat` 是空的則回 `{ok:false, error:"沒有指定是哪一間聊天室"}`。
 
+`history` 可以直接回傳非空的本機快取頁，即使筆數少於 `count`；短頁不能證明沒有更舊訊息。
+首頁的快取會由 daemon 在背景重新驗證。
+
 `history` 先回文字與訊息資訊，不等待圖片下載；ListView 建立到畫面附近的圖片列時才送
 `preview`。`image`、`preview` 與原檔 `download` 共用全 daemon 最多四筆的背景通道，回覆仍靠 `id`
 對應，所以可能比後送出的互動指令晚回來。傳訊息、回覆、收回等會改變狀態的指令仍照
 接收順序執行。
 
 五個傳送指令的 `requestId` 是選用的非空字串。daemon 會把它放進 LINE 訊息的
-`contentMetadata`，並在之後的 history 或 message event 以同名欄位原樣回傳。面板替每次
-傳送產生唯一值；socket 在 LINE 已接受訊息後斷線時，就能用這個值精確確認結果，不以
-相同文字或時間猜測。其他 client 可以省略，省略時 history 訊息也沒有這個欄位。
+`contentMetadata`；若 LINE 保留這個值，之後的 history 或 message event 就會以同名
+欄位回傳。面板和網頁替每次傳送產生唯一值；socket 在 LINE 已接受訊息後斷線時，可以
+用相同的值精確確認結果，不以相同文字或時間猜測。client 沒有提供，或 LINE 沒有保留
+時，這個欄位可能不存在。
 
 ## 草稿與未確認的傳送
 
@@ -252,6 +297,11 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 對應的草稿；送出失敗或尚未精確確認時仍保留。daemon 重啟期間的 `starting` 與可重試的
 網路 `error` 不會被當成登出；明確進入 `idle`，或已結束且無法重試的 session 錯誤，
 才會清除該帳號的草稿與未確認傳送。
+
+網頁的草稿和 pending 傳送另存於瀏覽器 local storage，也依帳號和聊天室分開。未確認
+的傳送不會自動重送。成功回覆會清除持久的 pending 列；網頁會在記憶體中快取最多
+500 個已確認的傳送，直到收到自己的相同 echo 或 history。重新載入頁面會清除這份
+記憶體快取。
 
 ## 指令細節
 
@@ -265,14 +315,18 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 `sync` 是手動同步：重建 push 連線（不等它完成）並重抓聊天列表。回報的一定是**收到這個
 請求之後**才跑完的那一輪，剛好有一輪在飛就先等它結束。`chats` 是抓回來的
 聊天室數量、`link` 是**同步開始當下**的 push 狀態（`"up"`／`"down"`；重建一開始就會把
-狀態設成 down，回報之後的值等於每次都說 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
+狀態設成 down）、`at` 是完成時間的毫秒時間戳。抓失敗時
 回 `{ok:false, error:"同步失敗：…"}`，後半是給人看的原因。
+
+`sync` 成功後，網頁會重新載入目前作用中的聊天室（如果有），並依是否可見決定
+`markRead`。新 history 請求取代進行中的請求時會保留緩衝事件，並忽略舊請求的遲到
+回覆。網頁的 history 與 members generation 計數器是本機狀態，不是 socket 協定欄位。
 
 `members` 是 @ 用的群組成員名單，只有群組（`c…`）和 room（`r…`）能問；1:1（`u…`）回
 `{ok:false, error:"這不是群組，沒有成員名單"}`。名單裡不含自己。daemon 快取十分鐘，
 所以同一間聊天室來回開關只會真的抓一次。room 的名單多半拿不到，那時回
 `{ok:false, error:"多人聊天室（room）拿不到成員名單"}`。面板不跳橫幅，等使用者真的
-打了 `@` 才在選單裡說原因。
+打了 `@` 才在選單裡說原因。網頁也會在 mention 選單裡顯示錯誤。
 
 `image` 拿的是一張**公開**圖片的本機檔：daemon 抓進 `media/public-images/`（合併、
 上限與清掃見 [architecture.zh-TW.md](architecture.zh-TW.md#公開圖片)），回 `{ "path": "…" }`，面板只讀 `file://`。只收

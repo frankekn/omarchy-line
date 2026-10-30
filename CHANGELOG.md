@@ -4,6 +4,45 @@ This file follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Version numbers continue from the original omarchy-line plugin by Unayung
 Chen, so this project starts at 2.x.
 
+## [Unreleased]
+
+### Added
+
+- An optional web page served by the daemon, for using LINE from other
+  devices on your tailnet without another LINE login. Set `ENIL_WEB_ADDR` to
+  the machine's Tailscale address and `ENIL_WEB_KEY` to a sign-in key. It
+  lists and searches chats, shows history and media, and sends text, replies,
+  reactions, stickers, and uploaded files. It supports drafts, mentions,
+  unread markers, manual sync, image zoom, keyboard navigation, and mobile
+  layouts. Unconfirmed sends remain visible for review and manual retry.
+  Recent acknowledged sends stay visible while waiting for a matching echo.
+  The page keeps about 500 confirmed messages while following the latest
+  messages, and preserves the composer when a reconnect detects an expired
+  web sign-in. Login and chat-list changes reach connected browsers sooner.
+  Uploads share a 1 GiB storage limit. The page cannot read `storage.json`
+  or use the daemon machine's clipboard. See [docs/web.md](docs/web.md).
+- A launchd agent, `daemon/enil.plist`, for running the daemon and web page
+  on macOS. See [docs/web.md](docs/web.md#run-it-on-a-mac).
+
+### Fixed
+
+- The web page keeps reaction controls, text selection and focus stable during
+  updates, settles at the bottom after deferred layout, rejects misdirected
+  chat clicks, and respects reduced motion for quote jumps. Sync is now in the
+  sidebar heading.
+- Wrong sign-in links no longer lock out the web key form; link and form
+  sign-ins have separate limits.
+- An edit or unsend arriving while the daemon opens a chat's local message
+  cache is no longer overwritten by older cached history.
+- Unrecognized file types with unusual filename extensions now fall back to
+  sending a file; unusual message types use a readable placeholder.
+- The web server refuses requests for a different host and sign-ins marked
+  cross-site or same-site by the browser. Open the page using the configured
+  address; see [docs/web.md](docs/web.md#known-limitations) for the limits.
+- The daemon stays running if file descriptors run out, and its listeners
+  retry and recover when descriptors become available. The supplied service
+  definitions request a limit of 8192 descriptors.
+
 ## [2.16.0] - 2026-10-07
 
 ### Added

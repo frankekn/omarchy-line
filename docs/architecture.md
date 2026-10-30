@@ -20,9 +20,10 @@ network loss. The exact file formats and socket commands are in
 - **The daemon**, `enil`, is the half that logs in to LINE. It is a Deno
   program: `daemon/daemon.ts` is the entry point and `daemon/modules/` holds
   the rest. LINE's refresh token rotates on every login, so only one process
-  may hold the session at a time. The daemon takes an `flock` on
-  `~/.local/state/enil/lock` at startup, and a second daemon on the same state
-  directory exits instead of sharing the session.
+  may hold the session at a time. The daemon takes an advisory lock on
+  `~/.local/state/enil/lock` through Deno's `FsFile.tryLock` at startup, and a
+  second daemon on the same state directory exits instead of sharing the
+  session. The `flock` command is not needed.
 
 The name `enil` is "LINE" spelled backwards.
 
@@ -47,6 +48,31 @@ The daemon writes three things into `~/.local/state/enil/` (or
 When `state.json`'s `updatedAt` has not moved for 3 minutes, the panel shows
 `DAEMON OFFLINE`.
 
+The web page ([web.md](web.md)) is one more reader of the same files, not a
+third half. When `ENIL_WEB_ADDR` is set, the daemon also serves
+`daemon/web/`. Each browser WebSocket gets its own connection to `sock`. After
+an atomic `state.json` write, the daemon immediately notifies a shared feed to
+read and forward the changed snapshot. While pages are connected, a 500 ms
+poll is the fallback for standalone web servers and external file changes;
+intermediate snapshots may be skipped. Large chat lists use versioned row
+patches when smaller for pages that negotiate the
+state-delta subprotocol; older pages continue to get full snapshots. Each
+connection starts with a full snapshot and reconnects if a patch has no
+matching base. The page also
+gets `events.json` once on connection to catch up. It gets the same
+replies and pushes as a panel, and the daemon's request handling does not know
+the page exists.
+The bridge caps concurrent WebSockets at 32, refuses the daemon host's
+clipboard commands, and accepts `sendFile` paths only from web uploads.
+Each browser keeps its own drafts and unconfirmed sends in local storage.
+The page reconciles chat and message rows by key, retaining unchanged DOM
+nodes across updates.
+The web server checks `Host` against `ENIL_WEB_ADDR` and rejects browser
+sign-ins marked `cross-site` or `same-site` by `Sec-Fetch-Site`; see
+[web.md](web.md#known-limitations) for the HTTP limitation.
+If descriptor exhaustion stops the web listener, it retries. The daemon socket
+also retries a failed accept, so freeing descriptors allows service to resume.
+
 ## Keeping the daemon running
 
 The systemd user unit `daemon/enil.service` uses `Restart=always`, so any exit
@@ -54,7 +80,8 @@ brings the daemon back after 5 seconds. Only `systemctl --user stop enil`
 keeps it down. The panel covers that case and a hung daemon: when the daemon
 looks dead, the panel runs `systemctl --user restart enil` itself, at most
 once every 45 seconds. A manual **start daemon** button in the panel does the
-same with a 3-second guard.
+same with a 3-second guard. The systemd unit sets `LimitNOFILE=8192`; the
+macOS launchd plist requests soft and hard `NumberOfFiles` limits of 8192.
 
 `daemon/enil-run.sh` is the unit's `ExecStart`. It does these steps in
 order:
@@ -78,6 +105,12 @@ A failed start does not stop the unit. `Restart=always` starts it again every
 5 seconds, so the same message repeats in the journal until you fix the cause.
 The checks exist because the alternative is a restart loop on an import error
 that names a file inside `vendor/`.
+
+On macOS, `daemon/enil.plist` runs the same launcher as a launchd agent. Its
+`KeepAlive` and 5-second `ThrottleInterval` restart an exited daemon. The
+agent's `PATH` includes Apple Silicon Homebrew and its output goes to
+`~/Library/Logs/enil/enil.log`. See [web.md](web.md#run-it-on-a-mac) for setup
+and for stopping the agent.
 
 ## Deno permissions
 
@@ -103,7 +136,8 @@ still use `-A`.
   `notify-send` (`notify.ts`).
 - `--allow-env` names the variables that `modules/env.ts` reads: `HOME`,
   `XDG_STATE_HOME`, `ENIL_DEVICE`, `ENIL_INCREMENTAL`, `ENIL_CHAT_LIMIT`,
-  `ENIL_PUSH_STALE_MS`, and `ENIL_REQUEST_TIMEOUT_MS`. It also names
+  `ENIL_PUSH_STALE_MS`, `ENIL_REQUEST_TIMEOUT_MS`, `ENIL_WEB_ADDR`, and
+  `ENIL_WEB_KEY`. It also names
   `Q_DEBUG` and `NODE_DEBUG`. Two npm dependencies read them through Node's
   `process.env`, which throws for an unlisted name, and the daemon does not
   boot without `Q_DEBUG`.
@@ -116,6 +150,10 @@ environment where `deno task build` ran. If you move `XDG_STATE_HOME` after
 the build, the binary cannot write to the new directory, so rebuild it.
 `enil-run.sh` falls back to `deno run` only when `enil.rev` is stale, not when
 the directory moved.
+
+State paths may contain spaces. They cannot contain a newline or comma: the
+shell and Deno use those characters to separate flags and permission paths.
+The launcher rejects such paths before starting Deno.
 
 ## When LINE restricts the account
 
@@ -206,10 +244,11 @@ as an unknown error, where a single timed-out request nobody answered was
 enough to kill the daemon for a systemd restart.
 
 Both layers above are automatic but both make you wait: the watchdog checks
-once a minute, the floor poll every five. To skip the wait, press the **Sync**
-button right of the list search box (keyboard `r`, or click the "LINE link
-down, reconnecting" line under the title). It rebuilds the push connection and refetches
-the chat list immediately, re-reading the open conversation too. The button
+once a minute, the floor poll every five. To skip the wait, press **Sync** in
+the controls beside the list search box, or below it when the list is narrow
+(keyboard `r`, or click the "LINE link down, reconnecting" line under the
+title). It rebuilds the push connection and refetches the chat list
+immediately, re-reading the open conversation too. The button
 reads "Syncing…" while working, usually settling on "Synced HH:MM" within
 seconds (if a refetch was already in flight it waits out that round and the
 button stays on "Syncing…" meanwhile). A failure prints its reason
@@ -250,8 +289,9 @@ fast path, not the only path.
 
 ## Public images
 
-Stickers, the sticker picker, and FLEX images (including the lightbox) are
-downloaded by the daemon into `~/.local/state/enil/media/public-images/`.
+For the panel, stickers, the sticker picker, and FLEX images (including the
+lightbox) are downloaded by the daemon into
+`~/.local/state/enil/media/public-images/`.
 QML only ever reads local files, so those image requests never enter the
 shell's Qt TLS stack. Downloads of the same URL merge, at most 4 run at once,
 and each is capped at 10 MiB with a 20-second timeout. The cache shares the
@@ -261,6 +301,9 @@ QML.
 The daemon accepts only `https://` image addresses and refuses hosts that
 resolve to private addresses. The request carries no cookies and no LINE
 token.
+
+The web page loads stickers and FLEX images directly in the browser; see
+[web.md](web.md#what-the-page-can-and-cannot-do).
 
 ## Media pipeline
 

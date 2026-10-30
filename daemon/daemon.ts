@@ -34,6 +34,7 @@ import {
   login,
   setLogin,
   setLoginState,
+  setStateSink,
   writeState,
 } from "./modules/state.ts";
 import { MEDIA_SWEEP_MS, sweepMedia } from "./modules/caches.ts";
@@ -47,6 +48,8 @@ import {
 } from "./modules/watchdog.ts";
 import { scheduleResumeRetry, tryResume } from "./modules/login.ts";
 import { claimInstance } from "./modules/instance.ts";
+import { startWeb } from "./web/server.ts";
+import { notifyStateWritten } from "./web/bridge.ts";
 
 /** Held for the life of the process: closing it would release the gate. */
 let instanceLock: Deno.FsFile | null = null;
@@ -84,10 +87,31 @@ async function main() {
 
   await Deno.remove(SOCK_PATH).catch(() => {});
   const listener = Deno.listen({ transport: "unix", path: SOCK_PATH });
+  // A failed accept, such as EMFILE when the web page holds every descriptor,
+  // ends the iteration but not the listener. Unhandled, it would end the
+  // daemon through the rejection guard, so accept again after a pause.
   (async () => {
-    for await (const conn of listener) serve(conn).catch(() => {});
+    for (;;) {
+      try {
+        for await (const conn of listener) serve(conn).catch(() => {});
+        return;
+      } catch (e) {
+        console.error(`[sock] accept failed: ${errorLine(e)}`);
+        await new Promise((r) => setTimeout(r, 1_000));
+      }
+    }
   })();
   console.log(`enil: ${STATE_PATH} + ${SOCK_PATH}`);
+  // The web page bridges onto the socket above, so it starts after it.
+  const webAddr = Deno.env.get("ENIL_WEB_ADDR");
+  if (webAddr) {
+    setStateSink(() => notifyStateWritten(STATE_PATH));
+    void startWeb({
+      addr: webAddr,
+      key: Deno.env.get("ENIL_WEB_KEY"),
+      stateDir: STATE_DIR,
+    }).catch((e) => console.error(`[web] failed: ${errorLine(e)}`));
+  }
 
   const resumed = await tryResume();
   if (resumed === "none") {

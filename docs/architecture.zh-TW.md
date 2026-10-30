@@ -17,8 +17,9 @@ omarchy-line 分成兩半，各自是獨立的 process。這一頁說明兩半�
 - **daemon**（`enil`）是真正登入 LINE 的那一半。它是 Deno 程式：進入點是
   `daemon/daemon.ts`，其餘程式碼在 `daemon/modules/`。LINE 的 refresh token 每次
   登入都會換，所以同一時間只能有一個 process 持有 session。daemon 啟動時會對
-  `~/.local/state/enil/lock` 取得 `flock`，同一個 state 目錄上的第二個 daemon 會
-  直接結束，不會共用 session。
+  `~/.local/state/enil/lock` 透過 Deno 的 `FsFile.tryLock` 取得 advisory lock，
+  同一個 state 目錄上的第二個 daemon 會直接結束，不會共用 session。這不需要
+  `flock` 指令。
 
 `enil` 這個名字就是把「LINE」倒過來拼。
 
@@ -40,13 +41,32 @@ daemon 在 `~/.local/state/enil/`（或 `$XDG_STATE_HOME/enil/`）寫三樣東�
 
 `state.json` 的 `updatedAt` 超過 3 分鐘沒動，面板就顯示 `DAEMON 離線`。
 
+網頁版（[web.zh-TW.md](web.zh-TW.md)）也是讀同一組檔案，不算第三半。有設
+`ENIL_WEB_ADDR` 時，daemon 會同時提供 `daemon/web/`。每條瀏覽器 WebSocket 各自
+連一條 `sock`。daemon 原子寫入 `state.json` 後，會立刻通知共用的 feed 讀取並轉送
+變動後的快照。網頁連著時，每 500 毫秒輪詢一次，作為獨立 web server 和外部檔案
+變動的後備；中間的快照可能略過。協商 state-delta 子協定的網頁，對大型聊天清單會在
+patch 較小時使用帶版本的聊天列差異；舊版網頁仍收到完整快照。每條連線先收到完整
+快照，patch 沒有對應基礎時重新連線。`events.json` 只在
+連線時送一次，用來補上斷線期間的事件。網頁拿到的回覆和推送跟面板一樣，daemon
+處理請求的程式完全不知道有網頁。
+bridge 最多同時接受 32 條 WebSocket，拒絕 daemon 主機的剪貼簿指令，`sendFile`
+也只接受網頁上傳的路徑。每個瀏覽器把自己的草稿和未確認傳送存在 local storage。
+網頁用 key 對齊聊天列和訊息列，更新時保留沒有變動的 DOM 節點。
+web server 會檢查 `Host` 是否符合 `ENIL_WEB_ADDR`，並拒絕 `Sec-Fetch-Site` 標為
+`cross-site` 或 `same-site` 的瀏覽器登入；HTTP 的限制見
+[web.zh-TW.md](web.zh-TW.md#已知限制)。檔案描述符耗盡
+導致 web listener 停止時會重試，daemon socket 接受連線失敗時也會重試；描述符釋出後
+服務可以恢復。
+
 ## 讓 daemon 一直在跑
 
 systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 daemon 怎麼
 結束，5 秒後都會再起來。只有 `systemctl --user stop enil` 會讓它停著。面板補上這個
 情況和 daemon 卡死的情況：daemon 看起來掛了的時候，面板會自己執行
 `systemctl --user restart enil`，最多每 45 秒一次。面板上的「啟動 daemon」按鈕做同樣
-的事，防連點間隔 3 秒。
+的事，防連點間隔 3 秒。systemd unit 設有 `LimitNOFILE=8192`；macOS launchd plist
+要求 `NumberOfFiles` 的軟、硬限制都為 8192。
 
 `daemon/enil-run.sh` 是 unit 的 `ExecStart`。它依序做這些事：
 
@@ -64,6 +84,11 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 啟動失敗不會讓 unit 停下來。`Restart=always` 每 5 秒會再啟動一次，所以在你修好原因
 之前，journal 會一直重複同一段訊息。這些檢查是為了避免另一種結果：在一個指向
 `vendor/` 裡某個檔案的 import 錯誤上無限重啟。
+
+在 macOS 上，`daemon/enil.plist` 讓 launchd agent 執行同一個啟動腳本。
+`KeepAlive` 和 5 秒的 `ThrottleInterval` 會重啟已結束的 daemon；agent 的 `PATH`
+包含 Apple Silicon Homebrew，輸出寫入 `~/Library/Logs/enil/enil.log`。設定和停止
+方式見 [web.zh-TW.md](web.zh-TW.md#在-mac-上執行)。
 
 ## Deno 權限
 
@@ -84,7 +109,8 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
   （`video.ts`），以及 `omarchy-shell` 和 `notify-send`（`notify.ts`）。
 - `--allow-env` 列出 `modules/env.ts` 會讀的變數：`HOME`、`XDG_STATE_HOME`、
   `ENIL_DEVICE`、`ENIL_INCREMENTAL`、`ENIL_CHAT_LIMIT`、`ENIL_PUSH_STALE_MS` 和
-  `ENIL_REQUEST_TIMEOUT_MS`。另外還有 `Q_DEBUG` 和 `NODE_DEBUG`：兩個 npm 相依套件
+  `ENIL_REQUEST_TIMEOUT_MS`、`ENIL_WEB_ADDR` 和 `ENIL_WEB_KEY`。另外還有 `Q_DEBUG`
+  和 `NODE_DEBUG`：兩個 npm 相依套件
   透過 Node 的 `process.env` 讀它們，沒列出的名稱會直接丟錯誤，而少了 `Q_DEBUG`
   daemon 根本啟動不了。
 - 沒有 `--allow-sys`。哪天某個相依套件需要系統 API，`permissions_test.ts` 會失敗並
@@ -94,6 +120,9 @@ systemd user unit `daemon/enil.service` 設了 `Restart=always`，所以不管 d
 目錄。編譯好的執行檔會記住跑 `deno task build` 那個環境的目錄。建好之後才搬動
 `XDG_STATE_HOME` 的話，執行檔寫不進新目錄，要重新編譯。`enil-run.sh` 只在
 `enil.rev` 過期時才退回 `deno run`，目錄搬了它不會發現。
+
+state 路徑可以包含空格，但不能包含換行或逗號：shell 和 Deno 分別用它們分隔參數
+與權限路徑。啟動腳本會在執行 Deno 前拒絕這類路徑。
 
 ## LINE 限制帳號的時候
 
@@ -162,7 +191,8 @@ stream 被 error 掉之後 `for await` 再一行），兩行走同一個退避�
 錯誤，一個逾時的請求沒人接就足以讓 daemon 整個結束、由 systemd 重啟。
 
 上面那兩層都是自動的，但都要等：watchdog 一分鐘才看一次，保底輪詢是五分鐘。不想等就
-按清單搜尋框右邊那顆**「同步」**（鍵盤 `r`，或直接點標題下那行「LINE 連線中斷，重連中」）。
+按清單搜尋框旁控制列裡的**「同步」**；清單較窄時控制列會移到搜尋框下方。也可以按
+鍵盤 `r`，或點標題下那行「LINE 連線中斷，重連中」。
 它會重建 push 連線並立刻重抓聊天列表，正在看的那間對話也會一起重讀。按下去按鈕會變成
 「同步中…」，通常幾秒內變成「已同步 HH:MM」（剛好有一輪重抓在飛的話會多等它一輪，
 按鈕會一直維持在「同步中…」）；失敗的話寫的是原因（`同步失敗：連不上 LINE，
@@ -194,13 +224,16 @@ push 活著的時候不需要等這些：新訊息、已讀、表情和收回都
 
 ## 公開圖片
 
-貼圖、貼圖選單和 FLEX 圖片（含燈箱）都由 daemon 下載到
+面板的貼圖、貼圖選單和 FLEX 圖片（含燈箱）都由 daemon 下載到
 `~/.local/state/enil/media/public-images/`。QML 只讀本機檔案，所以這些圖片請求不會
 進到 shell 的 Qt TLS。同一個網址的下載會合併，最多同時 4 個，每個上限 10 MiB、逾時
 20 秒。這個快取跟 `media/` 用同一套清理規則。下載失敗不會退回用 QML 走 HTTPS。
 
 daemon 只接受 `https://` 圖片網址，並拒絕解析到私有位址的主機。請求不帶 cookie，
 也不帶 LINE token。
+
+網頁版的貼圖和 FLEX 圖片則由瀏覽器直接載入；見
+[web.zh-TW.md](web.zh-TW.md#網頁版能做和不能做的事)。
 
 ## 媒體流程
 

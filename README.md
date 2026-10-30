@@ -11,7 +11,7 @@ Built on [linejs](https://github.com/evex-dev/linejs) by
 [Evex Developers](https://github.com/evex-dev).
 
 | ![The panel in English: chat list and an open conversation](docs/images/panel-en.png) | ![The panel in Traditional Chinese](docs/images/panel-zh.png) |
-| :-: | :-: |
+|---|---|
 | English | 繁體中文 |
 
 ![The bar icon with an unread count](docs/images/bar-badge.png)
@@ -31,14 +31,17 @@ This project uses the name only to say which service the plugin works with.
   phone. The daemon registers as a secondary device, so it shows up in your
   phone's list of logged-in devices. It never uses the account-transfer flow,
   so your phone stays the main device.
-- **It keeps your session and your messages on disk.** Everything lives in
-  `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`), mode `0700`.
+- **It keeps your session and your messages on disk.** The daemon's data lives
+  in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil/`), mode `0700`.
   `storage.json` (mode `0600`) holds the login token and the E2EE keys.
   `messages/` keeps every message the daemon has seen, and `media/` keeps
   downloaded files and thumbnails. The plugin does not encrypt these files.
-- **You can remove what it stores on this machine.** Log out in the panel to
-  end the session and delete the login token. To remove everything else too,
-  follow [Uninstall](#uninstall).
+  Browsers using the web page also keep site data, including drafts.
+- **You can remove what it stores on this machine.** Log out of LINE in the
+  panel or web page to end the session and delete the login token. To remove
+  the daemon's other data, follow [Uninstall](#uninstall) on Omarchy, or the
+  Mac steps in [SAFETY.md](SAFETY.md#remove-your-data). Clear the site's data
+  and cache on each browser too.
 - **You are responsible for how you use it.** Follow LINE's terms of use.
   The messages stored on your disk include other people's messages, so keep
   them as private as the people who sent them would expect.
@@ -67,6 +70,8 @@ network requests it makes.
 - A Traditional Chinese or English interface.
 - History stays on disk, so chats open without waiting for LINE after a
   restart.
+- An optional web page for other devices, with a macOS launchd setup. See
+  [docs/web.md](docs/web.md).
 
 [docs/usage.md](docs/usage.md) covers the keyboard, settings, and sending
 files.
@@ -186,13 +191,15 @@ Deleting it removes them from this computer.
 
 **Can LINE ban my account for this?** It can. LINE does not offer this kind
 of access, and it decides what it allows. The daemon logs in as a secondary
-device, and it sends no message, reaction, or read receipt unless you act in
-the panel. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
+device. Messages and reactions are sent in response to actions in the panel or
+web page. Viewing an open conversation in either client can mark messages as
+read. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
 `EXCESSIVE_ACCESS`, the daemon ends its push loop and makes no LINE request on
 its own. The panel shows `LINE restricted this account (<code>); connection
-paused — tap to retry`. Nothing retries until you tap that line, which runs a
-manual sync, or log in again. A message you send yourself still goes to LINE,
-and the panel shows LINE's error if LINE refuses it.
+paused — tap to retry`. The web page also shows a restriction notice. Nothing
+retries until you tap a notice to sync or log in again. A message you send
+yourself still goes to LINE, and the panel or web page shows LINE's error if
+LINE refuses it.
 [docs/architecture.md](docs/architecture.md#when-line-restricts-the-account)
 explains what stops and what stays.
 
@@ -209,10 +216,11 @@ itself once you fix the cause.
 QR code. It never uses account transfer, which is the flow that moves the
 main device.
 
-**Can I use it on several computers?** Log in on each computer with its own
-QR scan. Each one appears as its own device. Do not copy the state directory
-from one computer to another: LINE changes the refresh token on every login,
-so only one daemon can use a session.
+**Can I use it on several computers?** To run a daemon on each computer, log
+in to each with its own QR scan. Each one appears as its own device. Or use
+one daemon's [web page](docs/web.md) from browsers on the tailnet; they share
+its LINE session. Do not copy the state directory between computers: LINE
+changes the refresh token on every login, so only one daemon can use a session.
 
 **Does it work with Letter Sealing (end-to-end encryption)?** Yes. The daemon
 holds this device's Letter Sealing keys and decrypts messages in chats that
@@ -246,6 +254,7 @@ to your other chats.
 - [docs/architecture.md](docs/architecture.md): how the panel and the daemon
   work together.
 - [docs/protocol.md](docs/protocol.md): the state files and socket commands.
+- [docs/web.md](docs/web.md): the optional web page for other devices.
 - [docs/vendoring.md](docs/vendoring.md): the vendored linejs fork.
 - [docs/development.md](docs/development.md): checks, the stub daemon, and
   CI.

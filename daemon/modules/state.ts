@@ -180,6 +180,15 @@ const HIDDEN_MAX = 1000;
 const hiddenMids = new Set<string>();
 let hiddenWriting = Promise.resolve();
 
+/**
+ * A chat id this daemon could have: a mid on the wire and a path segment in
+ * the message store. `history`, `hide` and `unhide` all check it, so a client
+ * cannot fill hidden.json with ids no chat will ever have.
+ */
+function isChatMid(mid: string): boolean {
+  return /^[A-Za-z0-9_-]{1,128}$/.test(mid);
+}
+
 /** Insertion order is age order in a Set too, so the first is the oldest. */
 function capHidden(): void {
   while (hiddenMids.size > HIDDEN_MAX) {
@@ -278,7 +287,7 @@ async function loadHidden(path: string = HIDDEN_PATH): Promise<void> {
   const mids = (parsed as { mids?: unknown } | null)?.mids;
   if (!Array.isArray(mids)) return;
   for (const mid of mids) {
-    if (typeof mid === "string" && mid) hiddenMids.add(mid);
+    if (typeof mid === "string" && isChatMid(mid)) hiddenMids.add(mid);
   }
   capHidden();
 }
@@ -286,6 +295,13 @@ async function loadHidden(path: string = HIDDEN_PATH): Promise<void> {
 
 // enil:statepersist-begin
 let writing = Promise.resolve();
+let stateSink: (() => void) | null = null;
+
+/** The embedded web feed is notified only after an atomic state commit. */
+function setStateSink(sink: typeof stateSink): void {
+  stateSink = sink;
+}
+
 // Invalidates snapshots queued by an ended session before they reach disk.
 // Logout advances it synchronously, before its first await.
 let stateEpoch = 0;
@@ -408,6 +424,11 @@ function writeState(): Promise<void> {
       // Recorded at the commit, not the capture: a snapshot that an
       // invalidation or a failed write kept off disk never reached the panel.
       noteStatePublished(stateSnapshot.chatsRevision, stateSnapshot.refresh);
+      try {
+        stateSink?.();
+      } catch (error) {
+        console.error("[state] notification failed:", error);
+      }
     } finally {
       if (committed) {
         timings.record("state.write", performance.now() - started);
@@ -653,6 +674,7 @@ export {
   eventSeq,
   hiddenStamped,
   invalidateStateWrites,
+  isChatMid,
   isHidden,
   link,
   loadHidden,
@@ -671,6 +693,7 @@ export {
   setEventSink,
   setHidden,
   setLogin,
+  setStateSink,
   setWanted,
   stateWriteOwed,
   writeState,

@@ -26,6 +26,7 @@ export {
   capHidden,
   hiddenMids,
   hiddenStamped,
+  isChatMid,
   isHidden,
   loadHidden,
   saveHidden,
@@ -39,6 +40,7 @@ interface HiddenModule {
   hiddenStamped<T extends { mid: string }>(
     list: T[],
   ): Array<T & { hidden?: true }>;
+  isChatMid(mid: string): boolean;
   isHidden(mid: string): boolean;
   loadHidden(path?: string): Promise<void>;
   saveHidden(path?: string): Promise<void>;
@@ -167,6 +169,21 @@ Deno.test("a good file survives one bad entry inside it", async () => {
     // Dropping the whole list over one bad row would un-hide everything the
     // user ever hid; dropping the row costs them nothing.
     assertEquals([...m.hiddenMids], ["cgroup", "umom"]);
+  });
+});
+
+Deno.test("a file with an id no chat can have loads without it", async () => {
+  await inTempDir(async (path) => {
+    const huge = "u" + "x".repeat(1024 * 1024);
+    await Deno.writeTextFile(
+      path,
+      JSON.stringify({ mids: ["cgroup", huge, "../c", "c d", "umom"] }),
+    );
+    const m = await mod();
+    await m.loadHidden(path);
+    assertEquals([...m.hiddenMids], ["cgroup", "umom"]);
+    assertEquals(m.isChatMid("u" + "x".repeat(127)), true);
+    assertEquals(m.isChatMid("u" + "x".repeat(128)), false);
   });
 });
 

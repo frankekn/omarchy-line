@@ -12,6 +12,12 @@
 import { assert, assertEquals } from "@std/assert";
 import { loadBlock, loadBlocks } from "./slice_test.ts";
 import { createClipboardStages } from "./clipboard.ts";
+import { nameCache } from "./modules/caches.ts";
+import { previewText } from "./modules/messages.ts";
+import { sendFilePath } from "./modules/media-send.ts";
+import { lastNotified, notify } from "./modules/notify.ts";
+import { refreshChats } from "./modules/refresh.ts";
+import { client, sessionGeneration, setClient } from "./modules/session.ts";
 
 // tagAt moved beside the container parsers (modules/video.ts); the sliced
 // mediakind block imports the real one rather than stubbing a copy.
@@ -124,6 +130,122 @@ Deno.test("a head nothing recognises falls back to the name", async () => {
   assertEquals(m.mediaKindOf(".gitignore", NOTHING), "file");
 });
 
+for (
+  const extension of [
+    "constructor",
+    "__proto__",
+    "toString",
+    "hasOwnProperty",
+  ]
+) {
+  Deno.test(`a prototype-like .${extension} name is a file`, async () => {
+    const m = await kinds();
+    const name = `picked.${extension}`;
+    assertEquals(m.mediaKindOf(name, NOTHING), "file");
+    assertEquals(m.mediaKindOf(name, PNG), "image");
+  });
+}
+
+Deno.test("externally supplied prototype keys use a text preview fallback", () => {
+  for (const type of ["constructor", "toString", "hasOwnProperty"]) {
+    assertEquals(previewText("", { contentType: type }), `[${type}]`);
+  }
+  assertEquals(previewText("", { contentType: "IMAGE" }), "[圖片]");
+});
+
+Deno.test("externally supplied prototype keys use a notification fallback", async () => {
+  const previousCommand = Object.getOwnPropertyDescriptor(Deno, "Command");
+  assert(previousCommand);
+  const previousClient = client;
+  const peer = "u-prototype-lookup-test";
+  const previousName = nameCache.get(peer);
+  const previousNotification = lastNotified.get(peer);
+  const owner = {} as NonNullable<Parameters<typeof setClient>[0]>;
+  let args: unknown[] = [];
+  class FakeCommand {
+    constructor(_name: string, options: { args: unknown[] }) {
+      args = options.args;
+    }
+    spawn() {
+      return {
+        output: () => Promise.resolve({ stdout: new Uint8Array() }),
+        kill: () => {},
+      };
+    }
+  }
+  Object.defineProperty(Deno, "Command", { value: FakeCommand });
+  setClient(owner);
+  nameCache.set(peer, "Peer");
+  try {
+    for (
+      const [contentType, expected] of [
+        ["constructor", "[新訊息]"],
+        ["toString", "[新訊息]"],
+        ["IMAGE", "[圖片]"],
+      ]
+    ) {
+      lastNotified.delete(peer);
+      args = [];
+      const message = {
+        raw: { from: peer, toType: "USER", contentType },
+        text: "",
+        isMyMessage: false,
+      } as unknown as Parameters<typeof notify>[0];
+      await notify(message, owner, sessionGeneration);
+      assertEquals(args.at(-1), expected, contentType);
+    }
+  } finally {
+    Object.defineProperty(Deno, "Command", previousCommand);
+    setClient(previousClient);
+    if (previousNotification === undefined) lastNotified.delete(peer);
+    else lastNotified.set(peer, previousNotification);
+    if (previousName === undefined) nameCache.delete(peer);
+    else nameCache.set(peer, previousName);
+  }
+});
+
+Deno.test("externally supplied prototype keys are counted in refresh logs", async () => {
+  const previousClient = client;
+  const previousLog = console.log;
+  let line = "";
+  const boxes = ["constructor", "constructor", "toString", "USER"].map(
+    (midType) => ({
+      midType,
+      get id(): string {
+        throw new Error("stop after diagnostic");
+      },
+    }),
+  );
+  const owner = {
+    base: {
+      talk: {
+        getMessageBoxes: () =>
+          Promise.resolve({
+            messageBoxes: boxes,
+            hasNext: false,
+          }),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  console.log = (...values: unknown[]) => {
+    const text = values.join(" ");
+    if (text.startsWith("[chats] boxes=")) {
+      line = text;
+      setClient(null);
+    }
+  };
+  setClient(owner);
+  try {
+    await refreshChats();
+  } finally {
+    console.log = previousLog;
+    setClient(previousClient);
+  }
+  const match = /kinds=(.*)$/.exec(line);
+  assert(match, line);
+  assertEquals(JSON.parse(match[1]), { constructor: 2, toString: 1, USER: 1 });
+});
+
 Deno.test("an ftyp brand tells a phone photo from a phone video", async () => {
   const m = await kinds();
   for (const brand of ["heic", "heix", "mif1", "avif"]) {
@@ -189,6 +311,17 @@ export {
   }
   return S;
 }
+
+Deno.test("a prototype-like extension uses the file size cap", async () => {
+  const m = await caps();
+  const kind = m.mediaKindOf("picked.constructor", NOTHING);
+  assertEquals(m.sizeRefusalText(kind, 1), null);
+  assertEquals(m.sizeRefusalText(kind, 1024 * 1024 * 1024), null);
+  assertEquals(
+    m.sizeRefusalText(kind, 1024 * 1024 * 1024 + 1),
+    "檔案太大（超過 1 GB）",
+  );
+});
 
 Deno.test("what fits is not refused, up to and including the cap", async () => {
   const m = await caps();
@@ -968,6 +1101,193 @@ Deno.test("only a regular file has a size worth sending", async () => {
     assertEquals(await m.regularFileSize("/dev/zero"), null);
     assertEquals(await m.regularFileSize(dir), null);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("at most two sends hold a whole file at once; the rest wait", async () => {
+  const previousClient = client;
+  const readFile = Object.getOwnPropertyDescriptor(Deno, "readFile");
+  assert(readFile);
+  const dir = await Deno.makeTempDir({ prefix: "enil-sendslot-test-" });
+  const gates: (() => void)[] = [];
+  let reads = 0;
+  const owner = {
+    base: {
+      obs: {
+        // Holds the bytes until the test lets go, like a slow upload. It
+        // rejects so that no chat refresh runs against this fake client.
+        uploadMediaByE2EE: () =>
+          new Promise<never>((_, reject) =>
+            gates.push(() => reject(new Error("upload stopped")))
+          ),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  Object.defineProperty(Deno, "readFile", {
+    configurable: true,
+    writable: true,
+    value: (...args: Parameters<typeof Deno.readFile>) => {
+      reads++;
+      return readFile.value(...args);
+    },
+  });
+  setClient(owner);
+  const settle = async (n: number) => {
+    for (let i = 0; i < n; i++) await new Promise((r) => setTimeout(r, 5));
+  };
+  try {
+    const sends = [];
+    for (let i = 0; i < 3; i++) {
+      await Deno.writeTextFile(`${dir}/${i}.txt`, `file ${i}`);
+      sends.push(
+        sendFilePath("uabc", `${dir}/${i}.txt`, owner, sessionGeneration)
+          .then(() => "resolved", (e: Error) => e.message),
+      );
+    }
+    await settle(10);
+    assertEquals([reads, gates.length], [2, 2], "a third send read its file");
+    gates[0]();
+    await settle(10);
+    assertEquals([reads, gates.length], [3, 3], "the queued send never ran");
+    gates[1]();
+    gates[2]();
+    assertEquals(await Promise.all(sends), [
+      "upload stopped",
+      "upload stopped",
+      "upload stopped",
+    ]);
+  } finally {
+    for (const release of gates) release();
+    Object.defineProperty(Deno, "readFile", readFile);
+    setClient(previousClient);
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("invalid files bypass occupied send slots and queued files are rechecked", async () => {
+  const previousClient = client;
+  const dir = await Deno.makeTempDir({ prefix: "enil-sendcheck-test-" });
+  const gates: (() => void)[] = [];
+  const pending: Promise<unknown>[] = [];
+  let releaseReady: () => void = () => {};
+  const ready = new Promise<void>((resolve) => releaseReady = resolve);
+  let closing = false;
+  let originalOpen: PropertyDescriptor | undefined;
+  const owner = {
+    base: {
+      obs: {
+        uploadMediaByE2EE: () =>
+          new Promise<never>((_, reject) => {
+            if (closing) return reject(new Error("upload stopped"));
+            gates.push(() => reject(new Error("upload stopped")));
+            if (gates.length === 2) releaseReady();
+          }),
+      },
+    },
+  } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+  async function timely<T>(work: Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        work,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("send waited for a slot")),
+            3000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  try {
+    const first = `${dir}/first.txt`, second = `${dir}/second.txt`;
+    const tooLarge = `${dir}/large.txt`, missing = `${dir}/missing.txt`;
+    const queuedDir = `${dir}/queued-dir.txt`;
+    const queuedLarge = `${dir}/queued-large.txt`;
+    for (const path of [first, second, queuedDir, queuedLarge]) {
+      await Deno.writeTextFile(path, "small file");
+    }
+    // The bytes, not the .txt name, make this an image with a 20 MiB cap.
+    await Deno.writeFile(tooLarge, PNG);
+    await Deno.truncate(tooLarge, 20 * 1024 * 1024 + 1);
+    setClient(owner);
+    const generation = sessionGeneration;
+    const holds = [first, second].map((path) =>
+      sendFilePath("uabc", path, owner, generation).then(
+        () => "resolved",
+        (error: Error) => error.message,
+      )
+    );
+    pending.push(...holds);
+    await timely(ready);
+
+    const invalid = [tooLarge, dir, missing].map((path) =>
+      sendFilePath("uabc", path, owner, generation)
+    );
+    pending.push(...invalid);
+    assertEquals(await timely(Promise.all(invalid)), [
+      { ok: false, error: "圖片太大（超過 20 MB）" },
+      { ok: false, error: `不是一般檔案: ${dir}`, logText: "不是一般檔案" },
+      { ok: false, error: `找不到檔案: ${missing}`, logText: "找不到檔案" },
+    ]);
+    assertEquals(gates.length, 2);
+
+    // Wait until both queued requests opened their original regular files.
+    const opened = new Map<string, () => void>();
+    const openedBoth = [queuedDir, queuedLarge].map((path) =>
+      new Promise<void>((resolve) => opened.set(path, resolve))
+    );
+    originalOpen = Object.getOwnPropertyDescriptor(Deno, "open");
+    assert(originalOpen);
+    const open = Deno.open;
+    Object.defineProperty(Deno, "open", {
+      configurable: true,
+      writable: true,
+      value: async (...args: Parameters<typeof Deno.open>) => {
+        const file = await open(...args);
+        const path = String(args[0]);
+        const resolve = opened.get(path);
+        if (resolve) {
+          opened.delete(path);
+          resolve();
+        }
+        return file;
+      },
+    });
+    const queued = [queuedDir, queuedLarge].map((path) =>
+      sendFilePath("uabc", path, owner, generation)
+    );
+    pending.push(...queued);
+    await timely(Promise.all(openedBoth));
+    await Deno.rename(queuedDir, `${dir}/original-dir.txt`);
+    await Deno.mkdir(queuedDir);
+    await Deno.rename(queuedLarge, `${dir}/original-large.txt`);
+    await Deno.writeFile(queuedLarge, PNG);
+    await Deno.truncate(queuedLarge, 20 * 1024 * 1024 + 1);
+    gates[0]();
+    gates[1]();
+    assertEquals(await timely(Promise.all(queued)), [
+      {
+        ok: false,
+        error: `不是一般檔案: ${queuedDir}`,
+        logText: "不是一般檔案",
+      },
+      { ok: false, error: "圖片太大（超過 20 MB）" },
+    ]);
+    assertEquals(await Promise.all(holds), [
+      "upload stopped",
+      "upload stopped",
+    ]);
+    assertEquals(gates.length, 2, "a changed file reached upload");
+  } finally {
+    closing = true;
+    for (const release of gates) release();
+    await Promise.allSettled(pending);
+    if (originalOpen) Object.defineProperty(Deno, "open", originalOpen);
+    setClient(previousClient);
     await Deno.remove(dir, { recursive: true });
   }
 });

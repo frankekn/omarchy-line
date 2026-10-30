@@ -17,7 +17,7 @@ import { createMessageStore } from "./store.ts";
 
 const HOME = Deno.env.get("HOME")!;
 const STATE_DIR = `${
-  Deno.env.get("XDG_STATE_HOME") ?? `${HOME}/.local/state`
+  Deno.env.get("XDG_STATE_HOME") || `${HOME}/.local/state`
 }/enil`;
 const STATE_PATH = `${STATE_DIR}/state.json`;
 const EVENTS_PATH = `${STATE_DIR}/events.json`;

@@ -1,0 +1,83 @@
+// Plan keyed list changes without touching the DOM. Keys must be unique.
+export function planKeyChanges(before, after) {
+  let prefix = 0;
+  while (
+    prefix < before.length && prefix < after.length &&
+    before[prefix] === after[prefix]
+  ) prefix++;
+  if (prefix === before.length) {
+    return { removed: [], added: after.slice(prefix), moved: [] };
+  }
+  if (prefix === after.length) {
+    return { removed: before.slice(prefix), added: [], moved: [] };
+  }
+  const positions = new Map(before.map((key, index) => [key, index]));
+  const wanted = new Set(after);
+  const removed = before.filter((key) => !wanted.has(key));
+  const added = after.filter((key) => !positions.has(key));
+  const retained = after.filter((key) => positions.has(key));
+
+  // The common case is an append or removal: existing nodes stay in order.
+  let ordered = true;
+  for (let i = 1; i < retained.length; i++) {
+    if (positions.get(retained[i - 1]) > positions.get(retained[i])) {
+      ordered = false;
+      break;
+    }
+  }
+  if (ordered) return { removed, added, moved: [] };
+
+  // Leave a longest increasing subsequence in place. All other retained keys
+  // need to move, so a reorder disturbs as few existing nodes as possible.
+  const tails = [], tailIndexes = [], previous = [];
+  for (let i = 0; i < retained.length; i++) {
+    const position = positions.get(retained[i]);
+    let low = 0, high = tails.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (tails[middle] < position) low = middle + 1;
+      else high = middle;
+    }
+    tails[low] = position;
+    previous[i] = low ? tailIndexes[low - 1] : -1;
+    tailIndexes[low] = i;
+  }
+  const stationary = new Set();
+  for (let i = tailIndexes[tails.length - 1]; i >= 0; i = previous[i]) {
+    stationary.add(retained[i]);
+  }
+  return {
+    removed,
+    added,
+    moved: retained.filter((key) => !stationary.has(key)),
+  };
+}
+
+// Removed nodes are disposed by the caller; records hold the current nodes.
+export function placeKeyedNodes(parent, keys, records, changes) {
+  if (
+    !changes.removed.length && !changes.moved.length && changes.added.length &&
+    changes.added.every((key, index) =>
+      key === keys[keys.length - changes.added.length + index]
+    )
+  ) {
+    for (const key of changes.added) parent.append(records.get(key).node);
+    return;
+  }
+  const placements = new Set([...changes.added, ...changes.moved]);
+  let next = null;
+  for (let i = keys.length - 1; i >= 0; i--) {
+    const node = records.get(keys[i]).node;
+    if (
+      placements.has(keys[i]) &&
+      (node.parentNode !== parent || node.nextSibling !== next)
+    ) {
+      if (
+        node.parentNode === parent && typeof parent.moveBefore === "function"
+      ) {
+        parent.moveBefore(node, next);
+      } else parent.insertBefore(node, next);
+    }
+    next = node;
+  }
+}

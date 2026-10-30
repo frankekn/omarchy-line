@@ -18,7 +18,8 @@ git submodule update --init
 
 The daemon needs [Deno](https://deno.com) 2. The panel tests need Node.js.
 The key tests need `qmltestrunner` from `qt6-declarative` and skip when it is
-missing.
+missing. If the Qt tools are in `/usr/lib/qt6/bin`, add that directory to
+`PATH` for the key tests and `qmllint`.
 
 ## Run the checks
 
@@ -31,7 +32,10 @@ node tests/qml/run.js
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+qml_imports="$(mktemp -d)"
+ln -s /usr/share/omarchy/shell "$qml_imports/qs"
+qmllint -I "$qml_imports" Panel.qml LinePanel.qml LineWindow.qml
+rm -rf -- "$qml_imports"
 ```
 
 - `deno task check` type-checks the daemon. `deno task no-any` and
@@ -45,7 +49,8 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   offscreen `qmltestrunner`.
 - `python3 daemon/stub_test.py` checks the stub against the protocol. It runs
   inside its own temporary `XDG_STATE_HOME`.
-- `omarchy plugin validate .` and `qmllint` need the local Omarchy shell.
+- `omarchy plugin validate .` and `qmllint` need the local Omarchy shell. The
+  temporary `qs` link gives `qmllint` the correct root for its QML imports.
 
 None of these proves the screen looks right. After a change, check it on
 real hardware:
@@ -70,7 +75,8 @@ needs no real LINE session.
 
 ```bash
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py              # logged in
-XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out # logged out, QR flow testable
+# logged out, QR flow testable
+XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --logged-out
 XDG_STATE_HOME=/tmp/enil-stub daemon/stub.py --fixture busy
 ```
 
@@ -142,6 +148,170 @@ notification, and a person to click it, none of which development can drive.
 **Never point the stub at the real state dir.** It will overwrite
 `state.json`.
 
+## Work on the web page
+
+The web page lives in `daemon/web/`:
+
+| Path | What it is |
+|---|---|
+| `server.ts` | Routes, and `startWeb`, which `daemon.ts` calls. |
+| `auth.ts` | The web key, the cookie, and the same-origin rule. |
+| `bridge.ts` | One browser WebSocket bridged to one daemon socket connection, plus `state.json` changes. |
+| `files.ts` | `/api/file` (media cache and login QR) and `/api/upload`. |
+| `http.ts` | Security headers and small responses. |
+| `public/` | The page: `index.html`, `app.css`, and plain ES modules in `public/js/`, with no build step. |
+
+In `public/js/`, `ui_test.ts` imports and tests helpers such as `protocol.js`,
+`text.js`, `drafts.js`, `connection.js` and `i18n.js` under Deno without a
+browser. `controller-*.js` change the
+shared model, and `view-*.js` draw it. `app.js` puts them together. The server
+serves `public/js/<name>.js` from that one directory only, with no
+subdirectories.
+
+The server snapshots the page's assets and their content-based ETags at
+startup. Restart the web server after editing HTML, CSS or JavaScript; a
+browser reload then revalidates the cached assets. API responses use
+`Cache-Control: no-store`, except signed-in `/api/file` responses (media and
+the login QR), which the browser may keep privately for one day.
+The HTML response preloads `/api/session` while modules load, including on
+304 responses. The session stays `no-store`; at startup the page opens the
+WebSocket only after the session confirms the cookie. A failed session check
+shows a connection error on the sign-in screen. If a socket closes before its
+first frame, the page checks the session again while reconnecting. If the
+session has expired, reconnecting stops and the page stays open with a sign-in
+link. The user can copy the composer draft before following it; drafts saved
+in browser storage remain available after sign-in. Network errors keep the
+existing reconnect backoff.
+
+To run the page against the stub, without a LINE account:
+
+```bash
+cd daemon
+stub_state="$(mktemp -d)"
+set -m
+XDG_STATE_HOME="$stub_state" ./stub.py &
+stub_pid=$!
+XDG_STATE_HOME="$stub_state" ENIL_WEB_ADDR=127.0.0.1:18470 \
+  ENIL_WEB_KEY=devkey-0123456789abcdef deno run --frozen -A web/server.ts &
+web_pid=$!
+```
+
+Then open `http://127.0.0.1:18470/?key=devkey-0123456789abcdef`.
+When finished, stop both process groups and remove their temporary state:
+
+```bash
+kill -- "-$web_pid" "-$stub_pid"
+wait "$web_pid" "$stub_pid" 2>/dev/null || true
+rm -rf -- "$stub_state"
+```
+
+`deno task test` runs `web/server_test.ts` and `web/ui_test.ts` with the rest.
+
+The stub also accepts `{"cmd":"poke","chat":"cstub-family","text":"hello"}`
+on its socket to add an incoming text message. Without `text`, `poke` keeps
+its notification hand-off behavior described above.
+
+The browser suites start their own stub and web server, each with a temporary
+state directory. The stub's external sticker and FLEX image URLs are served
+from local fixtures. From the repository root, install Playwright's Chromium
+and run all suites, or name only the suites you need:
+
+```bash
+npx --yes playwright@1.64.1 install --with-deps chromium
+deno run -A tests/web/run.js
+deno run -A tests/web/run.js media mentions
+```
+
+Set `CHROMIUM=/usr/bin/chromium` to use a local Chromium instead. By default
+the harness chooses a free port; set `ENIL_WEB_TEST_PORT` to request one.
+Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
+there instead of the system temporary directory. Use a short path so the
+Unix socket paths inside its test directories fit the platform limit.
+It removes temporary state after success and keeps it with screenshots and
+logs on failure. Unexpected console errors and all page errors fail the suite;
+narrowly matched expected browser diagnostics are allowed.
+The separate boot authentication suite uses the same settings:
+
+```bash
+deno run --frozen -A tests/web/boot-rtt.js
+```
+
+`run.js` registers 16 suites. To run the same 12 WebKit suites and startup
+test as CI, install Playwright's matching WebKit and run:
+
+```bash
+npx --yes playwright@1.64.1 install webkit
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/run.js \
+  main edge media mentions parity review a11y state-wire state-wire-resync \
+  preview-cache drafts message-window
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/boot-rtt.js
+```
+
+Chromium is the default; `CHROMIUM` only changes its executable. WebKit mobile
+contexts use iPhone 13 settings with the suite's viewport. Both browsers
+connect to the IPv4 listener through an IPv4-mapped IPv6 loopback address, so
+the machine must support that address. On a supported Linux distribution,
+Playwright's `install --with-deps webkit` can install its system dependencies.
+
+The real daemon smoke test also uses an empty temporary state directory, with
+no LINE account. It starts `enil-run.sh` from source and builds and starts a
+binary in a temporary copy. It removes the copy's web assets after building,
+then checks the embedded page, session, socket and uploads without starting a
+LINE login:
+
+```bash
+deno run -A tests/web/realboot.js
+```
+
+The same `CHROMIUM`, `ENIL_WEB_TEST_PORT` and `ENIL_WEB_TEST_TMPDIR` settings
+apply. The source run requires that `enil-run.sh` would select Deno instead of
+an existing up-to-date `daemon/enil` binary. Failed runs keep their logs and
+temporary state; successful runs remove them.
+
+To check immediate state delivery from the running daemon to a browser, run
+the separate test. It uses an empty state directory and does not log in to LINE:
+
+```bash
+deno run --frozen -A tests/web/state-notify.js
+```
+
+To check that the daemon and its listeners recover from descriptor exhaustion:
+
+```bash
+ENIL_WEB_TEST_PORT=18475 deno run --frozen -A tests/web/fd-exhaustion.js
+```
+
+The test starts a separate daemon with a 256-descriptor limit and empty
+temporary state. It opens idle connections until the limit is reached, then
+closes them and checks the web and daemon sockets. It does not log in to LINE.
+The installed launchd and systemd configurations request a limit of 8192.
+
+To measure page loading against the stub on a phone-sized viewport:
+
+```bash
+CHROMIUM=/usr/bin/chromium ENIL_WEB_TEST_PORT=18470 \
+  deno run --frozen -A tests/web/loadperf.js
+```
+
+The script uses Chromium network emulation at 150 and 300 ms latency and
+5 Mbps. It measures cold and warm loads, opens a stub chat, reports response
+counts and transferred bytes, and calculates the runtime import graph depth.
+It measures the first signed-out load and signs in before the other timings;
+response bytes exclude WebSocket traffic. It also checks sign-out and sign-in
+with cached HTML. The results are a local simulation, not a measurement of a
+Tailscale relay.
+`ENIL_WEB_TEST_TMPDIR` sets the parent for its isolated temporary state.
+
+To check content ETags and 304 responses from a compiled daemon, with the
+source web assets removed from its temporary copy:
+
+```bash
+ENIL_WEB_TEST_PORT=18474 deno run --frozen -A tests/web/compiled-assets.js
+```
+
+This test uses an empty temporary state and does not start LINE login. CI runs
+the compiled-assets test; the load measurement is not part of CI.
+
 ## Take screenshots
 
 Take screenshots for the docs against the stub, never against a real
@@ -204,9 +374,12 @@ config, your state, and your daemon are not touched. A capture larger than
 `.github/workflows/ci.yml` runs on a GitHub-hosted `ubuntu-24.04` runner for
 pushes to `main` and for every pull request, including pull requests from
 forks. It uses no secrets and has read-only access to the repository. It
-runs the checks above except `omarchy plugin validate` and `qmllint`, which
-need the Omarchy shell. It also runs `sh -n daemon/enil-run.sh` and a check
-that `manifest.json` has `id`, `name`, and `version`.
+runs the local checks except `omarchy plugin validate` and `qmllint`, which
+need the Omarchy shell. It runs the Chromium browser suites, real daemon smoke,
+startup, compiled-assets, state-notify and descriptor exhaustion tests. A
+separate job runs selected WebKit browser suites and the startup test. It also
+runs `sh -n daemon/enil-run.sh` and a check that `manifest.json` has `id`,
+`name`, and `version`.
 
 ## Tuning variables
 
@@ -225,6 +398,8 @@ invalid number is ignored with an `[env] <name> ignored` journal line.
 is `ANDROIDSECONDARY`. It is a development knob and is not supported: other
 device types change what LINE allows, and some lose features such as contact
 name lookup.
+
+`ENIL_WEB_ADDR` and `ENIL_WEB_KEY` turn on the web page. See [web.md](web.md).
 
 ## Build a binary
 

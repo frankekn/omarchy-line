@@ -1,0 +1,359 @@
+/**
+ * Files in and out of the state directory: /api/file reads the media cache and
+ * the login QR, /api/upload stores what the browser sends so sendFile can
+ * pick it up.
+ *
+ * Every path is resolved through symlinks before it is judged, so a link in
+ * media/ cannot reach storage.json. A file is served inline only when its
+ * bytes say image or MP4; anything else downloads, so a cached file can never
+ * run as this origin's page.
+ *
+ * Dependency direction: imports only ./http.ts.
+ */
+import { FILE_CSP, json, securityHeaders, status } from "./http.ts";
+
+const UPLOAD_MAX_BYTES = 1024 * 1024 * 1024;
+const UPLOAD_MAX_ACTIVE = 4;
+const UPLOAD_IDLE_MS = 30_000;
+const UPLOAD_MAX_MS = 60 * 60 * 1000;
+const UPLOAD_MAX_AGE_MS = 24 * 3600 * 1000;
+const UPLOAD_SWEEP_MS = 3600 * 1000;
+
+async function realOrNull(path: string): Promise<string | null> {
+  try {
+    return await Deno.realPath(path);
+  } catch {
+    return null;
+  }
+}
+
+/** Inside `realDir` after symlinks resolve; `realDir` must already be real. */
+function inside(realDir: string, realPath: string): boolean {
+  return realPath.startsWith(realDir + "/");
+}
+
+/** Type by content, so a cached download named .jpg cannot render as HTML. */
+export function sniffInline(b: Uint8Array): string | null {
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) {
+    return "image/png";
+  }
+  if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) return "image/gif";
+  if (
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) return "image/webp";
+  if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+    return "video/mp4";
+  }
+  return null;
+}
+
+/**
+ * Stored names are cut to this many UTF-8 bytes. File systems limit a name
+ * to 255 bytes, not characters: 90 CJK characters are 270 bytes.
+ */
+const UPLOAD_NAME_MAX_BYTES = 200;
+
+function utf8Length(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** The longest prefix of `text` within `max` UTF-8 bytes, by code point. */
+function utf8Prefix(text: string, max: number): string {
+  let bytes = 0, end = 0;
+  for (const ch of text) {
+    const point = ch.codePointAt(0) ?? 0;
+    // A lone surrogate is encoded as U+FFFD, which is 3 bytes too.
+    const size = point < 0x80 ? 1 : point < 0x800 ? 2 : point < 0x10000 ? 3 : 4;
+    if (bytes + size > max) break;
+    bytes += size;
+    end += ch.length;
+  }
+  return text.slice(0, end);
+}
+
+/** One path component a user picked, safe to create under the upload dir. */
+export function uploadName(raw: string | null): string {
+  const base = (raw ?? "").split(/[\\/]/).pop() ?? "";
+  // deno-lint-ignore no-control-regex
+  const clean = base.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  const name = (clean === "." || clean === ".." ? "" : clean) || "file";
+  if (utf8Length(name) <= UPLOAD_NAME_MAX_BYTES) return name;
+  // Keep the extension when it fits, so the page and LINE still know the
+  // file's type from its name.
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot) : "";
+  const stem = utf8Prefix(
+    name.slice(0, dot),
+    UPLOAD_NAME_MAX_BYTES - utf8Length(ext),
+  );
+  return ext && stem ? stem + ext : utf8Prefix(name, UPLOAD_NAME_MAX_BYTES);
+}
+
+function contentDisposition(name: string): string {
+  const ascii = name.replace(/[^\x20-\x7e]|["\\]/g, "_");
+  return `attachment; filename="${ascii}"; filename*=UTF-8''${
+    encodeURIComponent(name)
+  }`;
+}
+
+/** GET /api/file?path=…[&download=1] */
+export async function serveFile(stateDir: string, url: URL): Promise<Response> {
+  const asked = url.searchParams.get("path");
+  if (!asked || !asked.startsWith("/")) return status(404);
+  const [real, realState, realMedia] = await Promise.all([
+    realOrNull(asked),
+    realOrNull(stateDir),
+    realOrNull(`${stateDir}/media`),
+  ]);
+  if (!real || !realState || !realMedia) return status(404);
+  const slash = real.lastIndexOf("/");
+  const name = real.slice(slash + 1);
+  const isQr = real.slice(0, slash) === realState &&
+    /^qr-[0-9]+\.png$/.test(name);
+  if (!isQr && !inside(realMedia, real)) return status(404);
+  const expected = await Deno.stat(real).catch(() => null);
+  if (
+    !expected?.isFile || expected.nlink !== 1 || expected.dev === null ||
+    expected.ino === null
+  ) return status(404);
+  if (await realOrNull(real) !== real) return status(404);
+  let file: Deno.FsFile;
+  try {
+    file = await Deno.open(real, { read: true });
+  } catch {
+    return status(404);
+  }
+  const info = await file.stat();
+  if (
+    !info.isFile || info.nlink !== 1 || info.dev !== expected.dev ||
+    info.ino !== expected.ino || await realOrNull(real) !== real
+  ) {
+    file.close();
+    return status(404);
+  }
+  const head = new Uint8Array(12);
+  const n = await file.read(head) ?? 0;
+  await file.seek(0, Deno.SeekMode.Start);
+  const inline = n >= 12 ? sniffInline(head) : null;
+  const headers = securityHeaders({
+    "Content-Type": inline ?? "application/octet-stream",
+    "Content-Length": String(info.size),
+    "Cache-Control": "private, max-age=86400",
+    "Content-Security-Policy": FILE_CSP,
+  });
+  if (url.searchParams.get("download") === "1" || !inline) {
+    headers.set("Content-Disposition", contentDisposition(name));
+  }
+  return new Response(file.readable, { headers });
+}
+
+/**
+ * media/web-uploads/<uuid>/<name>: one directory per upload, removed once
+ * the daemon has answered the sendFile, or by the sweep a day later.
+ *
+ * Each upload can be claimed for one sendFile, across every WebSocket, and
+ * only the claim holder discards it. Otherwise each browser connection could
+ * make the daemon read the same 1 GiB file again, and one reply would remove
+ * a file another send was still reading.
+ */
+export class Uploads {
+  readonly dir: string;
+  #timer: ReturnType<typeof setInterval> | undefined;
+  readonly #sizes = new Map<string, number>();
+  readonly #active = new Set<string>();
+  readonly #claimed = new Set<string>();
+  readonly #readers = new Set<ReadableStreamDefaultReader<Uint8Array>>();
+  readonly #idleMs: number;
+  readonly #maxMs: number;
+  #bytes = 0;
+  #closed = false;
+
+  private constructor(dir: string, idleMs: number, maxMs: number) {
+    this.dir = dir;
+    this.#idleMs = idleMs;
+    this.#maxMs = maxMs;
+  }
+
+  static async open(
+    stateDir: string,
+    idleMs = UPLOAD_IDLE_MS,
+    maxMs = UPLOAD_MAX_MS,
+  ): Promise<Uploads> {
+    const dir = `${stateDir}/media/web-uploads`;
+    await Deno.mkdir(dir, { recursive: true, mode: 0o700 });
+    const uploads = new Uploads(await Deno.realPath(dir), idleMs, maxMs);
+    await uploads.sweep();
+    for await (const entry of Deno.readDir(uploads.dir)) {
+      const path = `${uploads.dir}/${entry.name}`;
+      const size = await storedSize(path);
+      uploads.#sizes.set(path, size);
+      uploads.#bytes += size;
+    }
+    uploads.#timer = setInterval(() => void uploads.sweep(), UPLOAD_SWEEP_MS);
+    return uploads;
+  }
+
+  close(): void {
+    clearInterval(this.#timer);
+    this.#closed = true;
+    for (const reader of this.#readers) void reader.cancel().catch(() => {});
+  }
+
+  /** POST /api/upload?name=…, body = the file's bytes. */
+  async receive(req: Request, url: URL): Promise<Response> {
+    if (this.#closed) return status(503);
+    if (!req.body) return status(400, "empty upload");
+    const declared = Number(req.headers.get("content-length"));
+    if (declared > UPLOAD_MAX_BYTES) {
+      return status(413, "檔案太大（超過 1 GB）");
+    }
+    if (this.#active.size >= UPLOAD_MAX_ACTIVE) return status(503);
+    const dir = `${this.dir}/${crypto.randomUUID()}`;
+    this.#active.add(dir);
+    const path = `${dir}/${uploadName(url.searchParams.get("name"))}`;
+    let file: Deno.FsFile | undefined;
+    const reader = req.body.getReader();
+    this.#readers.add(reader);
+    let size = 0;
+    const deadline = performance.now() + this.#maxMs;
+    try {
+      await Deno.mkdir(dir, { mode: 0o700 });
+      this.#sizes.set(dir, 0);
+      file = await Deno.open(path, {
+        write: true,
+        createNew: true,
+        mode: 0o600,
+      });
+      for (;;) {
+        const remaining = Math.ceil(deadline - performance.now());
+        if (remaining <= 0) {
+          throw new DOMException("upload timed out", "TimeoutError");
+        }
+        const result = await readUploadChunk(
+          reader,
+          Math.min(this.#idleMs, remaining),
+        );
+        if (this.#closed) throw new Error("server stopped");
+        if (result.done) break;
+        const chunk = result.value;
+        size += chunk.length;
+        if (size > UPLOAD_MAX_BYTES) throw new RangeError("too large");
+        if (this.#bytes + chunk.length > UPLOAD_MAX_BYTES) {
+          throw new DOMException("upload storage full", "QuotaExceededError");
+        }
+        this.#bytes += chunk.length;
+        this.#sizes.set(dir, (this.#sizes.get(dir) ?? 0) + chunk.length);
+        let off = 0;
+        while (off < chunk.length) off += await file.write(chunk.subarray(off));
+      }
+    } catch (e) {
+      void reader.cancel().catch(() => {});
+      file?.close();
+      await this.discard(path);
+      return e instanceof RangeError
+        ? status(413, "檔案太大（超過 1 GB）")
+        : e instanceof DOMException && e.name === "QuotaExceededError"
+        ? status(507, "上傳空間已滿")
+        : e instanceof DOMException && e.name === "TimeoutError"
+        ? status(408, "上傳逾時")
+        : status(400, "上傳中斷");
+    } finally {
+      this.#active.delete(dir);
+      this.#readers.delete(reader);
+      reader.releaseLock();
+    }
+    file.close();
+    if (size === 0) {
+      await this.discard(path);
+      return status(400, "empty upload");
+    }
+    return json({ path });
+  }
+
+  /** The real path when `path` is a file this server stored, else null. */
+  async owned(path: unknown): Promise<string | null> {
+    if (typeof path !== "string") return null;
+    const real = await realOrNull(path);
+    return real && inside(this.dir, real) ? real : null;
+  }
+
+  /**
+   * Reserve the upload that `path` (from owned()) belongs to for one send.
+   * False when another send already holds it.
+   */
+  claim(path: string): boolean {
+    const dir = this.#uploadDir(path);
+    if (!dir || this.#claimed.has(dir)) return false;
+    this.#claimed.add(dir);
+    return true;
+  }
+
+  /** Remove the upload that `path` belongs to. */
+  async discard(path: string): Promise<void> {
+    const dir = this.#uploadDir(path);
+    if (!dir) return;
+    try {
+      await Deno.remove(dir, { recursive: true });
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) return;
+    }
+    this.#bytes -= this.#sizes.get(dir) ?? 0;
+    this.#sizes.delete(dir);
+    this.#claimed.delete(dir);
+  }
+
+  #uploadDir(path: string): string | null {
+    const rest = path.slice(this.dir.length + 1);
+    const id = rest.split("/")[0];
+    if (!path.startsWith(this.dir + "/") || !id) return null;
+    return `${this.dir}/${id}`;
+  }
+
+  async sweep(): Promise<void> {
+    try {
+      for await (const entry of Deno.readDir(this.dir)) {
+        const path = `${this.dir}/${entry.name}`;
+        if (this.#active.has(path)) continue;
+        const info = await Deno.lstat(path).catch(() => null);
+        const age = Date.now() - (info?.mtime?.getTime() ?? 0);
+        if (age > UPLOAD_MAX_AGE_MS) {
+          await this.discard(`${path}/file`);
+        }
+      }
+    } catch { /* the dir went away; nothing to sweep */ }
+  }
+}
+
+async function readUploadChunk(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  idleMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new DOMException("upload timed out", "TimeoutError")),
+          idleMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Count persisted uploads at startup, including a file left by a crash. */
+async function storedSize(path: string): Promise<number> {
+  const info = await Deno.lstat(path);
+  if (info.isFile) return info.size;
+  if (!info.isDirectory) return 0;
+  let size = 0;
+  for await (const entry of Deno.readDir(path)) {
+    size += await storedSize(`${path}/${entry.name}`);
+  }
+  return size;
+}

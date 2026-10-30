@@ -34,8 +34,10 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 
 ```jsonc
 {
-  "updatedAt": 1735000000000,          // heartbeat every 30 s; over 180 s is offline
-  "bootId": "…",                       // this daemon boot's id, changes on restart
+  // heartbeat every 30 s; over 180 s is offline
+  "updatedAt": 1735000000000,
+  // this daemon boot's id, changes on restart
+  "bootId": "…",
   "me": { "mid": "u…", "displayName": "…" },   // {} while logged out
   "login": {
     "status": "idle",                  // idle|starting|qr|pin|ok|error
@@ -43,33 +45,45 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
     "pin": "…",                        // only when status=pin
     "error": "…",                      // only when status=error, human-readable
     "reason": "…",                     // optional, the error's class
-    "attempt": "logout",               // optional; logout|resume|manual — which attempt this state belongs to
-    "settled": true                     // optional; true once login/logout teardown completed
+    // optional; logout|resume|manual — which attempt this state belongs to
+    "attempt": "logout",
+    // optional; true once login/logout teardown completed
+    "settled": true
   },
   "chats": [                           // unread first, then by lastTime
     { "mid": "u…", "name": "…", "unread": 0,
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
-      "avatarPath": "…/media/avatars/<sha1>.jpg",    // optional, absent means no avatar set
-      "hidden": true }                               // optional, only on hidden chats
+      // optional, absent means no avatar set
+      "avatarPath": "…/media/avatars/<sha1>.jpg",
+      // optional, only on hidden chats
+      "hidden": true }
   ],
-  "chatsRevision": 12,                 // bumps only when chats/chatList change; heartbeats don't
-  "chatList": { "complete": true, "loaded": 80 }, // optional; false means the server has a next page
-  "timings": {                         // optional; rolling daemon latency stats, last 64
+  // bumps only when chats/chatList change; heartbeats don't
+  "chatsRevision": 12,
+  // optional; false means the server has a next page
+  "chatList": { "complete": true, "loaded": 80 },
+  // optional; rolling daemon latency stats, last 64
+  "timings": {
     "chats.refresh": { "samples": 18, "lastMs": 241.3,
                        "p50Ms": 205.1, "p95Ms": 390.8, "maxMs": 411.2 },
     "cmd.history": { "samples": 6, "lastMs": 92.4,
                      "p50Ms": 88.0, "p95Ms": 131.7, "maxMs": 131.7 }
   },
-  "stateBytes": {                      // optional; rolling state.json write-size stats, last 64
+  // optional; rolling state.json write-size stats, last 64
+  "stateBytes": {
     "samples": 64, "last": 253412,
     "p50": 251190, "p95": 258871, "max": 260112,
-    "chats": 80                        // chats count when this file was serialized
+    // chats count when this file was serialized
+    "chats": 80
   },
-  "link": { "push": "up", "since": 1735000000000 },  // optional, push link state;
-                                                     //   reason and code only during a restriction halt
-  "refresh": { "at": 1735000000000, "failures": 0,   // optional, chat-list freshness
-               "reason": "network" },                //   reason only exists when failures > 0
-  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // optional, see below
+  // optional, push link state; reason and code appear during a restriction
+  "link": { "push": "up", "since": 1735000000000 },
+  // optional, chat-list freshness
+  "refresh": { "at": 1735000000000, "failures": 0,
+               // reason only exists when failures > 0
+               "reason": "network" },
+  // optional, see below
+  "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }
 }
 ```
 
@@ -177,7 +191,8 @@ full-page history refetch.
 ```jsonc
 {
   "updatedAt": 1735000000000,
-  "bootId": "…",                       // same as state.json's, changes on restart
+  // same as state.json's, changes on restart
+  "bootId": "…",
   "events": [                          // ascending seq
     { "seq": 1, "at": 1735000000000, "kind": "message", "chat": "u…",
       "message": { /* same shape as a history entry */ } }
@@ -244,6 +259,51 @@ Socket commands (one JSON line per request, replies
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
 
+The web server checks the request `Host` against `ENIL_WEB_ADDR` and returns
+421 for a mismatch. It normalizes URL host forms, including IPv4-mapped IPv6
+addresses, before comparing them. It returns 403 for sign-ins with
+`Sec-Fetch-Site` set to `cross-site` or `same-site`, before counting a wrong
+key. POST and WebSocket requests with an `Origin` must also match the page
+origin. Signing in needs the web key; protected API routes need a valid cookie
+even without these headers.
+
+The web bridge carries one command per WebSocket text frame and forwards
+daemon replies and pushes. After an atomic `state.json` write, the daemon
+notifies the shared feed of its built-in web server. While pages are connected,
+the feed checks the file every 500 ms as a fallback for standalone servers and
+external changes; intermediate writes can be skipped. A browser offers the
+`enil-state-delta-v1` WebSocket subprotocol to receive versioned state frames:
+
+- `{ "web": "state", "generation": "…", "version": N, "state": … }`
+  is a complete snapshot. On connection the feed checks the file before
+  sending one, and waits if the file is missing or invalid.
+- `{ "web": "state-delta", "generation": "…", "base": N,
+  "version": N+1, "state": …, "remove": [ … ], "put": [ … ] }` updates a
+  large snapshot. `state` replaces all top-level fields except `chats`;
+  removed fields stay removed. `remove` lists deleted chat mids. Each `put`
+  is `{ "index": I, "chat": … }`: remove its mid from the old list, then
+  insert the rows in ascending index order into the remaining list. Indices
+  refer to the resulting list. The bridge sends a complete snapshot when its
+  frame is below 20 KiB, on an account or boot change, for an incompatible
+  list, or when the patch is not smaller. Timestamps, including the heartbeat,
+  remain in `state`.
+
+Without that subprotocol, the bridge sends only complete
+`{ "web": "state", "state": … }` snapshots for older open pages.
+
+`generation` identifies the shared feed and `version` advances with each
+observed change. A page keeps its own snapshot separately from live chat
+pushes, ignores old frames, and reconnects immediately for a fresh snapshot if
+a delta's base or generation is missing or incompatible. If that connection
+fails, ordinary reconnect backoff applies. The daemon's `bootId` and
+`chatsRevision` still decide whether a snapshot can replace a newer live
+chat push. The bridge also sends `{ "web": "events", "events": … }` on
+connection when present. A command's `id` must be a safe integer or a string
+of at most 128 UTF-16 code units. Duplicate outstanding ids or more than 256
+outstanding commands close the connection. This reply-matching `id` is
+separate from the send's `requestId` below. The bridge refuses clipboard
+commands and accepts `sendFile` only for an upload owned by the web server.
+
 ## Push frames
 
 While a panel holds the socket, the daemon also writes two kinds of **push
@@ -275,6 +335,10 @@ refuse. Both are **idempotent** (hiding an already-hidden chat still returns
 `{ok:true}`, just without a write), and an empty `chat` answers
 `{ok:false, error:"沒有指定是哪一間聊天室"}`.
 
+`history` may answer from a non-empty local cache page, including one shorter
+than `count`; that length does not prove that older messages do not exist.
+For a head page, the daemon revalidates the cache in the background.
+
 `history` answers text and message fields without waiting for image
 downloads. The `preview` request only goes out when a ListView delegate nears
 the screen. `image`, `preview` and original `download` share one background
@@ -283,11 +347,12 @@ They may come back after interactive commands sent later. State-changing
 commands (send, reply, unsend, …) still run in receive order.
 
 The five send commands take an optional non-empty `requestId` string. The
-daemon puts it into the LINE message's `contentMetadata` and returns it
-verbatim in later history or message events under the same name. The panel
-creates one per send. When the socket drops after LINE accepted the message,
-the value precisely confirms the outcome, with no guessing by identical text or
-time. Other clients may omit it. History messages then carry no such field.
+daemon puts it into the LINE message's `contentMetadata`. If LINE preserves
+it, later history or message events return it under the same name. The panel
+and web page create one per send. When the socket drops after LINE accepted
+the message, a matching value precisely confirms the outcome, with no
+guessing by identical text or time. The field can be absent if the client
+omitted it or LINE did not preserve it.
 
 ## Drafts and unconfirmed sends
 
@@ -304,6 +369,12 @@ events after a disconnect. Failures and unconfirmed sends keep it.
 as logout. Only a definite `idle` or a settled non-retryable session error
 clears that account's drafts and unconfirmed sends.
 
+The web page stores its drafts and pending sends separately in the browser's
+local storage, per account and chat. It does not automatically retry an
+unconfirmed send. A successful reply clears the persisted pending row; the
+page caches up to 500 acknowledged sends in memory until their own matching
+echo or history arrives. Reloading the page clears that in-memory cache.
+
 ## Command details
 
 A reply is **always written whole**: the daemon `writeAll`s to the last byte
@@ -319,10 +390,15 @@ journal.
 it) and refetches the chat list. It always reports the round that
 finished **after** this request arrived, waiting out a round already in
 flight. `chats` is the fetched chat count, `link` is the push state **at the
-moment the sync began** (`"up"`/`"down"`; a rebuild flips it to down at once,
-so a value read after the report is always down), `at` is the completion's ms
-timestamp. A failed fetch answers `{ok:false, error:"同步失敗：…"}` with a
-human-readable reason.
+moment the sync began** (`"up"`/`"down"`; a rebuild first sets it to down),
+`at` is the completion's ms timestamp. A failed fetch answers
+`{ok:false, error:"同步失敗：…"}` with a human-readable reason.
+
+After a successful `sync`, the web page reloads the active chat, if there is
+one, using its visibility to decide `markRead`. A replacement history request
+keeps buffered events and ignores a late reply from the superseded request.
+The page's history and members generation counters are local bookkeeping, not
+fields in the socket protocol.
 
 `members` is the group member list for `@`, answerable only for groups
 (`c…`) and rooms (`r…`). 1:1 (`u…`) answers
@@ -330,7 +406,8 @@ human-readable reason.
 The daemon caches ten minutes, so re-entering the same chat only fetches
 once. Rooms usually can't produce a list. Then the reply is
 `{ok:false, error:"多人聊天室（room）拿不到成員名單"}` and the panel shows no
-banner, explaining only when the user actually types `@`.
+banner, explaining only when the user actually types `@`. The web page also
+shows the error in the mention picker.
 
 `image` fetches a **public** image into a local file: the daemon caches it in
 `media/public-images/` (merging, caps and sweeping as described in [architecture.md](architecture.md#public-images))
