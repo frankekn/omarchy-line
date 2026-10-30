@@ -125,6 +125,7 @@ store.
 | `panel-drafts.json` | Text you typed but did not send. |
 | `panel-stickers.json` | Your recently used stickers. |
 | `avatars.json` | Which profile picture versions are already downloaded. |
+| `names.json` | The display names of people and chats the daemon looked up, including the nicknames you gave people, so chats open with names after a restart. Only the account that saved it reads it, and a name is looked up again after 7 days. |
 | `hidden.json` | The chats you hid. |
 | `sock` | The socket the panel talks to. |
 | `lock` | An empty file that stops a second daemon from starting. |
@@ -174,7 +175,8 @@ session keys able to fetch it.
 - **Log out of LINE** in the panel or web page to end the session. The daemon
   asks LINE to end the session and deletes the login token fields (`.auth`,
   `refreshToken`, and `expire`) from `storage.json`. It keeps the E2EE keys,
-  the login certificate, the message history, and the media on disk.
+  the login certificate, the message history, the saved names, and the media
+  on disk.
 - **To remove everything**, log out, then follow
   [Uninstall](README.md#uninstall) on Omarchy. On a Mac, stop the launchd
   agent as described in [docs/web.md](docs/web.md#run-it-on-a-mac), then
