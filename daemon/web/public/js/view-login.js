@@ -20,7 +20,8 @@ export function createLoginView(ctx) {
   let noticeSignature = "";
   let webSessionExpired = false;
   let syncGeneration = 0, syncAccount = model.account;
-  function toast(message) {
+  function toast(message, success = false) {
+    $("toast").classList.toggle("success", success);
     $("toast").textContent = String(message || t("genericError"));
     $("toast").hidden = false;
     ctx.scheduleToastHide(() => {
@@ -98,23 +99,32 @@ export function createLoginView(ctx) {
     );
     $("notices").hidden = notices.length === 0;
   }
+  function setSyncLabel(key) {
+    const label = t(key), button = $("sync");
+    button.textContent = label;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  }
   async function syncNow() {
     if (model.syncing) return;
     const generation = ++syncGeneration, account = model.account;
     model.syncing = true;
     $("sync").disabled = true;
-    $("sync").textContent = t("syncing");
+    setSyncLabel("syncing");
     renderNotices();
     try {
       const data = await ctx.command("sync");
       if (generation !== syncGeneration || account !== model.account) return;
       const at = Number(data?.at) || Date.now();
-      toast(`${t("synced")} ${
-        new Date(at).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        })
-      }`);
+      toast(
+        `${t("synced")} ${
+          new Date(at).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        }`,
+        true,
+      );
       if (model.active) {
         ctx.loadHistory(model.active, ctx.isViewingChat(), true);
       }
@@ -131,7 +141,7 @@ export function createLoginView(ctx) {
   function resetSync() {
     model.syncing = false;
     $("sync").disabled = false;
-    $("sync").textContent = t("sync");
+    setSyncLabel("sync");
     renderNotices();
   }
   function connectionStatus(status) {

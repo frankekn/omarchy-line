@@ -261,7 +261,12 @@ a:focus-visible {
   cursor: pointer;
 }
 .sync-button {
-  margin-top: 8px;
+  margin-left: auto;
+  min-width: 44px;
+  min-height: 44px;
+}
+.sync-button:disabled {
+  opacity: 1;
 }
 .unread-divider {
   display: flex;
@@ -332,9 +337,9 @@ a:focus-visible {
 }
 .section-heading {
   display: flex;
-  justify-content: space-between;
-  align-items: end;
-  margin-bottom: 20px;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .section-heading h1 {
   font-size: 20px;
@@ -945,6 +950,9 @@ textarea::placeholder {
   color: var(--danger);
   overflow-wrap: anywhere;
 }
+.toast.success {
+  color: var(--text);
+}
 .lightbox {
   width: 100vw;
   height: 100dvh;
@@ -968,6 +976,18 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.lightbox-navigation {
+  display: contents;
+}
+#lightbox-name {
+  order: 1;
+}
+#lightbox-zoom-out,
+#lightbox-zoom-in,
+#lightbox-download,
+#lightbox-close {
+  order: 2;
 }
 .lightbox-toolbar .icon-button {
   color: #c8d6c8;
@@ -1141,16 +1161,28 @@ textarea::placeholder {
     flex-wrap: wrap;
     gap: 4px;
   }
+  .lightbox-navigation {
+    display: flex;
+    flex: 0 0 100%;
+    gap: 4px;
+  }
   .lightbox-toolbar .icon-button {
     flex: none;
   }
   .lightbox-toolbar .secondary {
+    order: 1;
+    flex: none;
     padding: 8px;
     font-size: 12px;
   }
   .lightbox-toolbar span {
     order: 1;
-    flex-basis: 100%;
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .lightbox-toolbar #lightbox-download,
+  .lightbox-toolbar #lightbox-close {
+    order: 1;
   }
   .chat-header .text-button {
     font-size: 11px;

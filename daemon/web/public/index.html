@@ -78,12 +78,16 @@
       <div id="workspace" class="workspace" hidden>
         <aside class="sidebar" aria-label="Chats" id="sidebar">
           <div class="sidebar-top">
-            <div
-              class="section-heading"><h1 data-i18n="chats">聊天</h1><span id="chat-count" class="count"></span></div>
+            <div class="section-heading">
+              <h1 data-i18n="chats">聊天</h1>
+              <span id="chat-count" class="count"></span>
+              <button id="sync" class="text-button sync-button" type="button"
+                data-i18n="sync" data-i18n-title="sync" aria-label="同步"
+                title="同步" aria-keyshortcuts="R"
+                aria-live="polite">同步</button>
+            </div>
             <label
               class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
-            <button id="sync" class="text-button sync-button" type="button"
-              data-i18n="sync" aria-keyshortcuts="R">同步</button>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
           <div id="chat-list" class="chat-list" role="region" aria-label="Chats"
@@ -129,16 +133,20 @@
     </main>
     <dialog id="lightbox" class="lightbox">
       <div class="lightbox-toolbar">
-        <button id="lightbox-prev" class="icon-button" type="button"
-          data-i18n-title="previousImage"
-          aria-keyshortcuts="ArrowLeft">←</button>
-        <button id="lightbox-next" class="icon-button" type="button"
-          data-i18n-title="nextImage" aria-keyshortcuts="ArrowRight">→</button>
+        <div class="lightbox-navigation">
+          <button id="lightbox-prev" class="icon-button" type="button"
+            data-i18n-title="previousImage"
+            aria-keyshortcuts="ArrowLeft">←</button>
+          <button id="lightbox-next" class="icon-button" type="button"
+            data-i18n-title="nextImage"
+            aria-keyshortcuts="ArrowRight">→</button>
+          <button id="lightbox-zoom-out" class="icon-button" type="button"
+            data-i18n-title="zoomOut" aria-keyshortcuts="-">−</button>
+          <button id="lightbox-zoom-in" class="icon-button" type="button"
+            data-i18n-title="zoomIn"
+            aria-keyshortcuts="= Shift+= Plus">+</button>
+        </div>
         <span id="lightbox-name"></span>
-        <button id="lightbox-zoom-out" class="icon-button" type="button"
-          data-i18n-title="zoomOut" aria-keyshortcuts="-">−</button>
-        <button id="lightbox-zoom-in" class="icon-button" type="button"
-          data-i18n-title="zoomIn" aria-keyshortcuts="= Shift+= Plus">+</button>
         <button id="lightbox-download" class="secondary" type="button"
           data-i18n="downloadOriginal">下載原圖</button>
         <button id="lightbox-close" class="icon-button" type="button"

@@ -131,9 +131,18 @@ export async function parity(h) {
     throw new Error("The web page does not contain the parity sync feature");
   }
   await page.getByRole("button", { name: /account is restricted/ }).waitFor();
-  await page.locator("#sync").click();
+  const syncButton = page.getByRole("button", { name: "Sync", exact: true });
+  assert.equal(await syncButton.getAttribute("title"), "Sync");
+  assert.equal(await syncButton.getAttribute("aria-keyshortcuts"), "R");
+  assert.equal(await syncButton.getAttribute("aria-live"), "polite");
+  await syncButton.click();
   await until(() => heldSync !== undefined, "first sync request");
   assert.equal(await page.locator("#sync").textContent(), "Syncing…");
+  assert.equal(
+    await page.locator("#sync").getAttribute("aria-label"),
+    "Syncing…",
+  );
+  assert.equal(await page.locator("#sync").getAttribute("title"), "Syncing…");
   assert.equal(await page.locator("#sync").isDisabled(), true);
   assert.equal(
     await page.getByRole("button", { name: /account is restricted/ })
@@ -146,6 +155,9 @@ export async function parity(h) {
     JSON.stringify({ id: heldSync, ok: true, data: { at: Date.now() } }),
   );
   await page.getByText(/Synced/).waitFor();
+  const successColor = await page.locator("#toast").evaluate((node) =>
+    getComputedStyle(node).color
+  );
   await page.getByRole("button", { name: /account is restricted/ }).click();
   await until(
     () => tap.sent.filter((frame) => frame.cmd === "sync").length === 2,
@@ -167,6 +179,12 @@ export async function parity(h) {
     JSON.stringify({ id: heldSync, ok: false, error: "fixture sync failure" }),
   );
   await page.getByText("fixture sync failure").waitFor();
+  assert.notEqual(
+    await page.locator("#toast").evaluate((node) =>
+      getComputedStyle(node).color
+    ),
+    successColor,
+  );
   assert.equal(await page.locator("#sync").isDisabled(), false);
   h.step("sync-guard-failure");
 
