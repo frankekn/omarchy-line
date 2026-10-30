@@ -1,5 +1,6 @@
 // A delayed pointer click must not cross an account change.
 import { assert, CHAT, tapSocket } from "./harness.js";
+import { withoutReadUpdates } from "./drafts-fixture.js";
 
 export async function draftPointer(h, account, alice) {
   const other = "u-draft-pointer-other";
@@ -7,9 +8,22 @@ export async function draftPointer(h, account, alice) {
   await context.addInitScript(({ origin, account, alice, other, chat }) => {
     if (location.origin !== origin) return;
     globalThis.__pointerClicks = [];
+    globalThis.__pointerDowns = [];
+    globalThis.addEventListener("pointerdown", (event) => {
+      const row = event.target.closest?.(".chat-row");
+      if (row) {
+        globalThis.__pointerDowns.push({
+          chat: row.dataset.chatId,
+          pointerId: event.pointerId,
+          pointerType: event.pointerType,
+        });
+      }
+    }, true);
     globalThis.addEventListener("click", (event) => {
       const row = event.target.closest?.(".chat-row");
-      if (row) globalThis.__pointerClicks.push(row.dataset.chatId);
+      if (row) {
+        globalThis.__pointerClicks.push({ chat: row.dataset.chatId, event });
+      }
     }, true);
     if (sessionStorage.getItem("draft-pointer")) return;
     sessionStorage.setItem("draft-pointer", "1");
@@ -24,18 +38,29 @@ export async function draftPointer(h, account, alice) {
     );
   }, { origin: h.base, account, alice, other, chat: CHAT });
   const state = await h.state();
+  const originalAccount = state.me;
+  state.me = { ...state.me, displayName: "Pointer fixture account" };
+  state.chats = state.chats.map((chat) => ({ ...chat, unread: 0 }));
+  state.chats.find((chat) => chat.mid === CHAT).lastText = "Pointer fixture";
+  // Later stub snapshots and chat pushes must not reorder this fixture.
+  state.chatsRevision = Number.MAX_SAFE_INTEGER;
   const page = await context.newPage();
-  let activeAccount = state.me;
+  let activeAccount = originalAccount;
   const tap = await tapSocket(page, {
+    client: withoutReadUpdates,
     server(frame) {
       if (frame.web === "state") frame.state.me = activeAccount;
       return true;
     },
   });
   await h.signIn(page);
+  activeAccount = state.me;
+  tap.socket.send(JSON.stringify({ web: "state", state }));
+  await page.getByText("Pointer fixture account", { exact: true }).waitFor();
   const family = page.getByRole("button", { name: /STUB 家庭群組/ });
   const aliceRow = page.getByRole("button", { name: /STUB Alice/ });
   const input = page.getByLabel("Message", { exact: true });
+  await family.getByText(/Pointer fixture/).waitFor();
   const active = (id) =>
     page.waitForFunction(
       (expected) =>
@@ -175,8 +200,15 @@ export async function draftPointer(h, account, alice) {
     (id) => document.querySelector(".chat-row.active")?.dataset.chatId === id,
     alice,
   );
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const pressBox = await family.boundingBox();
+  await page.mouse.move(
+    pressBox.x + pressBox.width / 2,
+    pressBox.y + pressBox.height / 2,
+  );
   await page.mouse.down();
+  const pressed = await page.evaluate(() => globalThis.__pointerDowns.at(-1));
+  assert.equal(pressed.chat, CHAT);
+  assert.equal(pressed.pointerType, "mouse");
   activeAccount = { mid: other, displayName: "Other account" };
   tap.socket.send(
     JSON.stringify({ web: "state", state: { ...state, me: activeAccount } }),
@@ -188,6 +220,19 @@ export async function draftPointer(h, account, alice) {
     (n) => globalThis.__pointerClicks.length > n,
     count,
   );
+  const clicked = await page.evaluate(() => {
+    const { chat, event } = globalThis.__pointerClicks.at(-1);
+    return {
+      chat,
+      pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      prevented: event.defaultPrevented,
+    };
+  });
+  assert.equal(clicked.chat, CHAT);
+  assert.equal(clicked.pointerId, pressed.pointerId);
+  assert.equal(clicked.pointerType, pressed.pointerType);
+  assert.equal(clicked.prevented, true);
   assert.equal(await page.locator(".chat-row.active").count(), 0);
   const saved = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("enil.web.drafts.v1") || "{}")
