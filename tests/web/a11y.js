@@ -102,27 +102,77 @@ export async function a11y(h) {
       assert.deepEqual(small, [], `${colorScheme} ${width} ${screen}`);
     };
     const contrast = async (screen) => {
-      const result = await page.evaluate(async () => {
-        const scan = await globalThis.axe.run(document, {
-          runOnly: { type: "rule", values: ["color-contrast"] },
-          resultTypes: ["violations", "incomplete"],
+      const webkitLightbox = h.browserName === "webkit" &&
+        screen.startsWith("lightbox");
+      if (webkitLightbox) {
+        const surface = await page.evaluate(() => {
+          const dialog = document.getElementById("lightbox");
+          const name = document.getElementById("lightbox-name");
+          const bounds = dialog.getBoundingClientRect();
+          const nameBounds = name.getBoundingClientRect();
+          const range = document.createRange();
+          range.selectNodeContents(name);
+          const points = [...range.getClientRects()].flatMap((rect) => {
+            const left = Math.max(rect.left, nameBounds.left);
+            const right = Math.min(rect.right, nameBounds.right);
+            const top = Math.max(rect.top, nameBounds.top);
+            const bottom = Math.min(rect.bottom, nameBounds.bottom);
+            if (right <= left || bottom <= top) return [];
+            return [
+              document.elementFromPoint(
+                (left + right) / 2,
+                (top + bottom) / 2,
+              ) === name,
+            ];
+          });
+          const color = getComputedStyle(dialog).backgroundColor;
+          const components = (color.match(/[\d.]+/g) || []).map(Number);
+          return {
+            coversViewport: dialog.open && bounds.left <= 0 &&
+              bounds.top <= 0 && bounds.right >= innerWidth &&
+              bounds.bottom >= innerHeight,
+            alpha: components[3] ?? 1,
+            points,
+          };
         });
-        return {
-          violations: scan.violations.map((rule) => ({
-            id: rule.id,
-            nodes: rule.nodes.map((node) => ({
-              target: node.target,
-              failure: node.failureSummary,
+        assert.equal(surface.coversViewport, true);
+        assert.equal(surface.alpha, 1);
+        assert.ok(surface.points.length > 0);
+        assert.ok(surface.points.every(Boolean), "lightbox name is unobscured");
+      }
+      const result = await page.evaluate(async (hideCoveredApp) => {
+        const app = document.getElementById("app");
+        const originalStyle = app.getAttribute("style");
+        // WebKit splits the name into text rects; axe can mistake covered
+        // app elements for overlap even though the opaque dialog is on top.
+        if (hideCoveredApp) app.style.visibility = "hidden";
+        try {
+          const scan = await globalThis.axe.run(document, {
+            runOnly: { type: "rule", values: ["color-contrast"] },
+            resultTypes: ["violations", "incomplete"],
+          });
+          return {
+            violations: scan.violations.map((rule) => ({
+              id: rule.id,
+              nodes: rule.nodes.map((node) => ({
+                target: node.target,
+                failure: node.failureSummary,
+              })),
             })),
-          })),
-          incomplete: scan.incomplete.flatMap((rule) =>
-            rule.nodes.map((node) => ({
-              target: node.target,
-              details: node.any.map((check) => check.message),
-            }))
-          ),
-        };
-      });
+            incomplete: scan.incomplete.flatMap((rule) =>
+              rule.nodes.map((node) => ({
+                target: node.target,
+                details: node.any.map((check) => check.message),
+              }))
+            ),
+          };
+        } finally {
+          if (hideCoveredApp) {
+            if (originalStyle === null) app.removeAttribute("style");
+            else app.setAttribute("style", originalStyle);
+          }
+        }
+      }, webkitLightbox);
       console.log(
         `  axe ${colorScheme} ${width} ${screen}: ` +
           `${result.violations.length} violations, ` +
