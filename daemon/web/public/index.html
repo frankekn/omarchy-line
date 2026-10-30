@@ -42,8 +42,10 @@
   <body>
     <main id="signin-screen" class="auth-screen" hidden>
       <section class="auth-card" aria-labelledby="signin-title">
-        <div class="brand-mark" aria-hidden="true">e<span>_</span></div>
-        <p class="eyebrow">ENIL / WEB</p>
+        <div class="auth-brand">
+          <div class="brand-mark" aria-hidden="true">e<span>_</span></div>
+          <p class="context-label">ENIL / WEB</p>
+        </div>
         <h1 id="signin-title" data-i18n="signinTitle">連接你的 LINE</h1>
         <p class="muted auth-intro"
           data-i18n="signinIntro">輸入 web key，從這個裝置開啟你的對話。</p>
@@ -70,8 +72,10 @@
       <div id="notices" class="notices" aria-live="polite" hidden></div>
       <section id="line-login" class="line-login" hidden>
         <div class="login-card">
-          <p class="eyebrow">LINE / SESSION</p>
-          <h1 data-i18n="lineTitle">登入 LINE</h1>
+          <div class="login-heading">
+            <h1 data-i18n="lineTitle">登入 LINE</h1>
+            <p class="context-label">LINE / SESSION</p>
+          </div>
           <p id="line-login-message" class="muted"></p>
           <img id="qr-image" class="qr-image" alt="LINE login QR code" hidden>
           <p id="login-pin" class="login-pin" hidden></p>
@@ -83,7 +87,7 @@
         <aside class="sidebar" aria-label="Chats" id="sidebar">
           <div class="sidebar-top">
             <div
-              class="section-heading"><div><p class="eyebrow" data-i18n="inboxEyebrow">YOUR SPACE</p><h1 data-i18n="chats">聊天</h1></div><span id="chat-count" class="count"></span></div>
+              class="section-heading"><div><h1 data-i18n="chats">聊天</h1><p class="context-label" data-i18n="inboxEyebrow">YOUR SPACE</p></div><span id="chat-count" class="count"></span></div>
             <label
               class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
             <button id="sync" class="text-button sync-button" type="button"

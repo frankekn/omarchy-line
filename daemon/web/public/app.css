@@ -13,7 +13,7 @@
   --own: #304631;
   --danger: #f29a91;
   --warn: #e7c789;
-  --shadow: 0 24px 80px #0008;
+  --shadow: 0 4px 16px #0006;
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono",monospace;
   font-size: 14px;
 }
@@ -33,7 +33,7 @@
     --own: #d9ecd3;
     --danger: #a63b32;
     --warn: #806020;
-    --shadow: 0 24px 80px #283c2828;
+    --shadow: 0 4px 16px #283c2828;
   }
 }
 * {
@@ -90,25 +90,26 @@ a:focus-visible {
 .muted {
   color: var(--muted);
 }
-.eyebrow {
-  font-size: 10px;
-  letter-spacing: .16em;
+.context-label {
+  font-size: 11px;
+  letter-spacing: .08em;
   color: var(--muted);
   font-weight: 700;
-  margin: 0 0 8px;
+  margin: 0;
 }
 .brand-mark {
-  display: grid;
-  place-items: center;
-  width: 58px;
-  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 800;
-  font-size: 29px;
-  letter-spacing: -.12em;
-  border-radius: 13px;
-  padding-right: 4px;
+  font-size: 23px;
+  letter-spacing: -.04em;
+  border-radius: 6px;
+  padding-right: 2px;
 }
 .brand-mark span {
   opacity: .65;
@@ -117,7 +118,7 @@ a:focus-visible {
   width: 31px;
   height: 31px;
   font-size: 17px;
-  border-radius: 7px;
+  border-radius: 5px;
 }
 .primary,
 .secondary {
@@ -175,24 +176,25 @@ a:focus-visible {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: radial-gradient(circle at 50% 0%,#31433155,transparent
-    50%),var(--bg);
+  background: var(--bg);
 }
 .auth-card {
   width: min(100%,420px);
-  padding: 42px;
+  padding: 32px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 16px;
-  box-shadow: var(--shadow);
+  border-radius: 6px;
 }
-.auth-card .brand-mark {
-  margin-bottom: 34px;
+.auth-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
 }
 .auth-card h1,
 .login-card h1 {
-  font-size: 27px;
-  letter-spacing: -.04em;
+  font-size: 22px;
+  letter-spacing: -.02em;
   margin: 0 0 12px;
 }
 .auth-intro {
@@ -248,10 +250,10 @@ a:focus-visible {
   gap: 10px;
   font-size: 17px;
   font-weight: 800;
-  letter-spacing: -.05em;
+  letter-spacing: -.02em;
 }
 .brand-tag {
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: .12em;
   color: var(--muted);
   margin-left: 2px;
@@ -274,11 +276,9 @@ a:focus-visible {
   height: 7px;
   border-radius: 50%;
   background: var(--warn);
-  box-shadow: 0 0 0 3px color-mix(in srgb,var(--warn) 14%,transparent);
 }
 .connection.connected .status-dot {
   background: var(--accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb,var(--accent) 14%,transparent);
 }
 .notices {
   flex: none;
@@ -332,7 +332,17 @@ a:focus-visible {
   padding: 38px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 6px;
+}
+.login-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.login-heading h1 {
+  margin-bottom: 0;
 }
 .login-card .muted {
   line-height: 1.7;
@@ -378,9 +388,14 @@ a:focus-visible {
   align-items: end;
   margin-bottom: 20px;
 }
+.section-heading > div {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
 .section-heading h1 {
-  font-size: 24px;
-  letter-spacing: -.05em;
+  font-size: 20px;
+  letter-spacing: -.02em;
   margin: 0;
 }
 .count {
@@ -438,7 +453,7 @@ textarea::placeholder {
   text-align: left;
   padding: 12px 10px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 5px;
   background: transparent;
 }
 .chat-row:hover,
@@ -447,7 +462,7 @@ textarea::placeholder {
   background: var(--hover);
 }
 .chat-row.active {
-  box-shadow: inset 3px 0 var(--accent);
+  box-shadow: inset 1px 0 var(--accent);
 }
 .avatar {
   width: 42px;
@@ -455,7 +470,7 @@ textarea::placeholder {
   flex: none;
   display: grid;
   place-items: center;
-  border-radius: 14px;
+  border-radius: 50%;
   background: #34483a;
   color: #c6e3c3;
   overflow: hidden;
@@ -488,7 +503,7 @@ textarea::placeholder {
   white-space: nowrap;
 }
 .row-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
 }
@@ -508,7 +523,7 @@ textarea::placeholder {
   text-align: center;
   background: var(--accent);
   color: var(--accent-ink);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 .empty-list {
@@ -533,7 +548,7 @@ textarea::placeholder {
 .account-avatar {
   width: 35px;
   height: 35px;
-  border-radius: 11px;
+  border-radius: 50%;
   font-size: 13px;
 }
 .account strong,
@@ -549,7 +564,7 @@ textarea::placeholder {
 .account small {
   margin-top: 4px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .conversation {
   flex: 1;
@@ -569,22 +584,19 @@ textarea::placeholder {
   padding: 20px;
 }
 .empty-glyph {
-  width: 82px;
-  height: 82px;
-  border: 1px solid var(--line);
-  border-radius: 24px;
+  width: 44px;
+  height: 44px;
   display: grid;
   place-items: center;
-  font-size: 37px;
+  font-size: 28px;
   color: var(--accent);
   position: relative;
-  background: var(--panel);
 }
 .empty-glyph span {
   position: absolute;
-  right: 17px;
-  bottom: 14px;
-  font-size: 20px;
+  right: 3px;
+  bottom: 3px;
+  font-size: 15px;
 }
 .empty-chat h2 {
   color: var(--text);
@@ -623,7 +635,7 @@ textarea::placeholder {
 }
 .chat-heading span {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 5px;
 }
 .back {
@@ -658,20 +670,20 @@ textarea::placeholder {
 }
 .sender {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   margin: 0 0 6px 3px;
 }
 .bubble {
   position: relative;
   background: var(--bubble);
-  border-radius: 14px 14px 14px 3px;
+  border-radius: 6px 6px 6px 2px;
   padding: 11px 14px;
   overflow-wrap: anywhere;
   line-height: 1.55;
 }
 .own .bubble {
   background: var(--own);
-  border-radius: 14px 14px 3px 14px;
+  border-radius: 6px 6px 2px 6px;
 }
 .bubble.system {
   color: var(--muted);
@@ -712,7 +724,7 @@ textarea::placeholder {
   margin-top: 5px;
   padding: 0 2px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .own .message-meta {
   justify-content: flex-end;
@@ -730,7 +742,7 @@ textarea::placeholder {
   border: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   padding: 4px;
   cursor: pointer;
 }
@@ -817,7 +829,7 @@ textarea::placeholder {
 .day-divider {
   text-align: center;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   margin: 20px 0;
 }
 .loading-message {
@@ -850,7 +862,7 @@ textarea::placeholder {
   gap: 9px;
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 6px;
   padding: 8px;
 }
 .composer:focus-within {
@@ -871,6 +883,11 @@ textarea::placeholder {
   padding: 9px 0;
   line-height: 1.4;
 }
+.search-wrap input:focus-visible,
+.composer textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .send-button {
   width: 36px;
   height: 36px;
@@ -885,7 +902,7 @@ textarea::placeholder {
   margin: 8px 4px 0;
   text-align: right;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .reply-target {
   display: flex;
@@ -1058,12 +1075,18 @@ textarea::placeholder {
   object-fit: contain;
   margin: auto;
 }
-@media (max-width:700px) {
+@media (max-width:700px), (pointer:coarse) {
   /* Keep the painted controls compact while giving touch a 44px target. */
   button {
     min-width: 44px;
     min-height: 44px;
   }
+  .search-wrap input,
+  .composer textarea {
+    min-height: 44px;
+  }
+}
+@media (max-width:700px) {
   .send-button {
     position: relative;
     isolation: isolate;
@@ -1113,7 +1136,7 @@ textarea::placeholder {
     gap: 5px;
   }
   .connection {
-    font-size: 10px;
+    font-size: 11px;
   }
   .notices {
     padding: 7px 15px;
@@ -1149,7 +1172,7 @@ textarea::placeholder {
   .chat-header .avatar {
     width: 36px;
     height: 36px;
-    border-radius: 11px;
+    border-radius: 50%;
   }
   .back {
     display: grid;
@@ -1197,6 +1220,6 @@ textarea::placeholder {
     flex-basis: 100%;
   }
   .chat-header .text-button {
-    font-size: 10px;
+    font-size: 11px;
   }
 }
