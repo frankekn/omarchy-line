@@ -73,6 +73,16 @@ REACTIONS = ("UNDO", "NICE", "LOVE", "FUN", "AMAZING", "SAD", "OMG")
 STUB_IMAGE_URL = "https://placehold.co/240x160/png"
 
 
+
+def read_reply(rf):
+    """The next reply on a connection, past any live event pushed meanwhile."""
+    while True:
+        line = rf.readline()
+        assert line, "stub closed the connection"
+        msg = json.loads(line.decode())
+        if "event" not in msg:
+            return msg
+
 class Stub:
     """The stub as a subprocess plus one socket connection to it."""
 
@@ -94,6 +104,8 @@ class Stub:
             raise AssertionError("stub never created %s" % sock_path)
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(sock_path)
+        # A reply that never comes fails the test instead of hanging the suite.
+        self.sock.settimeout(30)
         self.rf = self.sock.makefile("rwb")
         self.n = 0
 
@@ -102,9 +114,7 @@ class Stub:
         req.setdefault("id", self.n)
         self.rf.write((json.dumps(req) + "\n").encode())
         self.rf.flush()
-        line = self.rf.readline()
-        assert line, "stub closed the connection"
-        return json.loads(line.decode())
+        return read_reply(self.rf)
 
     def state(self):
         with open(os.path.join(self.state_dir, "state.json"), encoding="utf-8") as f:
@@ -772,7 +782,7 @@ class ContractTest(unittest.TestCase):
                        "chat": "ustub-notes", "stage": stage}
                 rf.write((json.dumps(req) + "\n").encode())
                 rf.flush()
-                out[i] = json.loads(rf.readline().decode())
+                out[i] = read_reply(rf)
             finally:
                 rf.close()
                 sock.close()
@@ -871,6 +881,9 @@ class ContractTest(unittest.TestCase):
         stub = Stub("--fixture", "default")
         try:
             tasks = "/proc/%d/task" % stub.proc.pid
+            # One round trip first: the connection's reader and writer
+            # threads are both up before the baseline is taken.
+            self.assertTrue(stub.call(cmd="ping")["ok"])
             baseline = len(os.listdir(tasks))
             for _ in range(20):
                 stage = stub.call(
@@ -894,6 +907,9 @@ class ContractTest(unittest.TestCase):
         stub = Stub("--fixture", "default")
         try:
             tasks = "/proc/%d/task" % stub.proc.pid
+            # One round trip first: the connection's reader and writer
+            # threads are both up before the baseline is taken.
+            self.assertTrue(stub.call(cmd="ping")["ok"])
             baseline = len(os.listdir(tasks))
             for _ in range(40):
                 self.assertTrue(stub.call(
@@ -1561,7 +1577,7 @@ class FixtureTest(unittest.TestCase):
                     ready.wait(timeout=10)
                     rf.write(b'{"cmd":"login","id":1}\n')
                     rf.flush()
-                    out[i] = json.loads(rf.readline().decode())
+                    out[i] = read_reply(rf)
                 finally:
                     rf.close()
                     sock.close()
@@ -2044,6 +2060,94 @@ class EventTest(unittest.TestCase):
             # The payload is what history would have returned, whole.
             for k in MSG_REQUIRED:
                 self.assertIn(k, e["message"], k)
+
+    def test_a_connected_panel_hears_each_event_as_a_push(self):
+        # The daemon pushes every event to open connections (setEventSink),
+        # and a connected panel stops watching the ring -- so the stub must
+        # push too, or echoes and 已讀 never reach the panel live.
+        watcher = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        watcher.connect(os.path.join(self.s.state_dir, "sock"))
+        watcher.settimeout(30)
+        rf = watcher.makefile("rwb")
+        try:
+            rf.write(b'{"id":1,"cmd":"ping"}\n')
+            rf.flush()
+            self.assertTrue(read_reply(rf)["ok"])
+            self.assertTrue(self.s.call(cmd="send", chat="ustub-notes", text="a")["ok"])
+            pushed = json.loads(rf.readline().decode())
+            self.assertEqual(self.s.state()["bootId"], pushed["boot"])
+            self.assertEqual(self.events()[-1], pushed["event"])
+        finally:
+            rf.close()
+            watcher.close()
+
+    def test_pushes_arrive_in_seq_order_under_concurrent_sends(self):
+        watcher = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        watcher.connect(os.path.join(self.s.state_dir, "sock"))
+        watcher.settimeout(30)
+        rf = watcher.makefile("rwb")
+        path = os.path.join(self.s.state_dir, "sock")
+
+        def burst():
+            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            c.connect(path)
+            c.settimeout(30)
+            f = c.makefile("rwb")
+            try:
+                for i in range(15):
+                    f.write((json.dumps({"id": i, "cmd": "send", "chat": "ustub-notes",
+                                         "text": str(i)}) + "\n").encode())
+                    f.flush()
+                    read_reply(f)
+            finally:
+                f.close()
+                c.close()
+
+        try:
+            threads = [threading.Thread(target=burst) for _ in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=20)
+            seqs = []
+            while len(seqs) < 60:
+                msg = json.loads(rf.readline().decode())
+                if "event" in msg and msg["event"]["kind"] == "message":
+                    seqs.append(msg["event"]["seq"])
+            self.assertEqual(sorted(seqs), seqs)
+        finally:
+            rf.close()
+            watcher.close()
+
+    def test_a_connection_that_stops_reading_does_not_hold_up_sends(self):
+        idle = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        idle.connect(os.path.join(self.s.state_dir, "sock"))
+        try:
+            big = "x" * (256 * 1024)
+            for _ in range(8):
+                self.assertTrue(self.s.call(cmd="send", chat="ustub-notes", text=big)["ok"])
+        finally:
+            idle.close()
+
+    def test_a_late_reader_still_gets_the_whole_last_reply(self):
+        big = "x" * (1024 * 1024)
+        self.assertTrue(self.s.call(cmd="send", chat="ustub-notes", text=big)["ok"])
+        c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        c.connect(os.path.join(self.s.state_dir, "sock"))
+        c.settimeout(30)
+        f = c.makefile("rwb")
+        try:
+            f.write(b'{"id":1,"cmd":"history","chat":"ustub-notes","count":100}\n')
+            f.flush()
+            # The client is done sending; the stub must still finish writing.
+            c.shutdown(socket.SHUT_WR)
+            time.sleep(1.5)
+            res = read_reply(f)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(big, res["data"][-1]["text"])
+        finally:
+            f.close()
+            c.close()
 
     def test_reply_quotes_its_target_and_lands_as_an_event(self):
         target = self.message("ustub-alice", 0)
