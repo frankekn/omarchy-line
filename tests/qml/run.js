@@ -101,6 +101,7 @@ function nested(header, closer) {
 const B = {
   parseState: body("  function parseState(content) {"),
   replaceChatSnapshot: body("  function replaceChatSnapshot(incoming) {"),
+  cancelChatListRestore: body("  function cancelChatListRestore() {"),
   clearStateAfterLoadFailure: body("  function clearStateAfterLoadFailure() {"),
   request: body("  function request(cmd, extra, msgId) {"),
   onReply: body("  function onReply(line) {"),
@@ -289,6 +290,8 @@ const B = {
   // separators (date, unread) come from pure functions.
   setMessages: body("  function setMessages(list, follow) {"),
   clearSwap: body("  function clearSwap() {"),
+  captureMessageAnchor: body("  function captureMessageAnchor() {"),
+  restoreMessageViewport: body("  function restoreMessageViewport() {"),
   withDay: body("  function withDay(list) {"),
   firstUnreadIndex: body("  function firstUnreadIndex(messages, unread) {"),
   dayStart: body("  function dayStart(ms) {"),
@@ -544,6 +547,10 @@ function makeEnv(opts) {
     chats: [],
     sessionMid: "",
     chatSnapshot: [],
+    chatListRestore: null,
+    cancelChatListRestore() {
+      new Function("root", B.cancelChatListRestore)(root);
+    },
     chatRevisionSeen: -1,
     chatBootSeen: "",
     notice: "",
@@ -561,6 +568,8 @@ function makeEnv(opts) {
     atBottom: true,
     prependAnchorIndex: -1,
     keepContentY: -1,
+    messageAnchor: null,
+    messageSwapGeneration: 0,
     unreadMarkCount: 0,
     unreadMarkId: "",
     openWanted: {},
@@ -732,6 +741,15 @@ function makeEnv(opts) {
     },
     clearSwap() {
       api.clearSwap();
+    },
+    captureMessageAnchor() {
+      return api.captureMessageAnchor();
+    },
+    restoreMessageViewport() {
+      api.restoreMessageViewport();
+    },
+    replaceChatSnapshot(incoming) {
+      root.chatSnapshot = incoming;
     },
     withDay(list) {
       return api.withDay(list);
@@ -1333,10 +1351,15 @@ function makeEnv(opts) {
   // is still realising the items above the viewport.
   const positioned = [];
   const msgList = {
+    get count() { return root.messages.length; },
     contentHeight: 0,
     contentY: 0,
     originY: 0,
     height: 100,
+    forceLayout() {},
+    indexAt() { return -1; },
+    itemAtIndex() { return null; },
+    toBottom() {},
     positionViewAtIndex(i) {
       positioned.push(i);
     },
@@ -1683,6 +1706,8 @@ function makeEnv(opts) {
   const fMentionRanges = mk("mentionRanges", ["mentions", "len"]);
   const fSetMessages = mk("setMessages", ["list", "follow"]);
   const fClearSwap = mk("clearSwap");
+  const fCaptureMessageAnchor = mk("captureMessageAnchor");
+  const fRestoreMessageViewport = mk("restoreMessageViewport");
   const fWithDay = mk("withDay", ["list"]);
   const fFirstUnread = mk("firstUnreadIndex", ["messages", "unread"]);
   const fDayStart = mk("dayStart", ["ms"]);
@@ -1981,6 +2006,8 @@ function makeEnv(opts) {
     mentionRanges: (ms, len) => q((...a) => fMentionRanges(...a, ms, len)),
     setMessages: (l, f) => q((...a) => fSetMessages(...a, l, f)),
     clearSwap: () => q(fClearSwap),
+    captureMessageAnchor: () => q(fCaptureMessageAnchor),
+    restoreMessageViewport: () => q(fRestoreMessageViewport),
     withDay: (l) => q((...a) => fWithDay(...a, l)),
     firstUnreadIndex: (l, u) => q((...a) => fFirstUnread(...a, l, u)),
     dayStart: (ms) => q((...a) => fDayStart(...a, ms)),
@@ -2078,6 +2105,38 @@ function ok(cond, msg) {
 function group(t) {
   console.log("\n-- " + t);
 }
+
+group("failed message identity converges without changing unrelated rows");
+const savedFailure = { id: "failed-local", time: 3, failed: true, text: "saved" };
+const currentFailure = { ...savedFailure, text: "current full text\nsecond line" };
+const confirmedFailure = { id: "failed-local", time: 4, from: "ME", text: "confirmed" };
+const unrelatedPending = { id: "pending-local", pending: true, requestId: "send-token", time: 5 };
+const mergeInput = [currentFailure, currentFailure, unrelatedPending, unrelatedPending];
+const mergeSaved = [savedFailure, savedFailure];
+const mergeBefore = JSON.stringify([mergeSaved, mergeInput]);
+const mergedFailures = EventLog.mergeFailedMessages(mergeSaved, mergeInput);
+ok(mergedFailures.filter(m => m.id === savedFailure.id).length === 1,
+   "duplicate failed list and saved rows converge to one bubble");
+ok(mergedFailures[0] === currentFailure && mergedFailures[0].text.includes("second line"),
+   "current failed version and complete text win over saved failure");
+ok(mergedFailures.filter(m => m === unrelatedPending).length === 2,
+   "pending duplicates and requestId remain outside failed identity merging");
+ok(JSON.stringify([mergeSaved, mergeInput]) === mergeBefore, "failure merge does not mutate inputs");
+ok(EventLog.mergeFailedMessages([], [currentFailure, currentFailure]).length === 1,
+   "already duplicated failures are repaired even without saved rows");
+const confirmedMerge = EventLog.mergeFailedMessages(mergeSaved, [currentFailure, confirmedFailure]);
+ok(confirmedMerge.length === 1 && confirmedMerge[0] === confirmedFailure,
+   "nonfailed existing row supersedes same-id failures");
+ok(EventLog.mergeFailedMessages(mergeSaved, [confirmedFailure, confirmedFailure]).length === 2,
+   "unrelated nonfailed duplicate behavior is preserved");
+const unidentifiedFailures = [{failed: true}, {id: "", failed: true}, {id: 7, failed: true}];
+ok(EventLog.mergeFailedMessages(unidentifiedFailures, unidentifiedFailures).length === 6,
+   "rows without a usable string id remain separate");
+const unsortedNormal = [{id: "later", time: 9}, {id: "earlier", time: 1}];
+ok(EventLog.mergeFailedMessages([], unsortedNormal).map(m => m.id).join(",") === "later,earlier",
+   "no saved failures preserves the original ordering contract");
+ok(JSON.stringify(EventLog.mergeFailedMessages(mergeSaved, mergedFailures)) === JSON.stringify(mergedFailures),
+   "repeated failure merges are idempotent");
 
 // ---------------------------------------------------------------- (a) restore
 group("(a) failed send restores the typed text");
@@ -7943,7 +8002,8 @@ ok(
 );
 ok(
   /onModelChanged: \{/.test(listBlock) &&
-    /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex/.test(listBlock),
+    /Qt\.callLater\(root\.restoreMessageViewport\)/.test(listBlock) &&
+    /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex/.test(B.restoreMessageViewport),
   "the prepend anchor is applied by index after the swap",
 );
 ok(
@@ -9377,6 +9437,13 @@ rebased = e.applyHistory(
 ok(rebased.map(m => m.id).join() === "m1,m9,pending-1-1"
    && rebased[2].pending === true,
    "a pending bubble outlives the rebase, and even an unmentioned row stays put");
+rebased = e.applyHistory(
+  [MSG("m1", "THEM", "a"), MSG("pending-1-2", "ME", "hi", { pending: true, requestId: "r1" }),
+   MSG("pending-1-3", "ME", "hi", { pending: true, failed: true, requestId: "r1" })],
+  [MSG("m1", "THEM", "a"), MSG("m2", "ME", "hi", { requestId: "r1" })]);
+ok(rebased.map(m => m.id).join() === "m1,m2,pending-1-3",
+   "a page that already carries the confirmed send retires its pending bubble "
+   + "(a failed copy stays for recovery)");
 let drifted = e.applyHistory([MSG("m1", "THEM", "a")], [MSG("m5", "THEM", "x")]);
 ok(drifted.map(m => m.id).join() === "m1,m5",
    "a page with no overlap still merges by time instead of dropping the old row");
@@ -12233,6 +12300,7 @@ Object.defineProperty(topRoot, "chatSnapshot", {
 });
 const topPositions = [];
 const topList = {
+  forceLayout() {},
   contentY: 20,
   originY: 20,
   contentHeight: 160,
@@ -12277,6 +12345,7 @@ Object.defineProperty(scrolledRoot, "chatSnapshot", {
 });
 const scrolledPositions = [];
 const scrolledList = {
+  forceLayout() {},
   contentY: 60,
   originY: 20,
   contentHeight: 200,
@@ -12993,13 +13062,13 @@ ok(
     atTop,
 );
 ok(
-  /contentY = root\.anchoredContentY\(contentY, originY, keep, contentHeight, height\)/
-    .test(listBlock),
+  /msgList\.contentY = root\.anchoredContentY\(msgList\.contentY, msgList\.originY,/
+    .test(B.restoreMessageViewport),
   "and the ListView really applies it right after the anchor",
 );
 ok(
-  /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex, count - 1\), ListView\.Beginning\)/
-    .test(listBlock),
+  /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex, msgList\.count - 1\), ListView\.Beginning\)/
+    .test(B.restoreMessageViewport),
   "which is still an index anchor -- contentHeight is an estimate, U48's reason stands",
 );
 
@@ -13176,6 +13245,7 @@ ok(
   "a swap while nothing is loading does not read its own repositioning as a " +
     "scroll to the top: " + e.sent.filter(olderFrame).length + " older frames",
 );
+e.flushLater();
 ok(
   e.root.keepContentY === -1,
   "and the swap still lets go of the guard once the view is placed",

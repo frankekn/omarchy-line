@@ -102,7 +102,14 @@ function applyEdit(list, m) {
 function applyHistory(list, fresh) {
   if (!Array.isArray(fresh) || fresh.length === 0) return list
   var freshIds = {}
-  for (var i = 0; i < fresh.length; i++) freshIds[String(fresh[i].id || "")] = true
+  // 頁面裡已經有確認版的送出中泡泡要收掉：確認版在 kept／fresh 那邊，留著的話
+  // 之後的 echo 只會換掉同 id 那則，灰色的這顆就永遠掛在尾巴上。
+  var confirmed = {}
+  for (var i = 0; i < fresh.length; i++) {
+    freshIds[String(fresh[i].id || "")] = true
+    var token = String(fresh[i].requestId || "")
+    if (token && !fresh[i].pending) confirmed[token] = true
+  }
   // 本地才有的東西（送出中、送失敗留下的泡泡）永遠不會出現在 wire 頁面裡，
   // 所以先抽出來、最後放尾巴 —— 對帳換頁不能把它們連帶抹掉。其餘沒被這一頁
   // 涵蓋的（往上翻到的舊頁）也保留，靠 (time, id) 併回各自的位置。
@@ -111,6 +118,7 @@ function applyHistory(list, fresh) {
   for (var k = 0; k < list.length; k++) {
     var m = list[k]
     if (freshIds[String(m.id || "")]) continue
+    if (m.pending && !m.failed && confirmed[String(m.requestId || "")]) continue
     if (m.pending || m.failed) pending.push(m)
     else kept.push(m)
   }
@@ -357,12 +365,34 @@ function canonicalJson(v) {
 }
 
 // 送失敗留下的泡泡要併回新抓的歷史裡 —— 不然重抓一次，畫面上那則「沒送出去」
-// 就消失了，但它根本還沒送出去。同 id 的去重在上游 remember 那邊做過了。
+// 就消失了，但它根本還沒送出去。
 function mergeFailedMessages(failed, list) {
   var delivered = Array.isArray(list) ? list.slice() : []
-  if (!Array.isArray(failed) || failed.length === 0) return delivered
-  var merged = delivered.concat(failed)
-  merged.sort(function(a, b) { return Number(a.time || 0) - Number(b.time || 0) })
+  var saved = Array.isArray(failed) ? failed : []
+  var nonfailed = Object.create(null)
+  var present = Object.create(null)
+  for (var i = 0; i < delivered.length; i++) {
+    var row = delivered[i]
+    if (row && !row.failed && typeof row.id === "string" && row.id.length > 0)
+      nonfailed[row.id] = true
+  }
+  var merged = []
+  for (var j = 0; j < delivered.length; j++) {
+    var current = delivered[j]
+    var id = current && typeof current.id === "string" ? current.id : ""
+    if (current && current.failed && id && (nonfailed[id] || present[id])) continue
+    if (id) present[id] = true
+    merged.push(current)
+  }
+  for (var k = 0; k < saved.length; k++) {
+    var failure = saved[k]
+    var failedId = failure && typeof failure.id === "string" ? failure.id : ""
+    if (failedId && present[failedId]) continue
+    if (failedId) present[failedId] = true
+    merged.push(failure)
+  }
+  if (saved.length > 0)
+    merged.sort(function(a, b) { return Number(a.time || 0) - Number(b.time || 0) })
   return merged
 }
 
