@@ -178,10 +178,41 @@ export async function messageWindow(h) {
     );
   }
   async function atBottom() {
+    // Revealing offscreen rows can change the height after the first frame.
+    // Keep this test setup at the bottom until layout is stable.
     await page.locator("#messages").evaluate((list) => {
       list.scrollTop = list.scrollHeight;
+      list.__testBottom = { height: -1, stable: 0 };
     });
-    await page.evaluate(() => new Promise(requestAnimationFrame));
+    try {
+      await page.waitForFunction(
+        () => {
+          const list = document.getElementById("messages");
+          const state = list.__testBottom, height = list.scrollHeight;
+          if (height - list.clientHeight - list.scrollTop > 2) {
+            list.scrollTop = height;
+            state.height = height;
+            state.stable = 0;
+          } else if (height !== state.height) {
+            state.height = height;
+            state.stable = 0;
+          } else if (++state.stable >= 2) {
+            delete list.__testBottom;
+            return true;
+          }
+          return false;
+        },
+        null,
+        { polling: "raf" },
+      );
+    } catch (error) {
+      try {
+        await reportBottom(await current());
+      } catch (diagnosticError) {
+        console.error("  bottom diagnostics unavailable", diagnosticError);
+      }
+      throw error;
+    }
   }
   async function current() {
     return await page.evaluate(() => {
@@ -192,10 +223,38 @@ export async function messageWindow(h) {
           message,
         ) => String(message.id)),
         rows: list.querySelectorAll(".message-row").length,
+        scrollTop: list.scrollTop,
+        scrollHeight: list.scrollHeight,
+        clientHeight: list.clientHeight,
         bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
         noOlder: model.noOlder,
       };
     });
+  }
+  async function reportBottom(state) {
+    const rows = await page.locator("#messages .message-row").evaluateAll((
+      all,
+    ) =>
+      all.slice(-5).map((row) => {
+        const rect = row.getBoundingClientRect();
+        return {
+          id: row.dataset.messageId,
+          top: rect.top,
+          height: rect.height,
+          visibility: getComputedStyle(row).contentVisibility,
+        };
+      })
+    );
+    console.error(
+      "  bottom diagnostic",
+      JSON.stringify({
+        bottom: state.bottom,
+        scrollTop: state.scrollTop,
+        scrollHeight: state.scrollHeight,
+        clientHeight: state.clientHeight,
+        rows,
+      }),
+    );
   }
   async function userPageUp() {
     await page.locator("#messages").evaluate((list) => {
@@ -287,7 +346,12 @@ export async function messageWindow(h) {
   console.log(`  browser features ${JSON.stringify(features)}`);
   if (features.overflowAnchor) assert.equal(features.computedAnchor, "none");
   await atBottom();
-  assert.ok((await current()).bottom <= 2);
+  const initialBottom = await current();
+  if (initialBottom.bottom > 2) await reportBottom(initialBottom);
+  assert.ok(
+    initialBottom.bottom <= 2,
+    `bottom distance ${initialBottom.bottom}`,
+  );
   if (await page.evaluate(() => typeof globalThis.find === "function")) {
     assert.equal(
       await page.evaluate(() =>
