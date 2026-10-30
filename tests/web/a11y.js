@@ -299,4 +299,77 @@ export async function a11y(h) {
     await context.close();
     h.step(`touch-and-contrast-${width}-${colorScheme}`);
   }
+  for (
+    const { locale, chats, conversation, signIn, hint, logout, account } of [
+      {
+        locale: "en-US",
+        chats: "Chats",
+        conversation: "Conversation",
+        signIn: "Sign in",
+        hint: "The key is in the daemon's log or its ENIL_WEB_KEY setting.",
+        logout: "Sign out of LINE",
+        account: "A very long account display name for the sidebar",
+      },
+      {
+        locale: "zh-TW",
+        chats: "聊天",
+        conversation: "聊天室",
+        signIn: "登入",
+        hint: "Key 在 daemon 的 log 或 ENIL_WEB_KEY 設定中。",
+        logout: "登出 LINE",
+        account: "很長很長的帳號顯示名稱用來檢查側欄空間",
+      },
+    ]
+  ) {
+    const context = await h.context({
+      viewport: { width: 320, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      locale,
+    });
+    const page = await context.newPage();
+    await tapSocket(page, {
+      server(frame) {
+        if (frame.web === "state" && frame.state.me?.mid) {
+          frame.state.me.displayName = account;
+        }
+        return true;
+      },
+    });
+    await page.goto(h.base, { waitUntil: "domcontentloaded" });
+    const key = page.getByLabel("Web key", { exact: true });
+    assert.equal(await key.getAttribute("aria-describedby"), "web-key-hint");
+    assert.equal(await page.locator("#web-key-hint").textContent(), hint);
+    assert.equal(await page.locator("#web-key-hint").isVisible(), true);
+    await key.fill(KEY);
+    await page.getByRole("button", { name: signIn, exact: true }).click();
+    await page.locator("#connection.connected").waitFor();
+    await page.getByRole("complementary", { name: chats, exact: true })
+      .waitFor();
+    await page.getByRole("region", { name: chats, exact: true }).waitFor();
+    await page.getByRole("button", { name: /STUB 家庭群組/ }).waitFor();
+    await page.getByText(account, { exact: true }).waitFor();
+    const logoutButton = page.getByRole("button", {
+      name: logout,
+      exact: true,
+    });
+    assert.equal(await logoutButton.textContent(), logout);
+    const logoutBox = await logoutButton.boundingBox();
+    const accountBox = await page.locator("#account-name").boundingBox();
+    assert.ok(logoutBox && accountBox);
+    assert.ok(logoutBox.width >= 44 && logoutBox.height >= 44);
+    assert.ok(logoutBox.x >= 0 && logoutBox.x + logoutBox.width <= 320);
+    assert.ok(
+      accountBox.width > 0 && accountBox.x + accountBox.width <= logoutBox.x,
+    );
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+      320,
+    );
+    await page.getByRole("button", { name: /STUB 家庭群組/ }).tap();
+    await page.getByRole("region", { name: conversation, exact: true })
+      .waitFor();
+    await context.close();
+  }
+  h.step("localized-landmarks-and-key-hint-320");
 }

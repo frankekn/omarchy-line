@@ -6,6 +6,10 @@ const strings = {
     "Enter your web key to open your conversations on this device.",
   ],
   webKey: ["Web key", "Web key"],
+  webKeyHint: [
+    "Key 在 daemon 的 log 或 ENIL_WEB_KEY 設定中。",
+    "The key is in the daemon's log or its ENIL_WEB_KEY setting.",
+  ],
   signin: ["登入", "Sign in"],
   signinFoot: [
     "你的對話，留在自己的網路裡。",

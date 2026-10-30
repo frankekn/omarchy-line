@@ -38,6 +38,9 @@ for (const node of document.querySelectorAll("[data-i18n-title]")) {
   node.title = t(node.dataset.i18nTitle);
   node.setAttribute("aria-label", t(node.dataset.i18nTitle));
 }
+for (const node of document.querySelectorAll("[data-i18n-aria-label]")) {
+  node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
+}
 provide("view-login", createLoginView(ctx));
 provide(
   "drafts",

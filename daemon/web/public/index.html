@@ -47,8 +47,11 @@
           data-i18n="signinIntro">輸入 web key，從這個裝置開啟你的對話。</p>
         <form id="signin-form">
           <label for="web-key" data-i18n="webKey">Web key</label>
+          <p id="web-key-hint" class="auth-key-hint muted"
+            data-i18n="webKeyHint">Key 在 daemon 的 log 或 ENIL_WEB_KEY 設定中。</p>
           <input id="web-key" name="key" type="password"
-            autocomplete="current-password" required autofocus>
+            autocomplete="current-password" aria-describedby="web-key-hint"
+            required autofocus>
           <p id="signin-error" class="form-error" role="alert" hidden></p>
           <button class="primary wide" type="submit"
             data-i18n="signin">登入</button>
@@ -76,7 +79,8 @@
         </div>
       </section>
       <div id="workspace" class="workspace" hidden>
-        <aside class="sidebar" aria-label="Chats" id="sidebar">
+        <aside class="sidebar" aria-label="聊天" data-i18n-aria-label="chats"
+          id="sidebar">
           <div class="sidebar-top">
             <div class="section-heading">
               <h1 data-i18n="chats">聊天</h1>
@@ -90,13 +94,13 @@
               class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
-          <div id="chat-list" class="chat-list" role="region" aria-label="Chats"
-            tabindex="0"></div>
+          <div id="chat-list" class="chat-list" role="region" aria-label="聊天"
+            data-i18n-aria-label="chats" tabindex="0"></div>
           <div
-            class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><small data-i18n="lineAccount">LINE 帳號</small></span></div><button id="line-logout" class="icon-button logout" type="button" data-i18n-title="lineLogout" aria-label="登出 LINE">↪</button></div>
+            class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><small data-i18n="lineAccount">LINE 帳號</small></span></div><button id="line-logout" class="text-button logout" type="button" data-i18n="lineLogout" data-i18n-title="lineLogout" aria-label="登出 LINE">登出 LINE</button></div>
         </aside>
-        <section id="conversation" class="conversation"
-          aria-label="Conversation">
+        <section id="conversation" class="conversation" aria-label="聊天室"
+          data-i18n-aria-label="direct">
           <div id="empty-chat" class="empty-chat">
             <h2 data-i18n="emptyTitle">選擇一個聊天室</h2>
             <p data-i18n="emptyDescription">從左側選擇對話，繼續聊下去。</p>

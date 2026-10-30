@@ -171,6 +171,12 @@ a:focus-visible {
   font-size: 12px;
   font-weight: 700;
 }
+.auth-key-hint {
+  margin: 0 0 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 .auth-card input {
   width: 100%;
   background: var(--bg);
@@ -483,12 +489,22 @@ textarea::placeholder {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
 }
 .account {
   display: flex;
   align-items: center;
   gap: 11px;
+  flex: 1;
   min-width: 0;
+}
+.account > span:last-child {
+  min-width: 0;
+}
+.logout {
+  flex: none;
+  min-height: 44px;
+  white-space: nowrap;
 }
 .account-avatar {
   width: 35px;
