@@ -243,5 +243,6 @@ the service. If descriptors run out, the daemon stays up and its listeners
 retry; they can accept connections again once descriptors are available.
 
 The launchd setup has no native macOS notification or suspend integration.
-When `notify-send` and `dbus-monitor` are unavailable, notifications and the
-suspend hook do not work. The watchdog still rebuilds a stale push connection.
+The daemon listens for suspend through logind only on Linux, and
+notifications need `notify-send`. On macOS, the watchdog still rebuilds a
+stale push connection.
