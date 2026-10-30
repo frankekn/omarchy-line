@@ -228,19 +228,23 @@ Set `ENIL_WEB_TEST_TMPDIR` to an existing directory to put the temporary state
 there instead of the system temporary directory. Use a short path so the
 Unix socket paths inside its test directories fit the platform limit.
 It removes temporary state after success and keeps it with screenshots and
-logs on failure. Every browser page must have no console or page errors.
+logs on failure. Unexpected console errors and all page errors fail the suite;
+narrowly matched expected browser diagnostics are allowed.
 The separate boot authentication suite uses the same settings:
 
 ```bash
 deno run --frozen -A tests/web/boot-rtt.js
 ```
 
-To run the Safari engine coverage, install Playwright's matching WebKit and
-select it for the browser suites:
+`run.js` registers 16 suites. To run the same 12 WebKit suites and startup
+test as CI, install Playwright's matching WebKit and run:
 
 ```bash
 npx --yes playwright@1.64.1 install webkit
-ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions parity review a11y
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/run.js \
+  main edge media mentions parity review a11y state-wire state-wire-resync \
+  preview-cache drafts message-window
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/boot-rtt.js
 ```
 
 Chromium is the default; `CHROMIUM` only changes its executable. WebKit mobile

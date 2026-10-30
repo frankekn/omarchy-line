@@ -288,9 +288,10 @@ starts over.
 
 ### Panel position
 
-`placement` has three values. The button to the right of the search box shows
-the current one, and each click moves to the next. The table shows the
-setting value and the button label in the English panel.
+`placement` has three values. Its button is beside the search box, or below it
+when the list is narrow. It shows the current value; each click moves to the
+next. The table shows the setting value and the button label in the English
+panel.
 
 | Setting value | Button label | Layout | Use it for |
 |---|---|---|---|

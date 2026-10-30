@@ -191,13 +191,15 @@ Deleting it removes them from this computer.
 
 **Can LINE ban my account for this?** It can. LINE does not offer this kind
 of access, and it decides what it allows. The daemon logs in as a secondary
-device, and it sends no message, reaction, or read receipt unless you act in
-the panel. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
+device. Messages and reactions are sent in response to actions in the panel or
+web page. Viewing an open conversation in either client can mark messages as
+read. If LINE answers with `ABUSE_BLOCK`, `BANNED`, or
 `EXCESSIVE_ACCESS`, the daemon ends its push loop and makes no LINE request on
 its own. The panel shows `LINE restricted this account (<code>); connection
-paused — tap to retry`. Nothing retries until you tap that line, which runs a
-manual sync, or log in again. A message you send yourself still goes to LINE,
-and the panel shows LINE's error if LINE refuses it.
+paused — tap to retry`. The web page also shows a restriction notice. Nothing
+retries until you tap a notice to sync or log in again. A message you send
+yourself still goes to LINE, and the panel or web page shows LINE's error if
+LINE refuses it.
 [docs/architecture.md](docs/architecture.md#when-line-restricts-the-account)
 explains what stops and what stays.
 
@@ -214,10 +216,11 @@ itself once you fix the cause.
 QR code. It never uses account transfer, which is the flow that moves the
 main device.
 
-**Can I use it on several computers?** Log in on each computer with its own
-QR scan. Each one appears as its own device. Do not copy the state directory
-from one computer to another: LINE changes the refresh token on every login,
-so only one daemon can use a session.
+**Can I use it on several computers?** To run a daemon on each computer, log
+in to each with its own QR scan. Each one appears as its own device. Or use
+one daemon's [web page](docs/web.md) from browsers on the tailnet; they share
+its LINE session. Do not copy the state directory between computers: LINE
+changes the refresh token on every login, so only one daemon can use a session.
 
 **Does it work with Letter Sealing (end-to-end encryption)?** Yes. The daemon
 holds this device's Letter Sealing keys and decrypts messages in chats that

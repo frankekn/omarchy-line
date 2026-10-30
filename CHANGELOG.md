@@ -26,6 +26,10 @@ Chen, so this project starts at 2.x.
 
 ### Fixed
 
+- The web page keeps reaction controls, text selection and focus stable during
+  updates, settles at the bottom after deferred layout, rejects misdirected
+  chat clicks, and respects reduced motion for quote jumps. Sync is now in the
+  sidebar heading.
 - Wrong sign-in links no longer lock out the web key form; link and form
   sign-ins have separate limits.
 - An edit or unsend arriving while the daemon opens a chat's local message

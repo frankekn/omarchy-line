@@ -244,10 +244,11 @@ as an unknown error, where a single timed-out request nobody answered was
 enough to kill the daemon for a systemd restart.
 
 Both layers above are automatic but both make you wait: the watchdog checks
-once a minute, the floor poll every five. To skip the wait, press the **Sync**
-button right of the list search box (keyboard `r`, or click the "LINE link
-down, reconnecting" line under the title). It rebuilds the push connection and refetches
-the chat list immediately, re-reading the open conversation too. The button
+once a minute, the floor poll every five. To skip the wait, press **Sync** in
+the controls beside the list search box, or below it when the list is narrow
+(keyboard `r`, or click the "LINE link down, reconnecting" line under the
+title). It rebuilds the push connection and refetches the chat list
+immediately, re-reading the open conversation too. The button
 reads "Syncing…" while working, usually settling on "Synced HH:MM" within
 seconds (if a refetch was already in flight it waits out that round and the
 button stays on "Syncing…" meanwhile). A failure prints its reason

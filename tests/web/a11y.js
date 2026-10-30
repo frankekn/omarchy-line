@@ -27,7 +27,8 @@ export async function a11y(h) {
       hasTouch: true,
       locale: "en-US",
       colorScheme,
-      // axe is injected into this test context; the application CSP is intact.
+      // This context bypasses CSP to inject axe; the app's headers are
+      // unchanged.
       bypassCSP: true,
     });
     await context.route("**/*", async (route) => {

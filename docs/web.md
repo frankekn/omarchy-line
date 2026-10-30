@@ -74,10 +74,13 @@ daemon connects to its own socket. These are different from the panel:
 - The browser loads stickers and FLEX images directly from their HTTPS URLs.
   Those hosts can see the browser's IP address and the requested URL.
 
-Use **Sync** to refresh the chat list and the open conversation, or tap a
-connection notice to retry. A divider marks the first unread message when it
-can be identified in the loaded history. Search matches chat names, senders
-and message previews. Tap a quote to find its original in the loaded messages.
+The sidebar heading shows the number of visible chats and contains **Sync**.
+Use it to refresh the chat list and the open conversation. The LINE disconnected
+and restricted notices also offer retry. Search matches chat names, senders and
+message previews. To unhide a chat, search for it, open the **Hidden** result
+and choose **Unhide**. A divider marks the first unread message when it can be
+identified in the loaded history. Tap a quote to find its original in the
+loaded messages.
 In the image viewer, use the arrows to switch images and the wheel,
 double-click, pinch or zoom buttons to change the zoom.
 
@@ -95,7 +98,8 @@ temporary cache is cleared on reload.
 With the image viewer closed and focus in the chat list or message area, `/`
 returns to the list and focuses search, `r` syncs, and `j`/`k` select a chat
 or scroll messages. These character shortcuts do not run on other controls.
-On desktop, the list gets focus on first load if nothing else is focused.
+On the first workspace render, the list gets focus if the viewport is wider
+than 700 px, the primary pointer is not coarse, and nothing else is focused.
 Clicking a blank area can move focus to the page body; the character shortcuts
 then stop until you focus the list or messages again.
 
@@ -150,6 +154,7 @@ remain available after sign-in.
   evicted or the cache is cleared.
 - A cached first history page can show an older version of an edited message
   while the LINE history response is delayed. Revalidation can also fail.
+- Files cannot be sent to multi-person rooms whose chat ID starts with `r`.
 - Browser find, including Ctrl+F, searches only currently loaded messages.
 - If the daemon's local message cache has gaps, messages removed from the
   page's window may not load again when you scroll up. This can happen if the

@@ -192,7 +192,8 @@ deno run -A tests/web/run.js media mentions
 
 設定 `CHROMIUM=/usr/bin/chromium` 可以改用本機 Chromium。harness 預設選一個空的
 port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 state，失敗時會留下
-截圖和 log。每個瀏覽器頁面都不能有 console error 或 page error。
+截圖和 log。非預期的 console error 和所有 page error 都會讓測試失敗；少數符合條件的
+預期瀏覽器訊息除外。
 設定 `ENIL_WEB_TEST_TMPDIR` 為現有目錄，可以把暫存 state 放在該處，而不是系統的
 暫存目錄。請使用短路徑，讓測試目錄內的 Unix socket 路徑不超過系統上限。
 啟動認證的獨立測試使用相同設定：
@@ -201,11 +202,15 @@ port；設定 `ENIL_WEB_TEST_PORT` 可以指定 port。成功時會刪除暫存 
 deno run --frozen -A tests/web/boot-rtt.js
 ```
 
-要測 Safari 引擎，先安裝相同版本 Playwright 的 WebKit，再選擇瀏覽器：
+`run.js` 註冊了 16 個 suite。要執行與 CI 相同的 12 個 WebKit suite 和啟動測試，先安裝
+相同版本 Playwright 的 WebKit，再執行：
 
 ```bash
 npx --yes playwright@1.64.1 install webkit
-ENIL_WEB_BROWSER=webkit deno run -A tests/web/run.js main edge media mentions parity review a11y
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/run.js \
+  main edge media mentions parity review a11y state-wire state-wire-resync \
+  preview-cache drafts message-window
+ENIL_WEB_BROWSER=webkit deno run --frozen -A tests/web/boot-rtt.js
 ```
 
 預設是 Chromium；`CHROMIUM` 只會改變 Chromium 的執行檔。WebKit 的手機 context
