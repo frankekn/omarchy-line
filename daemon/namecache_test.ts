@@ -26,6 +26,7 @@ function midKind(_mid: string): "user" | "chat" { return "user"; }
 function noteAvatar() {}
 function noteNameFailure() {}
 function rememberName(mid: string, name: string) { nameCache.set(mid, name); }
+function noteKeptNameUsed(_mid: string) {}
 let restriction: unknown = null;
 function capMap<V>(_map: Map<string, V>, _max: number) {}
 function resolveUserName(_mid: string, _owner: Client, _generation: number) {
@@ -65,11 +66,12 @@ Deno.test("every name lookup that fails hands a refusal to the restriction halt"
   const source = await Deno.readTextFile(
     new URL("./modules/names.ts", import.meta.url),
   );
-  // v3, v2, the chat lookup and the bulk batch: four catches, four calls.
+  // v3, v2, the chat lookup, the bulk batch and the two background
+  // confirmations: six catches, six calls.
   const catches = source.match(/\} catch \(e\) \{/g) ?? [];
   const noted = source.match(/noteNameFailure\(e, owner, generation\);/g) ??
     [];
-  assertEquals(catches.length, 4);
+  assertEquals(catches.length, 6);
   assertEquals(noted.length, catches.length);
   const helper = source.slice(
     source.indexOf("function noteNameFailure("),

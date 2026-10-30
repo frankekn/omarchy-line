@@ -35,7 +35,7 @@ import {
   toPluginMessage,
 } from "./messages.ts";
 import { messageStore } from "./env.ts";
-import { invalidateName } from "./names.ts";
+import { invalidateName, onNameChanged } from "./names.ts";
 import {
   bumpChatsRevision,
   chats,
@@ -528,6 +528,18 @@ function onTalkOp(op: RawOperationFields): void {
  * keep it current from then on. Failures are silent by design -- 已讀 is a
  * decoration, and a chat with no ranges simply has no readBy fields.
  */
+// A kept name or picture that LINE, asked in the background, says has
+// changed since names.json saved it: the same invalidation a live rename or
+// profile operation gets, since a confirmation can be either kind.
+onNameChanged(() => {
+  memberCache.clear();
+  chatSummaryStore.summaryCache.clear();
+  chatSummaryStore.chatSummaryEpoch++;
+  chatSummaryStore.chatMetadataEpoch++;
+  setForceFullRefresh(true);
+  scheduleRefresh();
+});
+
 // enil:rangeload-begin
 async function loadReadRange(
   chatMid: string,

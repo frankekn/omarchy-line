@@ -49,6 +49,7 @@ let namesWriting: Promise<void> = Promise.resolve();
  * the lookup failed and left only the bare mid -- into names.json shortly.
  */
 export function rememberName(mid: string, name: string): void {
+  unconfirmed.delete(mid); // LINE just answered for it
   nameCache.set(mid, name);
   capMap(nameCache, NAME_CACHE_MAX);
   if (name && name !== mid) nameSavedAt.set(mid, Date.now());
@@ -97,6 +98,7 @@ export async function loadKeptNames(owner: string): Promise<void> {
     if (nameCache.has(mid)) continue;
     nameCache.set(mid, name);
     nameSavedAt.set(mid, at);
+    unconfirmed.add(mid);
     if (token && !avatarTokens.has(mid)) avatarTokens.set(mid, token);
   }
   capMap(nameCache, NAME_CACHE_MAX);
@@ -116,12 +118,119 @@ export function forgetNames(): void {
   }
   nameCache.clear();
   nameSavedAt.clear();
+  unconfirmed.clear();
+  toConfirm.clear();
+  if (confirmTimer !== null) {
+    clearTimeout(confirmTimer);
+    confirmTimer = null;
+  }
   namesOwner = "";
 }
 
 /** Settles once every queued save is on disk (tests, shutdown). */
 export function namesSaved(): Promise<void> {
   return namesWriting;
+}
+
+/**
+ * Kept names are served at once and confirmed behind the page, the way the
+ * app trusts its contact store and lets sync correct it: the daemon keeps no
+ * op revision across restarts, so a rename or a new picture made while it was
+ * not running can only be learned by asking. Each kept name is asked about at
+ * most once per session, and only when something actually shows it -- in one
+ * getContactsV2 / getChats batch per hundred, the same requests a cold start
+ * made anyway, just no longer in front of the page.
+ */
+const unconfirmed = new Set<string>();
+const toConfirm = new Set<string>();
+const CONFIRM_MS = 1_500;
+let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+let nameChangedListener: ((mids: string[]) => void) | null = null;
+
+/** push.ts refreshes the chat list when a confirmation finds a change. */
+export function onNameChanged(listener: (mids: string[]) => void): void {
+  nameChangedListener = listener;
+}
+
+/** A name from names.json was just shown: have LINE confirm it soon. */
+export function noteKeptNameUsed(mid: string): void {
+  if (!unconfirmed.delete(mid)) return;
+  toConfirm.add(mid);
+  if (confirmTimer !== null) return;
+  confirmTimer = setTimeout(() => {
+    confirmTimer = null;
+    void confirmKeptNames().catch((e) =>
+      console.error("[name] confirm:", errorLine(e))
+    );
+  }, CONFIRM_MS);
+}
+
+async function confirmKeptNames(): Promise<void> {
+  const owner = client;
+  const generation = sessionGeneration;
+  const mids = [...toConfirm];
+  toConfirm.clear();
+  if (!owner || !namesOwner || restriction || !mids.length) return;
+  const live = () => sessionIsCurrent(owner, generation) && !restriction;
+  const changed: string[] = [];
+  const settle = (mid: string, name: string, src: unknown, epoch: number) => {
+    // A rename operation that landed meanwhile owns this mid now.
+    if ((nameCacheEpoch.get(mid) ?? 0) !== epoch) return;
+    const before = nameCache.get(mid);
+    const tokenBefore = avatarTokens.get(mid);
+    noteAvatar(mid, src);
+    rememberName(mid, name);
+    if (before !== name || avatarTokens.get(mid) !== tokenBefore) {
+      changed.push(mid);
+    }
+  };
+  const users = mids.filter((m) => midKind(m) === "user" && !isMe(m));
+  const chats = mids.filter((m) => midKind(m) !== "user");
+  for (let i = 0; i < users.length && live(); i += CONTACT_BATCH) {
+    const batch = users.slice(i, i + CONTACT_BATCH);
+    const epochs = batch.map((mid) => nameCacheEpoch.get(mid) ?? 0);
+    try {
+      const res = await owner.base.talk.getContactsV2({ mids: batch });
+      if (!live()) return;
+      batch.forEach((mid, j) => {
+        const entry = res?.contacts?.[mid];
+        const names: {
+          contact?: { displayNameOverridden?: unknown; displayName?: unknown };
+          displayName?: unknown;
+        } | undefined = entry;
+        const name = names?.contact?.displayNameOverridden ||
+          names?.contact?.displayName || names?.displayName;
+        if (name) settle(mid, String(name), entry?.contact, epochs[j]);
+      });
+    } catch (e) {
+      console.error("[name] confirm:", errorLine(e));
+      noteNameFailure(e, owner, generation);
+    }
+  }
+  for (let i = 0; i < chats.length && live(); i += CONTACT_BATCH) {
+    const batch = chats.slice(i, i + CONTACT_BATCH);
+    const epochs = new Map(
+      batch.map((mid) => [mid, nameCacheEpoch.get(mid) ?? 0]),
+    );
+    try {
+      const res = await owner.base.talk.getChats({
+        chatMids: batch,
+        withMembers: false,
+        withInvitees: false,
+      });
+      if (!live()) return;
+      for (const chat of res?.chats ?? []) {
+        const mid = String(chat?.chatMid ?? "");
+        // An unnamed room is labelled elsewhere; nothing here to confirm.
+        if (!epochs.has(mid) || !chat.chatName) continue;
+        settle(mid, String(chat.chatName), chat, epochs.get(mid)!);
+      }
+    } catch (e) {
+      console.error("[name] confirm:", errorLine(e));
+      noteNameFailure(e, owner, generation);
+    }
+  }
+  if (changed.length && live()) nameChangedListener?.(changed);
 }
 // enil:keptnames-end
 
@@ -206,7 +315,10 @@ export async function resolveName(
   if (!owner || !sessionIsCurrent(owner, generation)) return mid;
   for (;;) {
     const hit = nameCache.get(mid);
-    if (hit) return hit;
+    if (hit) {
+      noteKeptNameUsed(mid);
+      return hit;
+    }
     // Restricted: no lookup goes out, and the bare mid is not cached as if it
     // were the name -- the first lookup after the halt lifts gets the real one.
     if (restriction) return mid;

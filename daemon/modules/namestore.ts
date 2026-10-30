@@ -13,9 +13,10 @@
  *
  * Scoped to the account that resolved them: a name can be the nickname you
  * gave someone, so another account's login never reads this one's file.
- * Entries age out after NAME_TTL_MS -- a rename while the daemon was not
- * running shows for at most that long; one while it runs arrives as an
- * operation and invalidates the entry straight away (names.ts).
+ * A rename while the daemon runs arrives as an operation and invalidates the
+ * entry at once; one made while it was not running is caught by names.ts
+ * confirming each kept name in the background the first time it is shown.
+ * Entries nobody has shown for NAME_TTL_MS are dropped.
  *
  * Pure apart from the file: names.ts owns the in-memory cache and decides
  * when to save. Nothing here imports session or state, so tests drive a real
@@ -24,8 +25,13 @@
 import { writeAtomic } from "../atomicfile.ts";
 import { errorLine } from "./text.ts";
 
-/** How long a kept name is trusted before it is looked up again. */
-export const NAME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * How long a name nobody has shown is kept at all. Not a freshness limit:
+ * a kept name is served at once and confirmed with LINE in the background
+ * the first time a session shows it (names.ts). This only lets the file
+ * forget people and chats that stopped appearing.
+ */
+export const NAME_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 
 export interface KeptName {
   name: string;
