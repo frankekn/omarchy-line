@@ -103,6 +103,7 @@ store.
 | `panel-drafts.json` | Text you typed but did not send. |
 | `panel-stickers.json` | Your recently used stickers. |
 | `avatars.json` | Which profile picture versions are already downloaded. |
+| `names.json` | The display names of people and chats the daemon looked up, including the nicknames you gave people, so chats open with names after a restart. Only the account that saved it reads it. After each daemon start, a saved name is confirmed with LINE in the background the first time it is shown, and names that no chat has shown for 90 days are dropped. |
 | `hidden.json` | The chats you hid. |
 | `sock` | The socket the panel talks to. |
 | `lock` | An empty file that stops a second daemon from starting. |
@@ -113,9 +114,16 @@ How messages are stored:
 - Messages that arrive while the daemon is running, including messages from
   chats with Letter Sealing (end-to-end encryption) on, are stored
   decrypted.
-- Older messages that the daemon fetches when you scroll back are stored as
-  LINE sent them. For a chat with Letter Sealing, that is ciphertext, but the
-  keys that decrypt it are in `storage.json` in the same directory.
+- Older messages that the daemon fetches from LINE, when you open a chat or
+  scroll back, are stored as LINE sent them. For a chat with Letter Sealing,
+  that is ciphertext. Once the daemon has decrypted such a message, it also
+  stores the decrypted text next to it, so the chat opens without decrypting
+  it again. The keys that decrypt it are in `storage.json` in the same
+  directory either way.
+- The message files only grow at the end. When a message is edited, the
+  daemon reads the new version from then on, but the old version and its
+  decrypted text stay in the file until the daemon next rewrites it (it does
+  this once a file holds about twice as many lines as it uses).
 - When someone unsends a message, the daemon marks it as unsent. The original
   content stays on disk.
 
@@ -138,7 +146,7 @@ session keys able to fetch it.
 - **Log out** in the panel to end the session. The daemon asks LINE to end
   the session and deletes the login token fields (`.auth`, `refreshToken`,
   and `expire`) from `storage.json`. It keeps the E2EE keys, the login
-  certificate, the message history, and the media on disk.
+  certificate, the message history, the saved names, and the media on disk.
 - **To remove everything**, log out, then follow
   [Uninstall](README.md#uninstall). It stops the daemon and deletes the state
   directory. Then remove this device from the list of logged-in devices in

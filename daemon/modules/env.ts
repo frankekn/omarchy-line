@@ -58,6 +58,7 @@ const {
 // sweepMedia(): it only looks at plain files in the one directory it is given.
 const AVATAR_DIR = `${MEDIA_DIR}/avatars`;
 const AVATAR_INDEX_PATH = `${STATE_DIR}/avatars.json`;
+const NAMES_PATH = `${STATE_DIR}/names.json`;
 const STORAGE_PATH = `${STATE_DIR}/storage.json`;
 /**
  * One JSONL file per chat under messages/<myMid>/ -- the persistent message
@@ -244,6 +245,7 @@ export {
   LOCK_PATH,
   MEDIA_DIR,
   messageStore,
+  NAMES_PATH,
   panelMediaLane,
   POLL_MS,
   PUSH_REINIT_GRACE_MS,

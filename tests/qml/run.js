@@ -101,6 +101,7 @@ function nested(header, closer) {
 const B = {
   parseState: body("  function parseState(content) {"),
   replaceChatSnapshot: body("  function replaceChatSnapshot(incoming) {"),
+  cancelChatListRestore: body("  function cancelChatListRestore() {"),
   clearStateAfterLoadFailure: body("  function clearStateAfterLoadFailure() {"),
   request: body("  function request(cmd, extra, msgId) {"),
   onReply: body("  function onReply(line) {"),
@@ -289,6 +290,8 @@ const B = {
   // separators (date, unread) come from pure functions.
   setMessages: body("  function setMessages(list, follow) {"),
   clearSwap: body("  function clearSwap() {"),
+  captureMessageAnchor: body("  function captureMessageAnchor() {"),
+  restoreMessageViewport: body("  function restoreMessageViewport() {"),
   withDay: body("  function withDay(list) {"),
   firstUnreadIndex: body("  function firstUnreadIndex(messages, unread) {"),
   dayStart: body("  function dayStart(ms) {"),
@@ -544,6 +547,10 @@ function makeEnv(opts) {
     chats: [],
     sessionMid: "",
     chatSnapshot: [],
+    chatListRestore: null,
+    cancelChatListRestore() {
+      new Function("root", B.cancelChatListRestore)(root);
+    },
     chatRevisionSeen: -1,
     chatBootSeen: "",
     notice: "",
@@ -561,6 +568,8 @@ function makeEnv(opts) {
     atBottom: true,
     prependAnchorIndex: -1,
     keepContentY: -1,
+    messageAnchor: null,
+    messageSwapGeneration: 0,
     unreadMarkCount: 0,
     unreadMarkId: "",
     openWanted: {},
@@ -732,6 +741,15 @@ function makeEnv(opts) {
     },
     clearSwap() {
       api.clearSwap();
+    },
+    captureMessageAnchor() {
+      return api.captureMessageAnchor();
+    },
+    restoreMessageViewport() {
+      api.restoreMessageViewport();
+    },
+    replaceChatSnapshot(incoming) {
+      root.chatSnapshot = incoming;
     },
     withDay(list) {
       return api.withDay(list);
@@ -1333,10 +1351,15 @@ function makeEnv(opts) {
   // is still realising the items above the viewport.
   const positioned = [];
   const msgList = {
+    get count() { return root.messages.length; },
     contentHeight: 0,
     contentY: 0,
     originY: 0,
     height: 100,
+    forceLayout() {},
+    indexAt() { return -1; },
+    itemAtIndex() { return null; },
+    toBottom() {},
     positionViewAtIndex(i) {
       positioned.push(i);
     },
@@ -1683,6 +1706,8 @@ function makeEnv(opts) {
   const fMentionRanges = mk("mentionRanges", ["mentions", "len"]);
   const fSetMessages = mk("setMessages", ["list", "follow"]);
   const fClearSwap = mk("clearSwap");
+  const fCaptureMessageAnchor = mk("captureMessageAnchor");
+  const fRestoreMessageViewport = mk("restoreMessageViewport");
   const fWithDay = mk("withDay", ["list"]);
   const fFirstUnread = mk("firstUnreadIndex", ["messages", "unread"]);
   const fDayStart = mk("dayStart", ["ms"]);
@@ -1981,6 +2006,8 @@ function makeEnv(opts) {
     mentionRanges: (ms, len) => q((...a) => fMentionRanges(...a, ms, len)),
     setMessages: (l, f) => q((...a) => fSetMessages(...a, l, f)),
     clearSwap: () => q(fClearSwap),
+    captureMessageAnchor: () => q(fCaptureMessageAnchor),
+    restoreMessageViewport: () => q(fRestoreMessageViewport),
     withDay: (l) => q((...a) => fWithDay(...a, l)),
     firstUnreadIndex: (l, u) => q((...a) => fFirstUnread(...a, l, u)),
     dayStart: (ms) => q((...a) => fDayStart(...a, ms)),
@@ -2078,6 +2105,38 @@ function ok(cond, msg) {
 function group(t) {
   console.log("\n-- " + t);
 }
+
+group("failed message identity converges without changing unrelated rows");
+const savedFailure = { id: "failed-local", time: 3, failed: true, text: "saved" };
+const currentFailure = { ...savedFailure, text: "current full text\nsecond line" };
+const confirmedFailure = { id: "failed-local", time: 4, from: "ME", text: "confirmed" };
+const unrelatedPending = { id: "pending-local", pending: true, requestId: "send-token", time: 5 };
+const mergeInput = [currentFailure, currentFailure, unrelatedPending, unrelatedPending];
+const mergeSaved = [savedFailure, savedFailure];
+const mergeBefore = JSON.stringify([mergeSaved, mergeInput]);
+const mergedFailures = EventLog.mergeFailedMessages(mergeSaved, mergeInput);
+ok(mergedFailures.filter(m => m.id === savedFailure.id).length === 1,
+   "duplicate failed list and saved rows converge to one bubble");
+ok(mergedFailures[0] === currentFailure && mergedFailures[0].text.includes("second line"),
+   "current failed version and complete text win over saved failure");
+ok(mergedFailures.filter(m => m === unrelatedPending).length === 2,
+   "pending duplicates and requestId remain outside failed identity merging");
+ok(JSON.stringify([mergeSaved, mergeInput]) === mergeBefore, "failure merge does not mutate inputs");
+ok(EventLog.mergeFailedMessages([], [currentFailure, currentFailure]).length === 1,
+   "already duplicated failures are repaired even without saved rows");
+const confirmedMerge = EventLog.mergeFailedMessages(mergeSaved, [currentFailure, confirmedFailure]);
+ok(confirmedMerge.length === 1 && confirmedMerge[0] === confirmedFailure,
+   "nonfailed existing row supersedes same-id failures");
+ok(EventLog.mergeFailedMessages(mergeSaved, [confirmedFailure, confirmedFailure]).length === 2,
+   "unrelated nonfailed duplicate behavior is preserved");
+const unidentifiedFailures = [{failed: true}, {id: "", failed: true}, {id: 7, failed: true}];
+ok(EventLog.mergeFailedMessages(unidentifiedFailures, unidentifiedFailures).length === 6,
+   "rows without a usable string id remain separate");
+const unsortedNormal = [{id: "later", time: 9}, {id: "earlier", time: 1}];
+ok(EventLog.mergeFailedMessages([], unsortedNormal).map(m => m.id).join(",") === "later,earlier",
+   "no saved failures preserves the original ordering contract");
+ok(JSON.stringify(EventLog.mergeFailedMessages(mergeSaved, mergedFailures)) === JSON.stringify(mergedFailures),
+   "repeated failure merges are idempotent");
 
 // ---------------------------------------------------------------- (a) restore
 group("(a) failed send restores the typed text");
@@ -7942,9 +8001,22 @@ ok(
   "oldest at the top, like every other chat window",
 );
 ok(
-  /onModelChanged: \{/.test(listBlock) &&
-    /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex/.test(listBlock),
-  "the prepend anchor is applied by index after the swap",
+  /Text \{\n\s+id: readLabel\n\s+anchors\.verticalCenter: parent\.verticalCenter\n\s+visible: text\.length > 0\n\s+text: root\.readText\(msgDelegate\.modelData\)/.test(listBlock) &&
+    (listBlock.match(/root\.readText\(msgDelegate\.modelData\)/g) || []).length === 1,
+  "已讀 sits on the time row, like LINE: a receipt arriving two seconds after "
+    + "a send changes a label, not the bubble's height",
+);
+ok(
+  /Qt\.callLater\(function\(\) \{ root\.retryPreview\(retryId, true\) \}\)/.test(listBlock) &&
+    !/^\s*root\.retryPreview\(messageId, true\)$/m.test(listBlock),
+  "a broken thumbnail retries a turn later -- delegates now appear inside the "
+    + "synchronous restore, where setMessages would be a model binding loop",
+);
+ok(
+  /onModelChanged: \{\n            root\.restoreMessageViewport\(\)\n          \}/.test(listBlock) &&
+    /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex/.test(B.restoreMessageViewport),
+  "the prepend anchor is applied by index right in the swap -- a callLater "
+    + "would paint one frame at contentY 0 (the top of the chat) first",
 );
 ok(
   /root\.keepContentY >= 0 \|\| root\.prependAnchorIndex >= 0\) return/.test(
@@ -9377,6 +9449,13 @@ rebased = e.applyHistory(
 ok(rebased.map(m => m.id).join() === "m1,m9,pending-1-1"
    && rebased[2].pending === true,
    "a pending bubble outlives the rebase, and even an unmentioned row stays put");
+rebased = e.applyHistory(
+  [MSG("m1", "THEM", "a"), MSG("pending-1-2", "ME", "hi", { pending: true, requestId: "r1" }),
+   MSG("pending-1-3", "ME", "hi", { pending: true, failed: true, requestId: "r1" })],
+  [MSG("m1", "THEM", "a"), MSG("m2", "ME", "hi", { requestId: "r1" })]);
+ok(rebased.map(m => m.id).join() === "m1,m2,pending-1-3",
+   "a page that already carries the confirmed send retires its pending bubble "
+   + "(a failed copy stays for recovery)");
 let drifted = e.applyHistory([MSG("m1", "THEM", "a")], [MSG("m5", "THEM", "x")]);
 ok(drifted.map(m => m.id).join() === "m1,m5",
    "a page with no overlap still merges by time instead of dropping the old row");
@@ -9796,8 +9875,9 @@ ok(
 );
 ok(
   /text: root\.readText\(msgDelegate\.modelData\)/.test(msgRows) &&
-    /horizontalAlignment: Text\.AlignRight/.test(msgRows),
-  "已讀 is a right-aligned line under the bubble",
+    /id: readLabel/.test(msgRows) &&
+    /readLabel\.visible \? readLabel\.width \+ parent\.spacing : 0/.test(msgRows),
+  "已讀 is the last item of the time row, and the name gives it room",
 );
 ok(
   /visible: text\.length > 0/.test(msgRows),
@@ -10212,7 +10292,7 @@ ok(
   "drawn on the first message of a run only",
 );
 ok(
-  /readonly property bool withAvatar:\n\s+root\.showAvatarAt\(root\.messages, msgDelegate\.index\)/
+  /readonly property bool withAvatar:\n\s+root\.showAvatarAt\(root\.messages, msgDelegate\.index\)\n\s+\|\| \(msgDelegate\.firstUnread && root\.showAvatarAt\(\[modelData\], 0\)\)/
     .test(msgRows),
   "by the rule the tests above drive, not a second copy of it inside the delegate",
 );
@@ -12233,6 +12313,7 @@ Object.defineProperty(topRoot, "chatSnapshot", {
 });
 const topPositions = [];
 const topList = {
+  forceLayout() {},
   contentY: 20,
   originY: 20,
   contentHeight: 160,
@@ -12277,6 +12358,7 @@ Object.defineProperty(scrolledRoot, "chatSnapshot", {
 });
 const scrolledPositions = [];
 const scrolledList = {
+  forceLayout() {},
   contentY: 60,
   originY: 20,
   contentHeight: 200,
@@ -12993,13 +13075,13 @@ ok(
     atTop,
 );
 ok(
-  /contentY = root\.anchoredContentY\(contentY, originY, keep, contentHeight, height\)/
-    .test(listBlock),
+  /msgList\.contentY = root\.anchoredContentY\(msgList\.contentY, msgList\.originY,/
+    .test(B.restoreMessageViewport),
   "and the ListView really applies it right after the anchor",
 );
 ok(
-  /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex, count - 1\), ListView\.Beginning\)/
-    .test(listBlock),
+  /positionViewAtIndex\(Math\.min\(root\.prependAnchorIndex, msgList\.count - 1\), ListView\.Beginning\)/
+    .test(B.restoreMessageViewport),
   "which is still an index anchor -- contentHeight is an estimate, U48's reason stands",
 );
 
@@ -13176,6 +13258,7 @@ ok(
   "a swap while nothing is loading does not read its own repositioning as a " +
     "scroll to the top: " + e.sent.filter(olderFrame).length + " older frames",
 );
+e.flushLater();
 ok(
   e.root.keepContentY === -1,
   "and the swap still lets go of the guard once the view is placed",
@@ -16206,7 +16289,7 @@ ok(
 );
 ok(
   /property var previewDecodeRetries/.test(src) &&
-    /retryPreview\(messageId, true\)/.test(src) &&
+    /retryPreview\((messageId|retryId), true\)/.test(src) &&
     /if \(decodeRetries\[retryId\]\) return/.test(retryBlock),
   "automatic decode retry ownership survives delegate recreation",
 );
@@ -17309,6 +17392,133 @@ group("(y3) err() translates daemon wire strings for display only");
     Strings.err(undefined, "en") === "" && Strings.err(null, "en") === "",
     "missing errors stay empty, not 'undefined'",
   );
+}
+
+group("(ux1) consecutive messages share one header, like any messenger");
+{
+  const T0 = new Date(2026, 9, 31, 21, 24, 0).getTime();
+  const at = (id, from, min, extra) =>
+    Object.assign({ id, from, text: id, time: T0 + min * 60000 }, extra || {});
+  const clock = (t) => String(Math.floor(Number(t) / 60000));
+  const read = (m) => m.read || "";
+  const run = [
+    at("a1", "A", 0),
+    at("a2", "A", 1), // next minute: time only
+    at("a3", "A", 1), // same minute, same 已讀: no header at all
+    at("a4", "A", 9), // nine minutes later: a new run, name again
+    at("b1", "B", 9),
+    at("s1", "A", 9, { contentType: "CHATEVENT" }),
+    at("b2", "B", 10), // a join notice between is not somebody speaking
+    at("m1", "ME", 11, { read: "已讀 2" }),
+    at("m2", "ME", 11, { read: "已讀 1" }), // same minute, different 已讀
+    at("m3", "ME", 11, { read: "已讀 1", edited: true }),
+  ];
+  const h = (i, unread) => EventLog.headerAt(run, i, !!unread, clock, read);
+  ok(h(0).shown && h(0).full, "the first of a run prints time and name");
+  ok(h(1).shown && !h(1).full, "a continuation a minute later prints only the time");
+  ok(!h(2).shown, "a continuation in the same minute with the same 已讀 prints nothing");
+  ok(h(3).full, "more than five minutes later starts a new run");
+  ok(h(4).full, "another person starts a new run");
+  ok(!h(5).shown, "a system event has no header line");
+  ok(!h(6).full && EventLog.continuesRun(run, 6),
+     "a system event between two lines of the same person does not split them");
+  ok(h(8).shown && !h(8).full,
+     "our own continuation keeps its line when its 已讀 differs from the one before");
+  ok(h(9).shown, "an edited message keeps its line for the 已編輯 mark");
+  ok(h(2, true).full, "the first message under the unread divider starts a new run");
+  ok(!EventLog.continuesRun(run, 0) && !EventLog.continuesRun(null, 1) &&
+     !EventLog.continuesRun(run, 99), "edges continue nothing");
+  ok(EventLog.showAvatarAt(run, 3, true, "ME") === true &&
+     EventLog.showAvatarAt(run, 1, true, "ME") === false,
+     "the face goes where the name goes: back after a five-minute gap");
+}
+
+group("(ux2) messages that land below a reader who scrolled up are counted");
+{
+  const page = [{ id: "1" }, { id: "2" }];
+  ok(EventLog.appendedCount(page, page.concat([{ id: "3" }, { id: "4" }])) === 2,
+     "two new messages at the tail are two");
+  ok(EventLog.appendedCount(page,
+       page.concat([{ id: "s", contentType: "CHATEVENT" }, { id: "p", pending: true }])) === 0,
+     "a system event or our own pending bubble is nothing to look at");
+  ok(EventLog.appendedCount(
+       [{ id: "1" }, { id: "p1", pending: true, from: "ME" }],
+       [{ id: "1" }, { id: "wire-p1", from: "ME" }, { id: "x", from: "B" }], "ME") === 1,
+     "our pending bubble turning into its echo in the same batch as another's message still counts that one");
+  ok(EventLog.appendedCount(page, page.concat([{ id: "e", from: "ME" }]), "ME") === 0,
+     "our own echo, or a send from our other device, is nothing new to look at");
+  ok(EventLog.appendedCount(page, [{ id: "0" }].concat(page)) === 0,
+     "an older page prepended above is not new below");
+  ok(EventLog.appendedCount(page, [{ id: "9" }]) === 0,
+     "a page that no longer holds the old tail says nothing (changed chat, reload)");
+  ok(EventLog.appendedCount([], page) === 0 && EventLog.appendedCount(page, []) === 0,
+     "nothing before or after is nothing new");
+  const setBody = body("  function setMessages(list, follow) {");
+  ok(/if \(follow === true\) root\.unseenBelow = 0\n\s+else if \(!root\.atBottom\) root\.unseenBelow \+= EventLog\.appendedCount\(before, list, root\.myMid\)/.test(setBody),
+     "setMessages counts them only for a reader who is not following, and an open resets it");
+  ok(/onAtYEndChanged: if \(atYEnd && root\.keepContentY < 0\) root\.unseenBelow = 0/.test(src),
+     "reaching the bottom by hand clears the count, but a model swap's own scroll does not");
+  ok(/id: jumpLatest[\s\S]*visible: msgList\.count > 0 && !msgList\.atYEnd\n\s+&& \(hasNew \|\| behind > msgList\.height\)/.test(src) &&
+     /onClicked: root\.jumpToLatest\(\)/.test(src) &&
+     /Accessible\.onPressAction: root\.jumpToLatest\(\)/.test(src),
+     "a floating button says how many are below, or offers the way back after a screen of scrolling");
+  ok(/if \(t === "G"\) \{\n\s+if \(root\.activeChat && msgList\.count > 0\) root\.jumpToLatest\(\)/.test(src) &&
+     /Accessible\.description: tr\("chat\.toLatestKey"\)/.test(src),
+     "the keyboard gets there with G, and the button says so to a screen reader");
+  ok(Strings.fmt("chat.newBelow", "zh", 3) === "↓ 3 則新訊息" &&
+     Strings.fmt("chat.newBelow", "en", 3) === "↓ 3 new",
+     "its label in both languages");
+}
+
+group("(ux3) readable rows");
+{
+  ok(/id: msgBody[\s\S]{0,400}: Math\.min\(parent\.width, root\.readableWidth\)\n/.test(src) &&
+     /id: msgBody[\s\S]{0,300}Math\.min\(parent\.width, root\.readableWidth,\n\s+Math\.ceil\(bodyMeasure\.implicitWidth\)/.test(src),
+     "a message body stops at a readable line length in a wide window, ours hugging its text");
+  ok(/readonly property bool mine: !msgDelegate\.systemEvent\n\s+&& String\(modelData\.from \|\| ""\) === root\.myMid/.test(src),
+     "our own messages are told apart once, in the delegate");
+  ok(/layoutDirection: msgDelegate\.mine \? Qt\.RightToLeft : Qt\.LeftToRight/.test(src) &&
+     /msgDelegate\.header\.full && !msgDelegate\.mine/.test(src),
+     "ours line up on the right like LINE, the header reading 已讀 then time, no 我");
+  ok((src.match(/x: msgDelegate\.mine \? parent\.width - width : 0/g) || []).length >= 8,
+     "every block of our message -- quote, body, failure, sticker, FLEX, thumbnail, file, reactions -- sits on the right");
+  ok(/id: bodyMeasure\n\s+visible: false\n\s+textFormat: Text\.RichText/.test(src),
+     "the bubble's width comes from a hidden Text, never the wrapping TextEdit's own implicitWidth (a binding loop)");
+  ok(/z: -1\n\s+anchors\.fill: parent\n\s+visible: msgDelegate\.mine\n\s+radius: Style\.space\(8\)\n\s+color: Qt\.rgba\(Color\.accent\.r, Color\.accent\.g, Color\.accent\.b, 0\.16\)/.test(src),
+     "our bubble is a faint tint of the theme's accent behind the text");
+  ok(/width: Math\.min\(implicitWidth, Math\.max\(0, parent\.width\n\s+- \(headerAvatar\.visible \? headerAvatar\.width \+ parent\.spacing : 0\)\n\s+- \(readLabel\.visible \? readLabel\.width \+ parent\.spacing : 0\)\)\)/.test(src),
+     "the header text takes only its own width, so 已讀 sits right after the time -- " +
+       "and never from x, which a right-to-left row derives from that same width");
+  ok(/id: rowBadge[\s\S]{0,400}text: root\.agoText\(modelData\.lastTime\)/.test(src) &&
+     /id: unreadCount[\s\S]{0,120}"99\+"/.test(src),
+     "the chat list shows the time above an unread badge, not '2  12 分' on one line");
+}
+
+group("(ux4) the settings row folds behind ⚙; 同步 stays out");
+{
+  const row = src.slice(src.indexOf("          id: scaleRow"), src.indexOf("id: toolsHover"));
+  ok(/property bool toolsOpen: false/.test(src), "folded by default");
+  ok(/visible: root\.toolsOpen\n\s+text: root\.placementLabel/.test(row) &&
+     /required property var modelData\n\s+visible: root\.toolsOpen/.test(row) &&
+     /visible: root\.toolsOpen\n\s+text: tr\("label\.scroll"/.test(row) &&
+     /visible: root\.toolsOpen\n\s+text: tr\("label\.history"/.test(row) &&
+     /id: logoutLabel\n\s+visible: root\.loggedIn && root\.toolsOpen/.test(row),
+     "placement, A−/A+, scroll, history and 登出 only show when it is open");
+  ok(/id: syncLabel\n\s+visible: root\.loggedIn\n/.test(row),
+     "同步, used every day, is never folded away");
+  const gear = src.slice(src.indexOf("id: toolsToggle"), src.indexOf("id: toolsHover") + 400);
+  ok(/Keys\.onReturnPressed: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Keys\.onSpacePressed: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /onClicked: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Accessible\.onPressAction: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Accessible\.name: root\.toolsOpen \? tr\("acc\.toolsHide"\) : tr\("acc\.toolsShow"\)/.test(gear),
+     "⚙ toggles by mouse, keyboard and assistive tech");
+  ok(/onToolsOpenChanged: if \(!root\.toolsOpen && logoutLabel\.activeFocus\) toolsToggle\.forceActiveFocus\(\)/.test(src),
+     "folding it never leaves focus on the hidden 登出, where Enter would still log out");
+  ok(/item\.linkAt\(x - \(item\.leftPadding \|\| 0\), y - \(item\.topPadding \|\| 0\)\)/.test(body("  function openMessageMenu(item, x, y, m) {")),
+     "a right-click on a link inside our padded bubble still finds the link");
+  ok(/root\.toolsOpen = true\n\s+logoutLabel\.forceActiveFocus\(\)/.test(src),
+     "L still reaches 登出: it opens the row first, since a hidden item takes no focus");
 }
 
 require("./supervisor.js");

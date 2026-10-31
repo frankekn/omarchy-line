@@ -16,9 +16,11 @@ driven and looked at without a real LINE session.
 import hashlib
 import json
 import os
+import queue
 import re
 import shutil
 import signal
+import socket
 import socketserver
 import struct
 import sys
@@ -513,6 +515,14 @@ def set_wanted(mid):
 
 # ---------------------------------------------------------------- events
 
+# One sender per open socket connection (Handler registers it). A sender only
+# queues, so calling it under `lock` never waits on a slow reader.
+panel_pushers = set()
+# A connection this far behind is not reading; it is dropped instead of
+# holding every sender up, like the daemon's bounded panel queues.
+PUSH_QUEUE_MAX = 256
+
+
 def push_event(kind, chat, **payload):
     """One entry of the `events` ring, numbered like the daemon's pushEvent."""
     global event_seq
@@ -525,6 +535,15 @@ def push_event(kind, chat, **payload):
         events.append(ev)
         # Slicing in place, so the list the state dict holds stays the same one.
         del events[:-EVENTS_MAX]
+        # Live, like the daemon's setEventSink: a connected panel stops
+        # watching the ring and only hears an event as a pushed line. Without
+        # this the stub's echoes and 已讀 reached the panel only through
+        # history reloads. Queued under the lock that numbered the event, so
+        # every connection receives them in seq order -- the panel drops a
+        # seq at or below the last one it applied.
+        line = json.dumps({"event": ev, "boot": BOOT_ID}, ensure_ascii=False)
+        for send in panel_pushers:
+            send(line)
     return ev
 
 
@@ -2029,6 +2048,56 @@ def handle(req):
 
 class Handler(socketserver.StreamRequestHandler):
     def handle(self):
+        # Replies and pushes share one queue and one writer thread, so their
+        # lines never interleave and stay in the order they were queued.
+        outbox = queue.Queue(maxsize=PUSH_QUEUE_MAX)
+
+        def send(line):
+            try:
+                outbox.put_nowait(line)
+            except queue.Full:
+                try:
+                    self.connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+
+        # Set once the client stops sending; the writer still drains whatever
+        # is queued, so the last reply goes out whole before the socket closes.
+        closing = threading.Event()
+
+        def write():
+            while True:
+                try:
+                    line = outbox.get(timeout=0.1)
+                except queue.Empty:
+                    # closing is set only after the last reply was queued and
+                    # this connection left panel_pushers, so an empty queue
+                    # seen *after* it is final; one seen before it is not.
+                    if closing.is_set() and outbox.empty():
+                        return
+                    continue
+                try:
+                    self.wfile.write((line + "\n").encode())
+                    self.wfile.flush()
+                except OSError:
+                    return
+
+        writer = threading.Thread(target=write, daemon=True)
+        writer.start()
+        with lock:
+            panel_pushers.add(send)
+        try:
+            self.serve_lines(send)
+        finally:
+            with lock:
+                panel_pushers.discard(send)
+            closing.set()
+            # No timeout: socketserver closes the socket as soon as this
+            # returns, which would cut a reply still being written. A client
+            # that stops reading for good ends the write with an OSError.
+            writer.join()
+
+    def serve_lines(self, send):
         for raw in self.rfile:
             line = raw.decode("utf-8", "replace").strip()
             if not line:
@@ -2042,8 +2111,7 @@ class Handler(socketserver.StreamRequestHandler):
             except Exception as e:                      # never drop the client
                 res = {"ok": False, "error": "stub error: %s" % e}
             res["id"] = req.get("id")
-            self.wfile.write((json.dumps(res, ensure_ascii=False) + "\n").encode())
-            self.wfile.flush()
+            send(json.dumps(res, ensure_ascii=False))
 
 
 class Server(socketserver.ThreadingUnixStreamServer):

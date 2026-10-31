@@ -82,6 +82,7 @@ access token 原子發布完整的新 session。提交前登入失敗，原本�
 | `panel-drafts.json` | 打了但還沒送出的文字。 |
 | `panel-stickers.json` | 最近用過的貼圖。 |
 | `avatars.json` | 哪些版本的大頭貼已經下載過。 |
+| `names.json` | daemon 查過的聯絡人和聊天室顯示名稱，包括你替別人設的暱稱，讓 daemon 重新啟動後聊天室一打開就有名字。只有存它的那個帳號會讀它。daemon 每次啟動後，存下來的名字第一次被顯示時會在背景跟 LINE 確認一次；90 天都沒有聊天室顯示過的名字會被刪掉。 |
 | `hidden.json` | 你隱藏的聊天室。 |
 | `sock` | 面板連線用的 socket。 |
 | `lock` | 空檔案，防止第二個 daemon 啟動。 |
@@ -91,8 +92,13 @@ access token 原子發布完整的新 session。提交前登入失敗，原本�
 
 - daemon 執行期間收到的訊息會以解密後的內容儲存，開啟 Letter Sealing（端對端加密）
   的聊天室也一樣。
-- 你往回捲時 daemon 抓回來的舊訊息，照 LINE 傳來的樣子儲存。開啟 Letter Sealing 的
-  聊天室存的是密文，但能解開它的金鑰就在同一個目錄的 `storage.json` 裡。
+- 你打開聊天室或往回捲時，daemon 從 LINE 抓回來的舊訊息照 LINE 傳來的樣子儲存。
+  開啟 Letter Sealing 的聊天室存的是密文。daemon 解開這樣的訊息之後，會把解密後的
+  內容存在旁邊，下次打開就不必再解一次。不論哪一種，能解開它的金鑰都在同一個目錄的
+  `storage.json` 裡。
+- 訊息檔只會往尾端追加。訊息被編輯後，daemon 之後讀到的都是新版本，但舊版本和它
+  解密後的內容會留在檔案裡，直到 daemon 下一次重寫這個檔案（檔案行數大約達到實際
+  用到的兩倍時才會重寫）。
 - 有人收回訊息時，daemon 會把它標成已收回，原本的內容還留在磁碟上。
 
 `media/` 和 `media/public-images/` 裡超過 14 天的檔案會被 daemon 刪掉；資料夾超過
@@ -110,7 +116,7 @@ access token 原子發布完整的新 session。提交前登入失敗，原本�
 
 - **在面板登出**就會結束 session。daemon 會請 LINE 結束 session，並從 `storage.json`
   刪掉登入 token 相關的欄位（`.auth`、`refreshToken`、`expire`）。E2EE 金鑰、登入
-  憑證、訊息歷史和媒體都還留在磁碟上。
+  憑證、訊息歷史、存下來的名字和媒體都還留在磁碟上。
 - **要全部移除**，先登出，再照[解除安裝](README.zh-TW.md#解除安裝)的步驟做。它會停掉
   daemon 並刪掉 state 目錄。接著在手機 LINE 的已登入裝置清單裡移除這台裝置。
 - **只想清掉訊息歷史**，要先停掉 daemon。daemon 會把最近的聊天室留在記憶體裡，可能會

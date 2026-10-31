@@ -25,11 +25,13 @@ daemon 需要 [Deno](https://deno.com) 2。面板的測試需要 Node.js。按�
 ```bash
 (cd daemon && deno task check && deno task no-any && deno task lint && deno task fmt && deno task test)
 node tests/qml/run.js
+python3 tests/qml/chat_scroll_test.py
+python3 tests/qml/message_scroll_test.py
 python3 tests/qml/supervisor_test.py
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+tools/qmllint.sh
 ```
 
 - `deno task check` 做 daemon 的型別檢查。`deno task no-any` 和 `deno task lint`
@@ -38,11 +40,17 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   `// enil:*` 標記切出來單獨測。
 - `node tests/qml/run.js` 從 `Panel.qml` 切出函式本體來跑，不需要 daemon、socket 或
   state 目錄。
+- `chat_scroll_test.py` 與 `message_scroll_test.py` 用離屏 Qt ListView 和實際面板函式，
+  測試連續推播、已讀、歷史更新與翻頁；資料全為模擬，需要 `qmltestrunner`。
 - `python3 tests/qml/supervisor_test.py` 用離屏 Quickshell、假的 systemctl、socket 與
   state 測試恢復流程；沒裝 Quickshell 就略過，不會操作真實服務或 LINE 帳號。
 - `tests/qml/keytest/run.sh` 在 offscreen 的 `qmltestrunner` 下跑列表的按鍵路徑。
 - `python3 daemon/stub_test.py` 拿 stub 對照協定，在自己的暫存 `XDG_STATE_HOME` 裡跑。
 - `omarchy plugin validate .` 和 `qmllint` 需要本機的 Omarchy shell。
+- `tools/qmllint.sh` 檢查根目錄全部 QML，將已安裝的 shell 暫時對映為 `qs/`，
+  讓工具能解析 `qs.Commons` 與 `qs.Ui`。其他安裝位置可用 `OMARCHY_PATH` 指定。
+  腳本保留工具的完整診斷與退出碼。`tools/qmllint.sh --max-warnings 0` 要求零警告；
+  預設警告上限由 Qt 版本決定。
 
 這些都證明不了畫面是對的。改完之後要在實機上確認：
 

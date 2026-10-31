@@ -26,6 +26,7 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 | `media/avatars/` | avatar cache (**age-insensitive**, 20 MB cap, sweeps oldest first) |
 | `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |
 | `avatars.json` | which mid's which avatar version was already handled, so a restart doesn't refetch (daemon-only) |
+| `names.json` | display names this account resolved, `{"v":1,"owner":"<my mid>","names":{"<mid>":["<name>",<savedAt ms>,"<picture token>"?]}}` (the token comes with the name lookup, so a restart that serves the name from here still has the avatar); read only by the same account; a kept name is served at once and confirmed with LINE in the background (one getContactsV2 / getChats batch) the first time a session shows it, and entries not shown for 90 days are dropped (atomic write, `chmod 600`, daemon-only, cap 5000) |
 | `hidden.json` | hidden-chat mids, `{"mids":[…]}` (atomic write, daemon-only, cap 1000) |
 | `panel-stickers.json` | recent stickers, per account (written by the **plugin**, atomic; the daemon doesn't read it) |
 | `qr-<ts>.png` | login QR; a fresh filename each time (QML `Image` won't reload a same-named file) |

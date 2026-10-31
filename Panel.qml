@@ -230,10 +230,17 @@ Panel {
   // 是 0，而超出範圍會被 boundsBehavior 彈回來 —— 彈回來的那幾幀也是 contentYChanged，
   // 訊息清單的「捲到頂就載入上一頁」會被白白觸發。
   function wheelScroll(view, angleDeltaY, pixelDeltaY) {
+    if (view === msgList) root.settleMessageViewport()
+    if (view === listFlick && PanelKit.wheelDistance(angleDeltaY, pixelDeltaY,
+                                                   Style.space(60), root.scrollSpeed) !== 0)
+      listFlick.forceLayout()
     var y = PanelKit.wheelTargetY(view.originY, view.contentHeight - view.height,
                                   view.contentY, angleDeltaY, pixelDeltaY,
                                   Style.space(60), root.scrollSpeed)
-    if (y !== null) view.contentY = y
+    if (y !== null) {
+      if (view === listFlick) root.cancelChatListRestore()
+      view.contentY = y
+    }
   }
 
   // 三個捲動區各掛一顆，實作只有這一份。只吃滾輪：acceptedButtons 是 NoButton，
@@ -302,6 +309,7 @@ Panel {
   property var chatSnapshot: []
   property double chatRevisionSeen: -1
   property string chatBootSeen: ""
+  property var chatListRestore: null
   readonly property var chats: chatSnapshot
   // 隱藏的聊天不算未讀 —— 從清單拿掉了卻還在 bar 圖示上亮一個數字，等於沒隱藏。
   // 隱藏是 daemon 記在 hidden.json 的本機偏好，聊天本身照樣留在 state.chats 裡，
@@ -352,6 +360,19 @@ Panel {
   // 換掉 messages 的那一刻才算數：ListView 虛擬化之後，生成／回收項目的過程中
   // contentY、originY、contentHeight 會連跳好幾輪，一直重算只會被中間狀態帶著跑。
   property bool atBottom: true
+  // 往上讀的時候，下面又來了幾則（回到底部、換聊天室就歸零）。浮在訊息上的
+  // 「↓ N 則新訊息」看的就是它：畫面不跟著跳是對的，但人得知道下面有東西。
+  property int unseenBelow: 0
+  // 清單上方那排設定（位置、字級、捲動、讀取、登出）平常收在 ⚙ 後面：它們一年
+  // 調不到幾次，卻一直佔著主畫面。同步是天天按的，留在外面。
+  property bool toolsOpen: false
+  // 收起來的時候，焦點不能留在剛被藏起來的那顆上 —— 看不見的「登出」照樣接得到
+  // Enter（量過）。交給還看得見的 ⚙。
+  // 收起的那幾顆裡只有登出拿得到焦點（L 鍵給的）。
+  onToolsOpenChanged: if (!root.toolsOpen && logoutLabel.activeFocus) toolsToggle.forceActiveFocus()
+  // 本文最寬多寬：視窗拉寬之後一行一千多像素，眼睛換行找不到下一行的開頭。
+  // 大約 42 個全形字、80 個半形字，跟著字級走。
+  readonly property real readableWidth: root.fontBody * 42
   // 前置更舊的訊息時，換完要把哪一則放回視窗頂端。記索引不記高度：虛擬化之後
   // contentHeight 只是估計值（沒生成的項目按平均值算），用高度差補位置會歪掉。
   property int prependAnchorIndex: -1
@@ -359,6 +380,8 @@ Panel {
   // contentY 歸零（Qt 6.11 量過：捲到底 1034 → 0），換完得自己放回去。
   // >= 0 同時代表「正在換模型」，這段期間的 contentY 都不是使用者捲的。
   property real keepContentY: -1
+  property var messageAnchor: null
+  property int messageSwapGeneration: 0
   // 開聊天室時那間還有幾則未讀 —— 分隔線就畫在倒數第 N 則之上。歷史回來才算得出
   // 是哪一則（開的當下 messages 還是上一份），算完存 id：前置舊訊息會讓索引整批位移。
   property int unreadMarkCount: 0
@@ -502,6 +525,8 @@ Panel {
 
   // 選取與開啟：keyCatcher 和搜尋框都要用，抽出來共用。
   function moveSelection(step) {
+    root.cancelChatListRestore()
+    listFlick.forceLayout()
     var n = root.listModel.length
     if (n === 0) return
     root.selectedIndex = Math.max(0, Math.min(root.selectedIndex + step, n - 1))
@@ -677,42 +702,81 @@ Panel {
     root.chatBootSeen = ""
   }
 
+  function cancelChatListRestore() {
+    root.chatListRestore = null
+  }
+
+  function setChatSearch(text) {
+    root.cancelChatListRestore()
+    root.search = text
+    root.selectedIndex = 0
+    listFlick.forceLayout()
+    listFlick.positionViewAtBeginning()
+  }
+
   function replaceChatSnapshot(incoming) {
-    var oldY = listFlick.contentY
-    var wasAtBeginning = oldY <= listFlick.originY + 1
-    var oldIndex = -1
-    var probeY = oldY
-    var probeEnd = Math.min(listFlick.contentHeight, oldY + listFlick.height)
-    while (oldIndex < 0 && probeY <= probeEnd) {
-      oldIndex = listFlick.indexAt(1, probeY)
-      probeY++
+    // 同一輪推播可能連換幾次模型；第二次看到的幾何已被 reset，沿用第一份錨點。
+    var saved = root.chatListRestore
+    if (!saved) {
+      var oldY = listFlick.contentY
+      var oldIndex = -1
+      var probeY = oldY
+      var probeEnd = Math.min(listFlick.originY + listFlick.contentHeight,
+                             oldY + listFlick.height)
+      while (oldIndex < 0 && probeY <= probeEnd) {
+        oldIndex = listFlick.indexAt(1, probeY)
+        probeY++
+      }
+      var oldRow = oldIndex >= 0 ? root.listModel[oldIndex] : null
+      var oldItem = oldIndex >= 0 ? listFlick.itemAtIndex(oldIndex) : null
+      var selected = root.listModel[root.selectedIndex]
+      saved = {
+        mid: oldRow ? String(oldRow.mid || "") : "",
+        offset: oldItem ? oldItem.y - oldY : 0,
+        atBeginning: oldY <= listFlick.originY + 1,
+        selectedMid: selected ? String(selected.mid || "") : ""
+      }
     }
-    var oldRow = oldIndex >= 0 ? root.listModel[oldIndex] : null
-    var oldMid = oldRow ? String(oldRow.mid || "") : ""
-    var oldItem = oldIndex >= 0 ? listFlick.itemAtIndex(oldIndex) : null
-    var oldOffset = oldItem ? oldItem.y - oldY : 0
+    // 新物件也當作本次恢復的識別；舊 callLater 不能覆蓋較新的模型。
+    var restore = Object.assign({}, saved)
+    root.chatListRestore = restore
     root.chatSnapshot = incoming
-    if (wasAtBeginning) {
-      Qt.callLater(function() { listFlick.positionViewAtBeginning() })
-      return
+    for (var i = 0; i < root.listModel.length; i++) {
+      if (String(root.listModel[i].mid || "") === restore.selectedMid) {
+        root.selectedIndex = i
+        break
+      }
     }
-    if (!oldMid) return
     Qt.callLater(function() {
+      if (root.chatListRestore !== restore) return
+      if (listFlick.dragging) {
+        root.cancelChatListRestore()
+        return
+      }
+      listFlick.forceLayout()
+      if (restore.atBeginning) {
+        listFlick.positionViewAtBeginning()
+        root.chatListRestore = null
+        return
+      }
       var nextIndex = -1
-      for (var i = 0; i < root.listModel.length; i++) {
-        if (String(root.listModel[i].mid || "") === oldMid) {
-          nextIndex = i
+      for (var j = 0; j < root.listModel.length; j++) {
+        if (String(root.listModel[j].mid || "") === restore.mid) {
+          nextIndex = j
           break
         }
       }
-      if (nextIndex < 0) return
-      listFlick.positionViewAtIndex(nextIndex, ListView.Beginning)
-      var nextItem = listFlick.itemAtIndex(nextIndex)
-      if (!nextItem) return
-      var maximum = Math.max(listFlick.originY,
-                             listFlick.contentHeight - listFlick.height)
-      listFlick.contentY = Math.max(
-        listFlick.originY, Math.min(maximum, nextItem.y - oldOffset))
+      if (nextIndex >= 0) {
+        listFlick.positionViewAtIndex(nextIndex, ListView.Beginning)
+        var nextItem = listFlick.itemAtIndex(nextIndex)
+        if (nextItem) {
+          var maximum = Math.max(listFlick.originY,
+                                 listFlick.originY + listFlick.contentHeight - listFlick.height)
+          listFlick.contentY = Math.max(
+            listFlick.originY, Math.min(maximum, nextItem.y - restore.offset))
+        }
+      }
+      root.chatListRestore = null
     })
   }
 
@@ -2757,7 +2821,9 @@ Panel {
             tagged.push(requestBubble)
           } else tagged.push(message)
         }
-        root.setMessages(tagged, false)
+        // 只是補一個欄位，不決定捲到哪：給 false 會蓋掉 pendingBubble 剛要的「跟到底」，
+        // 送出去的泡泡就停在畫面外。
+        root.setMessages(tagged)
       }
     }
     var p = root.pending
@@ -3096,11 +3162,31 @@ Panel {
       if (stale) { if (!root.activeChat) root.loading = false; return }
       var historyRows = EventLog.keepPreviewPaths(root.messages,
           Array.isArray(res.data) ? res.data : [])
+      // 背景重抓只拿最新一頁。這頁最舊那則就在手上，才證明中間連續、可以合併並
+      // 保留讀者已翻到的舊頁；只交集到一則推播進來的新訊息不算 —— 斷線期間漏掉的
+      // 那段會變成翻不回來的缺口。證明不了就以回覆那頁為準。
+      // 已經有回覆的送出中泡泡不帶進合併：成功的那則已在頁面裡（LINE 沒留 token
+      // 時配不上 requestId，留著就是永遠的灰色重複），失敗和結果不明的由下面兩支補回。
+      var inFlight = {}
+      for (var pid in root.pending) {
+        var pendingMsg = String((root.pending[pid] || {}).msgId || "")
+        if (pendingMsg) inFlight[pendingMsg] = true
+      }
+      var shownRows = root.messages.filter(function(m) {
+        return !(m && m.pending && !m.failed && !inFlight[String(m.id || "")])
+      })
+      var oldestFresh = historyRows.length > 0 ? String(historyRows[0].id || "") : ""
+      for (var hi = 0; oldestFresh && hi < shownRows.length; hi++) {
+        if (String(shownRows[hi].id || "") === oldestFresh) {
+          historyRows = root.applyHistory(shownRows, historyRows)
+          break
+        }
+      }
       var retainedRows = root.mergeFailedMessages(askedFor, historyRows)
       var fetched = root.withDay(root.preserveAmbiguousBubbles(askedFor, retainedRows))
       // 開聊天室時快取那份早就貼上去了，抓回來多半一模一樣。照樣整份換的話
       // ListView 會再 reset 一次，重新排版那一格看得到畫面跳開又跳回來（量過）。
-      if (!EventLog.sameRows(root.messages, fetched)) root.setMessages(fetched, true)
+      if (!EventLog.sameRows(root.messages, fetched)) root.setMessages(fetched)
       root.reconcileAmbiguous(askedFor, root.messages, Number(entry.gen || 0))
       var deferredReload = root.historyReloadChat === askedFor
           ? root.historyReloadAfterGeneration : 0
@@ -3785,25 +3871,89 @@ Panel {
 
   // ------------------------------------------------------------ 訊息清單
 
-  // messages 一律從這裡換。ListView 每次 model reset 都會把 contentY 歸零
-  // （Qt 6.11 量過），所以「換完視窗停在哪」只有換之前這一刻的幾何說得準 ——
-  // 換完 msgList.onModelChanged 照這兩面旗子把視窗放回去。
-  // follow 是「這次要不要跟到最後一則」：開聊天室、重抓歷史一律要，
-  // 沒給就照使用者換之前在不在底部。
+  // 虛擬清單重排會改 originY；保存眼前訊息的身分與列內偏移，不能只記像素距離。
+  // 明確開聊天室才強制跟到底；背景更新照讀者原本的位置。
   function setMessages(list, follow) {
-    root.atBottom = follow === undefined
-      ? msgList.contentY >= msgList.originY + msgList.contentHeight - msgList.height - Style.space(24)
-      : !!follow
-    root.keepContentY = Math.max(0, msgList.contentY - msgList.originY)
+    var swapping = root.keepContentY >= 0
+    if (!swapping || follow !== undefined)
+      root.atBottom = follow === undefined
+        ? msgList.contentY >= msgList.originY + msgList.contentHeight - msgList.height - Style.space(24)
+        : !!follow
+    if (!swapping) {
+      root.messageAnchor = root.captureMessageAnchor()
+      root.keepContentY = Math.max(0, msgList.contentY - msgList.originY)
+    }
+    if (follow === true) {
+      root.messageAnchor = null
+      root.prependAnchorIndex = -1
+    }
+    root.messageSwapGeneration++
+    var before = root.messages
     root.messages = list
-    // 新舊內容一模一樣時 ListView 根本不換模型（QVariant 比對相等就直接 return），
-    // modelChanged 不發，旗子沒人收就會把「捲到頂要上一頁」永遠擋住。
-    Qt.callLater(root.clearSwap)
+    if (follow === true) root.unseenBelow = 0
+    else if (!root.atBottom) root.unseenBelow += EventLog.appendedCount(before, list, root.myMid)
+    // 內容相同時不發 modelChanged，也要完成還原並解除換頁保護。
+    Qt.callLater(root.restoreMessageViewport)
+  }
+
+  function captureMessageAnchor() {
+    var y = msgList.contentY
+    var index = -1
+    while (index < 0 && y <= msgList.contentY + msgList.height) {
+      index = msgList.indexAt(1, y)
+      y++
+    }
+    var item = index >= 0 ? msgList.itemAtIndex(index) : null
+    var row = index >= 0 ? root.messages[index] : null
+    return item && row ? { id: String(row.id || ""), offset: item.y - msgList.contentY } : null
+  }
+
+  function restoreMessageViewport() {
+    if (root.keepContentY < 0) return
+    msgList.forceLayout()
+    var anchor = root.messageAnchor
+    var index = -1
+    if (anchor) {
+      for (var i = 0; i < root.messages.length; i++) {
+        if (String(root.messages[i].id || "") === anchor.id) { index = i; break }
+      }
+    }
+    if (msgList.count === 0) root.prependAnchorIndex = -1
+    else if (root.atBottom) msgList.toBottom()
+    else if (index >= 0) {
+      msgList.positionViewAtIndex(index, ListView.Beginning)
+      msgList.forceLayout()
+      var item = msgList.itemAtIndex(index)
+      if (item) msgList.contentY = item.y - anchor.offset
+    } else if (root.prependAnchorIndex >= 0) {
+      msgList.positionViewAtIndex(Math.min(root.prependAnchorIndex, msgList.count - 1), ListView.Beginning)
+      msgList.contentY = root.anchoredContentY(msgList.contentY, msgList.originY,
+                                             root.keepContentY, msgList.contentHeight, msgList.height)
+    } else {
+      msgList.contentY = msgList.originY + Math.max(0, Math.min(
+          root.keepContentY, msgList.contentHeight - msgList.height))
+    }
+    msgList.seenContentHeight = msgList.contentHeight
+    root.clearSwap()
+  }
+
+  // 使用者要捲的那一刻還有一份換模型後的還原沒跑，就先把它跑完再捲：
+  // 晚一步才跑的話，它會拿換之前的錨點蓋掉使用者剛捲到的位置。
+  function settleMessageViewport() {
+    if (root.keepContentY >= 0) root.restoreMessageViewport()
+  }
+
+  function jumpToLatest() {
+    root.settleMessageViewport()
+    root.unseenBelow = 0
+    root.atBottom = true
+    msgList.toBottom()
   }
 
   function clearSwap() {
     root.keepContentY = -1
     root.prependAnchorIndex = -1
+    root.messageAnchor = null
   }
 
   // 日期分隔線是 ListView 的 section，而 section.property 讀的是模型的欄位，
@@ -3856,7 +4006,7 @@ Panel {
     if (at >= 0) list.splice(at, 1)
     list.push(merged)
     list.sort(function(a, b) { return Number(b.lastTime || 0) - Number(a.lastTime || 0) })
-    root.chatSnapshot = list
+    root.replaceChatSnapshot(list)
     if (isFinite(rev)) root.chatRevisionSeen = rev
   }
 
@@ -4016,7 +4166,9 @@ Panel {
     for (var k in fields) bubble[k] = fields[k]
     var list = root.messages.slice()
     list.push(bubble)
-    root.setMessages(root.withDay(list))
+    // 自己送出的一律跟到底：照「換之前在不在底部」判斷的話，往上捲著打字、
+    // 或剛好有背景更新還在還原位置時，送出去的泡泡會落在畫面外。
+    root.setMessages(root.withDay(list), true)
     return bubble.id
   }
 
@@ -4174,6 +4326,7 @@ Panel {
   }
 
   function openChat(chat) {
+    root.cancelChatListRestore()
     root.lightbox = null
     // 引言屬於上一間的那一則，跟著換聊天室一起丟掉。貼圖選單也收起來：
     // 挑到一半換了聊天室，下一張就會送錯間。
@@ -4257,6 +4410,7 @@ Panel {
   onActiveHiddenChanged: if (root.activeHidden) root.backToList()
 
   function backToList() {
+    root.cancelChatListRestore()
     if (root.saveActiveDraft) root.saveActiveDraft(true)
     if (root.stopDraftSaveTimer) root.stopDraftSaveTimer()
     // 燈箱是對話的一部分，離開對話就不該留著。引言、貼圖選單同理。
@@ -4395,6 +4549,14 @@ Panel {
 
   // 這一則旁邊要不要掛大頭貼：群組裡、不是自己講的、而且是同一個人連著講的那一串的
   // 第一則。1:1 只有兩個人，每一則都掛一張臉只是噪音。
+  function continuesRun(list, i) {
+    return EventLog.continuesRun(list, i)
+  }
+
+  function messageHeader(list, i, firstUnread) {
+    return EventLog.headerAt(list, i, firstUnread, root.clockText, root.readText)
+  }
+
   function showAvatarAt(list, i) {
     var group = !!root.activeChat && /^[cr]/.test(String(root.activeChat.mid || ""))
     return EventLog.showAvatarAt(list, i, group, root.myMid)
@@ -4638,7 +4800,11 @@ Panel {
     msgMenu.msg = m || null
     msgMenu.body = root.bodyText(m || {})
     // 圖片、貼圖上按右鍵也開得起來，而那些不是文字，沒有 linkAt 可以問。
-    msgMenu.link = item && item.linkAt ? root.linkTarget(item.linkAt(x, y)) : ""
+    // linkAt 量的是字的座標，不含內距：自己的泡泡有內距，不扣掉的話右鍵正中連結也
+    // 問不到（量過）。選單位置照舊用滑鼠的座標。
+    msgMenu.link = item && item.linkAt
+      ? root.linkTarget(item.linkAt(x - (item.leftPadding || 0), y - (item.topPadding || 0)))
+      : ""
     var p = item.mapToItem(keyCatcher, x, y)
     // 高度自己乘出來，不讀 msgMenu.implicitHeight —— Column 的 implicitHeight
     // 要等下一次 polish 才更新，這一刻讀到的還是上一次那份，一行的選單換成
@@ -5175,6 +5341,7 @@ Panel {
         if (root.stickerOpen && dx !== 0) { root.stepStickerTab(dx); return }
         if (dy === 0) return
         if (root.view === "list") { root.moveSelection(dy); return }
+        root.settleMessageViewport()
         // originY 不是 0：虛擬化之後內容的頂端跟著已生成的項目走。
         msgList.contentY = Math.max(msgList.originY, Math.min(
           msgList.contentY + dy * Style.space(52),
@@ -5198,7 +5365,11 @@ Panel {
         // 要多按一個 Shift 對「砍掉登入狀態」這種動作反而剛好。
         // 第一下只給焦點（焦點框會亮），真的登出要再按 Enter／空白，避免手滑。
         if (t === "L") {
-          if (root.loggedIn && root.view === "list") logoutLabel.forceActiveFocus()
+          if (root.loggedIn && root.view === "list") {
+            // 登出收在 ⚙ 後面；看不見的東西拿不到焦點，先打開。
+            root.toolsOpen = true
+            logoutLabel.forceActiveFocus()
+          }
           return
         }
         // r 立刻同步，清單和對話都算。這裡不照 L 那套「先給焦點再確認」——
@@ -5206,6 +5377,12 @@ Panel {
         // 沒登入時那顆按鈕本來就不在，按鍵也跟著什麼都不做。
         if (t === "r") {
           if (root.loggedIn) root.syncNow()
+          return
+        }
+        // G：回到最新一則，跟浮在訊息上那顆「↓」同一件事 —— j／k 往上捲讀完舊的，
+        // 一鍵回來。大寫，跟 L 一樣不會在手滑時誤觸。
+        if (t === "G") {
+          if (root.activeChat && msgList.count > 0) root.jumpToLatest()
           return
         }
         if (t !== "/") return
@@ -5470,6 +5647,7 @@ Panel {
           // 位置切換：貼齊 bar → 置中 → 視窗 → 貼齊 bar。標示的是現在這一種
           // （理由見 placementLabel）。
           Text {
+            visible: root.toolsOpen
             text: root.placementLabel(root.placement)
             color: placeHover.containsMouse ? Color.accent : root.dim
             font.family: root.fontFamily
@@ -5496,6 +5674,7 @@ Panel {
 
             Text {
               required property var modelData
+              visible: root.toolsOpen
               text: modelData.label
               color: scaleHover.containsMouse ? Color.accent : root.dim
               font.family: root.fontFamily
@@ -5516,6 +5695,7 @@ Panel {
           // 跟位置那顆一樣標「現在是哪一段」，而且一定要有讀數 —— 字級按下去當場
           // 看得出來，捲動速度不捲一下根本不知道自己在第幾段。
           Text {
+            visible: root.toolsOpen
             text: tr("label.scroll", root.scrollLabel(root.scrollPercent))
             color: speedHover.containsMouse ? Color.accent : root.dim
             font.family: root.fontFamily
@@ -5539,6 +5719,7 @@ Panel {
           // 讀取筆數：按一下換下一段（30 → 60 → 100 → 150 → 30）。開聊天室的第一頁
           // 和往上翻的每一頁都是這個數字。
           Text {
+            visible: root.toolsOpen
             text: tr("label.history", root.historyLabel(root.historyPage))
             color: pageHover.containsMouse ? Color.accent : root.dim
             font.family: root.fontFamily
@@ -5606,7 +5787,7 @@ Panel {
           // 工具完全碰不到「登出」。焦點是 keyCatcher 的 L 鍵給的，不是 tab chain。
           Text {
             id: logoutLabel
-            visible: root.loggedIn
+            visible: root.loggedIn && root.toolsOpen
             text: tr("logout")
             color: (logoutHover.containsMouse || logoutLabel.activeFocus) ? Color.accent : root.dim
             font.family: root.fontFamily
@@ -5643,6 +5824,35 @@ Panel {
               onClicked: root.request("logout", {})
             }
           }
+
+          // 設定收合鈕。Tab 被 PanelKeyCatcher 拿去換面板，鍵盤要按到它得先給它
+          // 焦點，所以跟同步一樣接 Enter／空白鍵；L 鍵直接替登出打開。
+          Text {
+            id: toolsToggle
+            text: "⚙"
+            color: (root.toolsOpen || toolsHover.containsMouse || toolsToggle.activeFocus)
+              ? Color.accent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: root.fontBody
+            activeFocusOnTab: true
+
+            Accessible.role: Accessible.Button
+            Accessible.name: root.toolsOpen ? tr("acc.toolsHide") : tr("acc.toolsShow")
+            Accessible.onPressAction: root.toolsOpen = !root.toolsOpen
+            Keys.onReturnPressed: root.toolsOpen = !root.toolsOpen
+            Keys.onEnterPressed: root.toolsOpen = !root.toolsOpen
+            Keys.onSpacePressed: root.toolsOpen = !root.toolsOpen
+            Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+
+            MouseArea {
+              id: toolsHover
+              anchors.fill: parent
+              anchors.margins: -Style.space(4)
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: root.toolsOpen = !root.toolsOpen
+            }
+          }
         }
 
         // 搜尋在標題下方、清單上方，兩者都不隨捲動移動。
@@ -5659,7 +5869,7 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: root.fontBody
 
-          onTextChanged: { root.search = text; root.selectedIndex = 0; listFlick.contentY = 0 }
+          onTextChanged: root.setChatSearch(text)
           // 上下鍵在輸入框裡是移動游標，攔下來改成移動選取項。
           Keys.onDownPressed: root.moveSelection(1)
           Keys.onUpPressed: root.moveSelection(-1)
@@ -5689,7 +5899,8 @@ Panel {
         spacing: Style.space(8)
         model: root.listModel
         cacheBuffer: Style.space(600)
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        onDraggingChanged: if (dragging) root.cancelChatListRestore()
+        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded; onPressedChanged: if (pressed) root.cancelChatListRestore() }
 
         // 跟訊息清單同一顆；列只接點擊和 hover，滾輪會穿過去。
         WheelSpeed { view: listFlick }
@@ -5763,15 +5974,41 @@ Panel {
                 }
               }
 
-              Text {
+              // 時間在上、未讀數在下面一顆實心的標，跟一般通訊軟體一樣。擠在同一行
+              // 又同一個顏色的時候，「2  12 分」讀起來像「212 分」。
+              Column {
                 id: rowBadge
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.rightMargin: Style.space(10)
-                text: (Number(modelData.unread || 0) > 0 ? modelData.unread + "  " : "") + root.agoText(modelData.lastTime)
-                color: Number(modelData.unread || 0) > 0 ? root.urgent : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: root.fontBody
+                spacing: Style.space(3)
+
+                Text {
+                  anchors.right: parent.right
+                  text: root.agoText(modelData.lastTime)
+                  color: Number(modelData.unread || 0) > 0 ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Math.max(1, root.fontBody - 1)
+                }
+
+                Rectangle {
+                  anchors.right: parent.right
+                  visible: Number(modelData.unread || 0) > 0
+                  height: unreadCount.implicitHeight + Style.space(2)
+                  width: Math.max(height, unreadCount.implicitWidth + Style.space(10))
+                  radius: height / 2
+                  color: root.urgent
+
+                  Text {
+                    id: unreadCount
+                    anchors.centerIn: parent
+                    text: Number(modelData.unread || 0) > 99 ? "99+" : String(modelData.unread || 0)
+                    color: Color.background
+                    font.family: root.fontFamily
+                    font.pixelSize: Math.max(1, root.fontBody - 1)
+                    font.bold: true
+                  }
+                }
               }
             }
       }
@@ -5863,25 +6100,12 @@ Panel {
           interactive: contentHeight > height
           ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          // 換完模型視窗停在哪，只有這裡說了算。掛在 onModelChanged 而不是
-          // onCountChanged：重抓回來則數一樣時 countChanged 根本不發，只靠它
-          // 會被丟回對話最上面。
-          // keepContentY 要撐到放好位置才放：reset 之後第一次 positionViewAtEnd
-          // 會先經過靠頂端的位置（量過 contentY 0、74）才落到底，旗子先放掉的話
-          // onContentYChanged 會當成人捲到頂，白抓一頁舊訊息。
+          // 換完當場就用訊息 id 還原（restoreMessageViewport 自己會 forceLayout）。
+          // 不能 callLater：model reset 把 contentY 歸零之後、還原之前只要畫了一格，
+          // 送出時就會閃一下對話最上面再跳回底部（量過：連拍第 3 格）。
+          // 內容相同不發 modelChanged 的那種，由 setMessages 的 callLater 收尾。
           onModelChanged: {
-            var keep = root.keepContentY
-            msgList.seenContentHeight = contentHeight
-            if (count === 0) root.prependAnchorIndex = -1
-            else if (root.prependAnchorIndex >= 0) {
-              positionViewAtIndex(Math.min(root.prependAnchorIndex, count - 1), ListView.Beginning)
-              root.prependAnchorIndex = -1
-              // 錨點只放對「哪一則」，人離頂端多遠要自己補回去（理由見
-              // anchoredContentY）。捲到頂才翻頁時 keep 是 0，這一行等於不存在。
-              contentY = root.anchoredContentY(contentY, originY, keep, contentHeight, height)
-            } else if (root.atBottom) msgList.toBottom()
-            else if (keep >= 0) contentY = originY + Math.max(0, Math.min(keep, contentHeight - height))
-            root.keepContentY = -1
+            root.restoreMessageViewport()
           }
 
           // 縮圖、貼圖載完會把泡泡撐高。判斷用的是「變高之前」的高度：使用者捲動時
@@ -5899,9 +6123,19 @@ Panel {
           // 貼到最後一則要貼兩次：ListView 是先發訊號、之後才把新的高度排進版面，
           // 當場那一次會差最後一則的高度（量過：新訊息差 13px、縮圖長出來差 85px）。
           function toBottom() {
+            var generation = root.messageSwapGeneration
             positionViewAtEnd()
-            Qt.callLater(msgList.positionViewAtEnd)
+            var position = contentY
+            Qt.callLater(function() {
+              if (generation === root.messageSwapGeneration && root.atBottom
+                  && Math.abs(msgList.contentY - position) < 1)
+                msgList.positionViewAtEnd()
+            })
           }
+
+          // 讀到底了，「下面有新訊息」就不再是真的。換模型的那一刻 contentY 會先歸零
+          // 再放回去，那幾下不是人捲的，不算。
+          onAtYEndChanged: if (atYEnd && root.keepContentY < 0) root.unseenBelow = 0
 
           // 快捲到頂就往前翻一頁（差多少算「快到了」在 nearOlderEdge）。換模型時
           // ListView 會把 contentY 歸零，那不是使用者捲的 —— 旗子還在的期間一概
@@ -5955,9 +6189,20 @@ Panel {
             required property var modelData
             // 大頭貼掛在一串連續發言的第一則，而「上一則是誰講的」只有索引問得到。
             required property int index
+            // 接著上一句講（同一個人、五分鐘內）：名字和臉不再重印，標頭只剩時間和已讀；
+            // 跟上一句完全一樣就整行省掉。規則在 EventLog.headerAt。
+            readonly property var header: root.messageHeader(root.messages,
+              msgDelegate.index, msgDelegate.firstUnread)
+            // 未讀分隔線底下第一則重新印名字，臉也一起回來：單獨拿它自己問同一條規則
+            // （一串的第一則、群組裡別人的），不在這裡另寫一份。
             readonly property bool withAvatar:
               root.showAvatarAt(root.messages, msgDelegate.index)
+                || (msgDelegate.firstUnread && root.showAvatarAt([modelData], 0))
             readonly property bool systemEvent: root.isSystemEvent(modelData)
+            // 自己傳的：跟 LINE 一樣靠右、本文墊一塊淡色底。只看位置就知道誰講的，
+            // 標頭不再印「我」。
+            readonly property bool mine: !msgDelegate.systemEvent
+              && String(modelData.from || "") === root.myMid
             // 收回的訊息 LINE 照樣送過來，daemon 只清掉 hasMedia、把 text 換成
             // 「已收回訊息」；stickerUrl／flexImages 還在，不擋的話畫面上會是
             // 一張照常顯示的貼圖，旁邊一句訊息說它已經被收回。
@@ -6023,10 +6268,13 @@ Panel {
             // 每一則都掛的話，一長串下來就是一排一模一樣的圓圈。
             Row {
               width: parent.width
-              visible: !msgDelegate.systemEvent
+              visible: msgDelegate.header.shown
               spacing: Style.space(6)
+              // 自己的那一側從右邊排起：時間貼著右緣，已讀在它左邊，跟 LINE 一樣。
+              layoutDirection: msgDelegate.mine ? Qt.RightToLeft : Qt.LeftToRight
 
               AvatarBadge {
+                id: headerAvatar
                 anchors.verticalCenter: parent.verticalCenter
                 visible: msgDelegate.withAvatar
                 width: Math.round(Style.space(20) * root.fontScale)
@@ -6037,16 +6285,37 @@ Panel {
               }
 
               Text {
-                // Row 只管 x，寬度要自己扣掉左邊那顆臉，不然長名字會超出去。
-                width: Math.max(0, parent.width - x)
+                // 只拿自己需要的寬度，已讀就緊接在後面；長名字要自己扣掉臉和已讀才不會
+                // 超出去。不能拿 x 來扣：自己那側是從右邊排的，x 就是「Row 寬減掉自己
+                // 的寬」，拿它算寬度會一路縮到 0（量過：時間整個不見）。
+                width: Math.min(implicitWidth, Math.max(0, parent.width
+                  - (headerAvatar.visible ? headerAvatar.width + parent.spacing : 0)
+                  - (readLabel.visible ? readLabel.width + parent.spacing : 0)))
                 anchors.verticalCenter: parent.verticalCenter
-                text: root.clockText(modelData.time) + "  "
-                  + (modelData.from === root.myMid ? tr("me") : (modelData.fromName || "?"))
+                // 接著講的那幾則只剩時間：名字上一則已經印過了。
+                text: root.clockText(modelData.time)
+                  + (msgDelegate.header.full && !msgDelegate.mine
+                    ? "  " + (modelData.fromName || "?")
+                    : "")
                   + (modelData.edited === true ? "  " + tr("msg.edited") : "")
                 color: root.dim
                 font.family: root.fontFamily
                 font.pixelSize: root.fontBody
                 elide: Text.ElideRight
+              }
+
+              // 已讀。只有自己傳的訊息才有 —— LINE 回報的是「誰讀了我送的」，
+              // 不是反過來。緊接在時間後面，像 LINE 和其他通訊軟體一樣：狀態變了只是
+              // 換字，泡泡不長高 —— 另起一行的話，送出兩秒後已讀一到，整段對話
+              // 會再往上跳一行；推到最右邊的話，寬視窗裡離訊息將近一千像素。
+              Text {
+                id: readLabel
+                anchors.verticalCenter: parent.verticalCenter
+                visible: text.length > 0
+                text: root.readText(msgDelegate.modelData)
+                color: root.dim
+                font.family: root.fontFamily
+                font.pixelSize: Math.max(1, root.fontBody - 1)
               }
             }
 
@@ -6054,7 +6323,12 @@ Panel {
             // 那也要畫得出來（退成一行「訊息」），不能整塊消失。
             Item {
               id: quoteBlock
-              width: parent.width
+              // 自己的引言跟著本文靠右，寬度只拿需要的。
+              width: msgDelegate.mine
+                ? Math.min(parent.width, root.readableWidth,
+                    quoteRule.width + Style.space(6) + quoteLabel.implicitWidth)
+                : parent.width
+              x: msgDelegate.mine ? parent.width - width : 0
               height: quoteLabel.implicitHeight + Style.space(4)
               visible: !msgDelegate.systemEvent && !msgDelegate.recalled
                 && msgDelegate.modelData.replyTo !== undefined
@@ -6094,9 +6368,29 @@ Panel {
             // Text。readOnly 擋掉編輯；在 Qt 6.11 量過：TextEdit 會抓住滑鼠，
             // 在會捲動的列表裡往下拖是選字不是捲動，而唯讀狀態的 Ctrl+C
             // 照樣進得了剪貼簿。
+            // 量本文不換行時多寬：自己的泡泡貼著字，不撐滿整行。不能拿 TextEdit 自己的
+            // implicitWidth —— 換行的 TextEdit 會拿目前的寬度回答，寬度又綁著它就是
+            // binding loop。
+            Text {
+              id: bodyMeasure
+              visible: false
+              textFormat: Text.RichText
+              text: msgDelegate.mine ? msgBody.text : ""
+              font: msgBody.font
+            }
+
             TextEdit {
               id: msgBody
-              width: parent.width
+              readonly property real pad: msgDelegate.mine ? Style.space(8) : 0
+              width: msgDelegate.mine
+                ? Math.min(parent.width, root.readableWidth,
+                    Math.ceil(bodyMeasure.implicitWidth) + 2 * pad + 2)
+                : Math.min(parent.width, root.readableWidth)
+              x: msgDelegate.mine ? parent.width - width : 0
+              leftPadding: pad
+              rightPadding: pad
+              topPadding: msgDelegate.mine ? Style.space(4) : 0
+              bottomPadding: msgDelegate.mine ? Style.space(4) : 0
               // 貼圖載入中或載不到（404／離線）時圖都是 0 高，這行要回來頂位子。
               visible: !modelData.hasMedia && !msgDelegate.systemEvent
                 && (!msgDelegate.sticker || stickerImg.status !== Image.Ready)
@@ -6132,6 +6426,16 @@ Panel {
 
               // 沒有這個 handler，TextEdit 根本收不到 hover 事件，
               // hoveredLink 永遠是空的（量過）；游標形狀也是它帶的。
+              // 自己的泡泡底色：主題的 accent 淡淡一層，換主題跟著換。畫在字的後面，
+              // 只是底色，不接任何滑鼠事件。
+              Rectangle {
+                z: -1
+                anchors.fill: parent
+                visible: msgDelegate.mine
+                radius: Style.space(8)
+                color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.16)
+              }
+
               HoverHandler {
                 cursorShape: msgBody.hoveredLink.length > 0
                   ? Qt.PointingHandCursor : Qt.IBeamCursor
@@ -6148,7 +6452,8 @@ Panel {
             }
 
             Text {
-              width: parent.width
+              width: msgDelegate.mine ? Math.min(parent.width, implicitWidth) : parent.width
+              x: msgDelegate.mine ? parent.width - width : 0
               visible: modelData.failed === true
               text: tr("send.failedKept")
               color: root.urgent
@@ -6171,6 +6476,8 @@ Panel {
               fillMode: Image.PreserveAspectFit
               width: Style.space(120)
               height: Math.min(implicitHeight * (width / Math.max(1, implicitWidth)), Style.space(160))
+              x: msgDelegate.mine ? parent.width - width : 0
+              horizontalAlignment: msgDelegate.mine ? Image.AlignRight : Image.AlignLeft
 
               // 貼圖一載進來本文那一行就收起來了，右鍵沒有別的地方可按 ——
               // 沒有這一塊，貼圖訊息就等於沒有回覆、表情、收回。左鍵不收
@@ -6193,6 +6500,7 @@ Panel {
               visible: !msgDelegate.recalled
                 && modelData.flexImages !== undefined && modelData.flexImages.length > 0
               spacing: Style.space(6)
+              x: msgDelegate.mine ? parent.width - width : 0
 
               Repeater {
                 model: modelData.flexImages ?? []
@@ -6231,7 +6539,12 @@ Panel {
                 }
                 var failed = String(source || "")
                 if (status !== Image.Error || !failed) return
-                root.retryPreview(messageId, true)
+                // 延後一輪：這顆 delegate 可能是換模型當場還原位置時生出來的，那時
+                // model 綁定還沒更新完，同步 setMessages 會變成 binding loop，清單就
+                // 停在舊模型。每次包一個新 closure —— callLater 對同一個函式一輪只跑
+                // 最後一次，同一輪壞掉好幾張時其他張的重試會被吃掉。
+                var retryId = messageId
+                Qt.callLater(function() { root.retryPreview(retryId, true) })
               }
               visible: status === Image.Ready
               // 打不開的附件連縮圖都不畫，跟 pictureList 同一條規則 ——
@@ -6241,6 +6554,8 @@ Panel {
               fillMode: Image.PreserveAspectFit
               width: Math.min(parent.width, Style.space(220))
               height: Math.min(implicitHeight * (width / Math.max(1, implicitWidth)), Style.space(220))
+              x: msgDelegate.mine ? parent.width - width : 0
+              horizontalAlignment: msgDelegate.mine ? Image.AlignRight : Image.AlignLeft
               opacity: thumbHover.containsMouse ? 0.85 : 1.0
 
               MouseArea {
@@ -6266,7 +6581,8 @@ Panel {
             }
 
             Text {
-              width: parent.width
+              width: msgDelegate.mine ? Math.min(parent.width, implicitWidth) : parent.width
+              x: msgDelegate.mine ? parent.width - width : 0
               visible: modelData.hasMedia
                 && (!msgDelegate.thumbPath || thumb.status === Image.Error)
               // 過期的圖片沒有縮圖可看，但那不是「載入失敗」—— 那句話正是
@@ -6307,6 +6623,7 @@ Panel {
             Row {
               id: reactionBar
               spacing: Style.space(4)
+              x: msgDelegate.mine ? parent.width - width : 0
               visible: !msgDelegate.recalled
                 && msgDelegate.modelData.reactions !== undefined
                 && msgDelegate.modelData.reactions.length > 0
@@ -6347,18 +6664,55 @@ Panel {
               }
             }
 
-            // 已讀。只有自己傳的訊息才有 —— LINE 回報的是「誰讀了我送的」，
-            // 不是反過來。什麼都不知道的時候 readText 回空字串，這一列就不存在。
-            Text {
-              width: parent.width
-              horizontalAlignment: Text.AlignRight
-              visible: text.length > 0
-              text: root.readText(msgDelegate.modelData)
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Math.max(1, root.fontBody - 1)
-            }
           }
+        }
+
+        // 往上讀的時候：下面來了新訊息就說來了幾則，離底部超過一個畫面就給一顆回到
+        // 最新的。畫面本身不跟著跳（那是讀者自己捲上去的），所以要有這顆讓人知道、
+        // 也讓人一下回去。按下去等於自己捲到底：之後的新訊息照常跟著。
+        Rectangle {
+          id: jumpLatest
+          readonly property real behind: msgList.originY + msgList.contentHeight
+            - msgList.height - msgList.contentY
+          readonly property bool hasNew: root.unseenBelow > 0
+          visible: msgList.count > 0 && !msgList.atYEnd
+            && (hasNew || behind > msgList.height)
+          anchors.right: msgList.right
+          anchors.bottom: msgList.bottom
+          anchors.rightMargin: Style.space(14)
+          anchors.bottomMargin: Style.space(10)
+          height: jumpLabel.implicitHeight + Style.space(10)
+          width: jumpLabel.implicitWidth + Style.space(22)
+          radius: height / 2
+          color: hasNew ? root.urgent : Color.background
+          border.width: hasNew ? 0 : 1
+          border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b,
+            jumpHover.containsMouse ? 0.5 : 0.25)
+
+          Text {
+            id: jumpLabel
+            anchors.centerIn: parent
+            text: jumpLatest.hasNew ? tr("chat.newBelow", root.unseenBelow) : tr("chat.toLatest")
+            color: jumpLatest.hasNew ? Color.background : root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: root.fontBody
+            font.bold: jumpLatest.hasNew
+          }
+
+          MouseArea {
+            id: jumpHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.jumpToLatest()
+          }
+
+          Accessible.role: Accessible.Button
+          Accessible.name: jumpLabel.text
+          // Tab 被 PanelKeyCatcher 拿去換面板，這顆按鈕拿不到焦點；鍵盤走 G（跟 j／k
+          // 捲動同一套 vim 習慣），在這裡講明，讀螢幕的人才找得到。
+          Accessible.description: tr("chat.toLatestKey")
+          Accessible.onPressAction: root.jumpToLatest()
         }
 
         // 空清單的佔位。ListView 沒有訊息時什麼都不畫，這一行只好掛在它外面。

@@ -61,6 +61,7 @@ import {
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
+  nameCache,
   rawsById,
   readRanges,
   rememberGoneMedia,
@@ -87,6 +88,7 @@ import {
 } from "./state.ts";
 import { loadReadRange } from "./push.ts";
 import {
+  onFullRound,
   refreshChats,
   scheduleRefresh,
   setForceFullRefresh,
@@ -102,7 +104,7 @@ import type {
   TalkMsg,
 } from "./types.ts";
 import { resolveName, warmNames } from "./names.ts";
-import { haltForRestriction } from "./restriction.ts";
+import { haltForRestriction, restriction } from "./restriction.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import {
   asMessageId,
@@ -377,12 +379,13 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     // Once per open, not once per page: this is the only moment 已讀 can be
     // put on a bubble, and after it the read ops keep it current -- paging
     // back through a year of history must not pay a round trip per page.
-    if (!before || !readRanges.has(chatMid)) {
-      await loadReadRange(chatMid, owner, generation);
-    }
-    if (!sessionIsCurrent(owner, generation)) {
-      return { ok: false, error: "尚未登入" };
-    }
+    // Started, not awaited: a head page the store can answer goes out at once
+    // and the background revalidation waits for the range instead, pushing a
+    // `history` event when 已讀 moved. Every other path awaits it before it
+    // converts, overlapped with its own fetch.
+    const readRangeLoad = !before || !readRanges.has(chatMid)
+      ? loadReadRange(chatMid, owner, generation)
+      : null;
 
     let out: PluginMessage[] | null = null;
     let pageRaws: unknown[] | null = null;
@@ -399,6 +402,7 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       );
       if (stored && stored.length) {
         pageRaws = stored;
+        await readRangeLoad;
         out = await convertHistoryPage(stored, chatMid, owner, generation);
       }
     } else {
@@ -406,7 +410,15 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       if (tail && tail.length) {
         pageRaws = tail;
         out = await convertHistoryPage(tail, chatMid, owner, generation);
-        void revalidateHistory(chatMid, count, owner, generation, out);
+        void revalidateHistory(
+          chatMid,
+          count,
+          owner,
+          generation,
+          out,
+          tail,
+          readRangeLoad,
+        );
       }
     }
 
@@ -415,35 +427,50 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       if (!end || end.chat !== chatMid) {
         return { ok: false, error: "沒有這個聊天室的游標" };
       }
-      const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
-        request: {
-          messageBoxId: chatMid,
-          endMessageId: {
-            messageId: end.messageId,
-            deliveredTime: end.deliveredTime,
+      const [raws] = await Promise.all([
+        owner.base.talk.getPreviousMessagesV2WithRequest({
+          request: {
+            messageBoxId: chatMid,
+            endMessageId: {
+              messageId: end.messageId,
+              deliveredTime: end.deliveredTime,
+            },
+            messagesCount: count,
           },
-          messagesCount: count,
-        },
-      });
+        }),
+        readRangeLoad,
+      ]);
       if (!sessionIsCurrent(owner, generation)) {
         return { ok: false, error: "尚未登入" };
       }
       // LINE returns newest-first; the store and the panel both want
       // oldest-first.
       raws.reverse();
+      // The store's own records, so what is decrypted here is what the next
+      // open from the store finds already done.
+      let records: unknown[] = raws;
       if (raws.length) {
         rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
-        messageStore.append(myMid, chatMid, raws);
+        records = messageStore.append(myMid, chatMid, raws);
       }
       pageRaws = raws;
-      out = await convertHistoryPage(raws, chatMid, owner, generation);
+      out = await convertHistoryPage(records, chatMid, owner, generation);
       if (out === null) return { ok: false, error: "尚未登入" };
     }
 
+    // Behind the answer, like the thumbnails: the page is what the reader is
+    // waiting for, and the unread count reaches the panel through state.json
+    // either way. After the range, so a stale range cannot land on top of the
+    // cursor markChatRead just moved forward.
     if (req.markRead && out.length) {
       const newest = out[out.length - 1];
-      const marked = await markChatRead(owner, generation, chatMid, newest.id);
-      if (marked === null) return { ok: false, error: "尚未登入" };
+      void (async () => {
+        await readRangeLoad;
+        await markChatRead(owner, generation, chatMid, newest.id);
+      })().catch((e) => console.error("[read]", errorLine(e)));
+    }
+    if (!sessionIsCurrent(owner, generation)) {
+      return { ok: false, error: "尚未登入" };
     }
 
     // Thumbnails land behind the answer, not in front of it.
@@ -797,16 +824,128 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
  * page of history, so fall back to the plain constructor the library also
  * exposes (`new TalkMessage({ client, raw })`) and let toPluginMessage flag it.
  */
+// The block between the enil:wrap markers is sliced out verbatim by
+// wrapcache_test.ts.
+// enil:wrap-begin
+/**
+ * Decrypted messages, per session and per raw object. Opening a chat used to
+ * run every E2EE message of the page through decryptE2EEMessage again --
+ * 100-500 ms for a page of a sealed chat, on every open. LINE's own app keeps
+ * what it decrypted; this keeps it for as long as the raw it came from lives.
+ * The store hands back the same raw object while the chat stays indexed, and
+ * an edit replaces it, so a stale plaintext cannot outlive its message. Keyed
+ * by the client too: a new login never reads the previous session's results.
+ * Only successes are kept -- a key that was missing a moment ago may be there
+ * on the next open.
+ */
+const decrypted = new WeakMap<Client, WeakMap<object, TalkMsg>>();
+
 async function wrap(
   raw: TalkMessage["raw"],
   owner: Client,
 ): Promise<TalkMsg> {
+  // Taken before any await: the decrypt pool runs several wraps at once, and
+  // each creating its own map after its await kept only the last one's.
+  const known = decrypted.get(owner) ?? new WeakMap<object, TalkMsg>();
+  decrypted.set(owner, known);
+  const hit = known.get(raw);
+  if (hit) return hit;
+  // The store kept what an earlier decrypt of this exact record produced
+  // (rememberPlaintext); a restart reads it back instead of decrypting.
+  const kept = (raw as { _plain?: unknown })._plain;
+  if (kept && typeof kept === "object") {
+    const { _plain: _p, _of: _o, ...wire } = raw as unknown as Json;
+    const plain = kept as Json;
+    const restored: Json = { ...wire };
+    if ("text" in plain) restored.text = plain.text;
+    if ("location" in plain) restored.location = plain.location;
+    // The keys decrypting added or changed, over the metadata the record
+    // carries *now* -- as a fresh decrypt merges them. A recall that marked
+    // the record UNSENT after the plaintext was kept stays marked: only the
+    // decrypt's own keys were kept, never a snapshot of the whole map.
+    restored.contentMetadata = {
+      ...((wire.contentMetadata ?? {}) as Json),
+      ...((plain.contentMetadata ?? {}) as Json),
+    };
+    const tm = new TalkMessage({
+      client: owner,
+      raw: restored as unknown as TalkMessage["raw"],
+    });
+    known.set(raw, tm);
+    return tm;
+  }
   try {
-    return await TalkMessage.fromRawTalk(raw, owner);
+    // A copy: decryptE2EEMessage writes the plaintext into the object it is
+    // given. Handed the store's own record, it put plaintext into what the
+    // store compacts back to disk, and made the record differ from LINE's
+    // next copy of it -- so every revalidation swapped it and missed above.
+    const tm = await TalkMessage.fromRawTalk({
+      ...raw,
+      contentMetadata: { ...(raw.contentMetadata ?? {}) },
+    }, owner);
+    known.set(raw, tm);
+    return tm;
   } catch {
     return new TalkMessage({ client: owner, raw });
   }
 }
+
+/** A message LINE delivered sealed: decrypting it is the expensive part. */
+function sealed(raw: Json): boolean {
+  const meta = (raw.contentMetadata ?? {}) as Json;
+  return !!meta.e2eeVersion && Array.isArray(raw.chunks) &&
+    raw.chunks.length > 0;
+}
+
+/**
+ * What a decrypt changed, as the store keeps it: decryptE2EEMessage fills in
+ * text and merges contentMetadata for a text message, location for a location
+ * message. Only the metadata keys it added or changed are kept, so wrap()
+ * lays them under whatever the record carries later (an UNSENT mark). null
+ * when it changed nothing worth keeping.
+ */
+function plainOf(raw: Json, decrypted: Json): Json | null {
+  const out: Json = {};
+  if (decrypted.text !== raw.text) out.text = decrypted.text;
+  const before = (raw.contentMetadata ?? {}) as Json;
+  const after = (decrypted.contentMetadata ?? {}) as Json;
+  const added: Json = {};
+  for (const [k, v] of Object.entries(after)) {
+    if (before[k] !== v) added[k] = v;
+  }
+  if (Object.keys(added).length) out.contentMetadata = added;
+  if (
+    JSON.stringify(decrypted.location ?? null) !==
+      JSON.stringify(raw.location ?? null)
+  ) out.location = decrypted.location;
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Keep each freshly decrypted sealed message's plaintext beside its record,
+ * like the messages that arrive while the daemon runs (SAFETY.md). Only a
+ * decrypt that succeeded counts -- a failed one is tried again next open --
+ * and only records that do not carry it already.
+ */
+function rememberPlaintext(
+  records: unknown[],
+  wrapped: TalkMsg[],
+  chatMid: string,
+  owner: Client,
+): void {
+  const myMid = String(me.mid ?? "");
+  const known = decrypted.get(owner);
+  if (!known) return;
+  for (let i = 0; i < records.length; i++) {
+    const raw = records[i] as Json;
+    if (!raw || raw._plain || !sealed(raw)) continue;
+    const tm = wrapped[i];
+    if (!tm || known.get(raw) !== tm) continue;
+    const kept = plainOf(raw, tm.raw as unknown as Json);
+    if (kept) messageStore.plain(myMid, chatMid, raw, kept);
+  }
+}
+// enil:wrap-end
 
 /**
  * preview/download need the TalkMessage an id came from. The lookup ladder is
@@ -898,12 +1037,88 @@ function warmPagePreviews(
  * line only exists once its target has been converted. null means the
  * session died mid-conversion; callers answer 尚未登入.
  */
+// The block between the enil:warmrecent markers is sliced out verbatim by
+// warmrecent_test.ts.
+// enil:warmrecent-begin
+/** How many of the most recent chats a new session prepares ahead of a click. */
+const WARM_RECENT_CHATS = 12;
+/** Messages per chat: the panel's usual page, not the protocol's ceiling. */
+const WARM_PAGE = 100;
+let warmedGeneration = -1;
+
+/**
+ * What LINE's own app has ready before you tap a chat: its newest messages
+ * decrypted and its senders named. Once per session, after the first full
+ * round has sorted the list, the store's tail of each of the most recent chats
+ * goes through the same conversion an open would run -- so the first open of
+ * the day is a cache hit instead of a decrypt and a name lookup per sender.
+ * Store-only: no message is fetched from LINE, and only the name and key
+ * lookups an open would have made anyway can reach it. One chat at a time,
+ * behind anything the panel asks for.
+ */
+async function warmRecentChats(owner: Client, generation: number) {
+  if (warmedGeneration === generation) return;
+  warmedGeneration = generation;
+  const myMid = String(me.mid ?? "");
+  const recent = [...chats]
+    .sort((a, b) => Number(b.lastTime || 0) - Number(a.lastTime || 0))
+    .slice(0, WARM_RECENT_CHATS);
+  for (const row of recent) {
+    if (!sessionIsCurrent(owner, generation) || restriction) return;
+    const tail = await messageStore.tail(myMid, row.mid, WARM_PAGE);
+    if (!tail?.length) continue;
+    await convertHistoryPage(tail, row.mid, owner, generation);
+  }
+}
+// enil:warmrecent-end
+
+onFullRound((owner, generation) => {
+  void warmRecentChats(owner, generation).catch((e) =>
+    console.error("[history] warm:", errorLine(e))
+  );
+});
+
+// The block between the enil:pagenames markers is sliced out verbatim by
+// pagenames_test.ts.
+// enil:pagenames-begin
+/**
+ * Names for a page's senders in as few round trips as LINE allows: one
+ * getContactsV2 batch for all of them, then the few it could not answer in
+ * parallel through the per-mid path resolveName would have taken anyway.
+ */
+async function warmPageNames(
+  page: TalkMsg[],
+  owner: Client,
+  generation: number,
+): Promise<void> {
+  const cold = [
+    ...new Set(page.map((tm) => String(tm.raw.from ?? ""))),
+  ].filter((mid) => mid && !nameCache.has(mid));
+  // A restricted account sends nothing automatic; the page falls back to
+  // whatever the per-message lookups below still get to answer.
+  const live = () => sessionIsCurrent(owner, generation) && !restriction;
+  if (!cold.length || !live()) return;
+  await warmNames(cold);
+  if (!live()) return;
+  const left = cold.filter((mid) => !nameCache.has(mid));
+  await pooledMap(
+    left,
+    DECRYPT_WIDTH,
+    (mid) => resolveName(mid, owner, generation),
+    live,
+  );
+}
+// enil:pagenames-end
+
 async function convertHistoryPage(
   raws: unknown[],
   chatMid: string,
   owner: Client,
   generation: number,
 ): Promise<PluginMessage[] | null> {
+  // Split so state.json's timings say which half a slow open spent its time
+  // in: decryption, or names/media lookups in the conversion.
+  const started = performance.now();
   const wrapped = await pooledMap(
     raws,
     DECRYPT_WIDTH,
@@ -911,6 +1126,13 @@ async function convertHistoryPage(
     () => sessionIsCurrent(owner, generation),
   );
   if (wrapped === null) return null;
+  const decryptedAt = performance.now();
+  timings.record("history.decrypt", decryptedAt - started);
+  rememberPlaintext(raws, wrapped, chatMid, owner);
+  // Every sender's name before the loop below asks for them one by one: a
+  // cold daemon (fresh boot, new login) otherwise paid one getUser round trip
+  // per distinct sender in sequence -- six seconds for a busy group's page.
+  await warmPageNames(wrapped, owner, generation);
   const out: PluginMessage[] = [];
   for (const tm of wrapped) {
     // Return text and metadata before any media transfer. Visible image
@@ -918,6 +1140,7 @@ async function convertHistoryPage(
     if (!sessionIsCurrent(owner, generation)) return null;
     out.push(await toPluginMessage(tm, chatMid, false, owner, generation));
   }
+  timings.record("history.convert", performance.now() - decryptedAt);
   return out;
 }
 
@@ -926,6 +1149,9 @@ async function convertHistoryPage(
  * order, each carrying the same visible content. readBy is compared too: a
  * read op is exactly the kind of thing that lands between two opens.
  */
+// The block between the enil:revalidate markers is sliced out verbatim by
+// historyopen_test.ts.
+// enil:revalidate-begin
 function sameHistoryPage(a: PluginMessage[], b: PluginMessage[]): boolean {
   if (a.length !== b.length) return false;
   const shape = (m: PluginMessage) =>
@@ -953,8 +1179,36 @@ async function revalidateHistory(
   owner: Client,
   generation: number,
   served: PluginMessage[] | null,
+  servedRaws: unknown[] = [],
+  readRangeLoad: Promise<void> | null = null,
 ): Promise<void> {
-  if (historyRevalidations.has(chatMid)) return;
+  const servedAt = ++historyServeSeq;
+  const republish = async () => {
+    await readRangeLoad;
+    if (!served?.length || !servedRaws.length) return;
+    if (!sessionIsCurrent(owner, generation)) return;
+    // The store as it is now, not the raws this open was served: a
+    // revalidation that finished meanwhile has appended LINE's newer copy,
+    // and re-publishing the old one would roll an edit back on screen.
+    const now = await messageStore.tail(
+      String(me.mid ?? ""),
+      chatMid,
+      servedRaws.length,
+    );
+    const fresh = await convertHistoryPage(
+      now?.length ? now : servedRaws,
+      chatMid,
+      owner,
+      generation,
+    );
+    publishHistoryPage(chatMid, owner, generation, served, servedAt, fresh);
+  };
+  if (historyRevalidations.has(chatMid)) {
+    // Another revalidation owns the fetch; the range this open started still
+    // has to reach the bubbles if it moved 已讀.
+    if (readRangeLoad) await republish();
+    return;
+  }
   historyRevalidations.add(chatMid);
   try {
     const myMid = String(me.mid ?? "");
@@ -963,32 +1217,90 @@ async function revalidateHistory(
     // pointed at LINE's newest delivery, so the fetch below includes whatever
     // arrived while nobody was looking.
     const cursor = cursors.get(`box:${chatMid}`);
-    if (!cursor || cursor.chat !== chatMid) return;
-    const raws = await owner.base.talk.getPreviousMessagesV2WithRequest({
-      request: {
-        messageBoxId: chatMid,
-        endMessageId: {
-          messageId: cursor.messageId,
-          deliveredTime: cursor.deliveredTime,
+    if (!cursor || cursor.chat !== chatMid) {
+      await republish();
+      return;
+    }
+    // The page was served before the read range came back; convert only after
+    // it has, so the comparison below sees 已讀 as it is now.
+    const fetched = await Promise.all([
+      owner.base.talk.getPreviousMessagesV2WithRequest({
+        request: {
+          messageBoxId: chatMid,
+          endMessageId: {
+            messageId: cursor.messageId,
+            deliveredTime: cursor.deliveredTime,
+          },
+          messagesCount: count,
         },
-        messagesCount: count,
-      },
+      }),
+      readRangeLoad,
+    ]).catch((e: unknown) => {
+      console.error("[history] revalidate:", errorLine(e));
+      return null;
     });
+    if (fetched === null) {
+      // The page could not be re-read, but a range that did land still owes
+      // the served page its 已讀; no read op will come to carry it later.
+      await republish();
+      return;
+    }
+    const [raws] = fetched;
     if (!sessionIsCurrent(owner, generation)) return;
     raws.reverse();
+    // LINE's copy of a page the store already holds maps back to the held
+    // records: unchanged messages convert from the decrypt cache, not again.
+    let records: unknown[] = raws;
     if (raws.length) {
       rememberPaginationCursor(chatMid, String(raws[0].id ?? ""));
-      messageStore.append(myMid, chatMid, raws);
+      records = messageStore.append(myMid, chatMid, raws);
     }
-    const fresh = await convertHistoryPage(raws, chatMid, owner, generation);
-    if (fresh === null || sameHistoryPage(served, fresh)) return;
-    pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+    const fresh = await convertHistoryPage(records, chatMid, owner, generation);
+    publishHistoryPage(chatMid, owner, generation, served, servedAt, fresh);
   } catch (e) {
     console.error("[history] revalidate:", errorLine(e));
   } finally {
     historyRevalidations.delete(chatMid);
   }
 }
+
+/** Orders served pages against the history events published after them. */
+let historyServeSeq = 0;
+/** The last history page published per chat, stamped on the same counter. */
+const publishedHistory = new Map<
+  string,
+  { page: PluginMessage[]; after: number }
+>();
+
+/**
+ * One `history` event for a page that differs from what the panel was served.
+ * Two background paths can land on the same answer for the same chat (an
+ * open's range republish and an older revalidation); the second one is
+ * dropped when a page published after this serve already says the same.
+ */
+function publishHistoryPage(
+  chatMid: string,
+  owner: Client,
+  generation: number,
+  served: PluginMessage[],
+  servedAt: number,
+  fresh: PluginMessage[] | null,
+): void {
+  // A conversion that straddled a logout can still hand back a page; it must
+  // not reach the next account's event stream.
+  if (fresh === null || !sessionIsCurrent(owner, generation)) return;
+  if (sameHistoryPage(served, fresh)) return;
+  const prior = publishedHistory.get(chatMid);
+  if (prior && prior.after > servedAt && sameHistoryPage(prior.page, fresh)) {
+    return;
+  }
+  publishedHistory.set(chatMid, { page: fresh, after: ++historyServeSeq });
+  if (publishedHistory.size > 64) {
+    publishedHistory.delete(publishedHistory.keys().next().value!);
+  }
+  pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+}
+// enil:revalidate-end
 
 async function serve(conn: Deno.Conn): Promise<void> {
   notePanelOpened();

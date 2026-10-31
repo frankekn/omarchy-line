@@ -28,11 +28,13 @@ must exit 0.
 ```bash
 (cd daemon && deno task check && deno task no-any && deno task lint && deno task fmt && deno task test)
 node tests/qml/run.js
+python3 tests/qml/chat_scroll_test.py
+python3 tests/qml/message_scroll_test.py
 python3 tests/qml/supervisor_test.py
 tests/qml/keytest/run.sh
 python3 daemon/stub_test.py
 omarchy plugin validate .
-qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
+tools/qmllint.sh
 ```
 
 - `deno task check` type-checks the daemon. `deno task no-any` and
@@ -42,6 +44,9 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
   sliced out between `// enil:*` markers and tested on their own.
 - `node tests/qml/run.js` slices function bodies out of `Panel.qml` and runs
   them. It needs no daemon, socket, or state directory.
+- `chat_scroll_test.py` and `message_scroll_test.py` exercise the actual panel
+  methods in offscreen Qt ListViews, including push bursts, read receipts,
+  history updates and paging. They use synthetic data and require `qmltestrunner`.
 - `python3 tests/qml/supervisor_test.py` exercises recovery under an offscreen
   Quickshell with fake systemctl, sockets and state. It skips without
   Quickshell and never operates the real service or LINE account.
@@ -50,6 +55,11 @@ qmllint -I /usr/share/omarchy/shell Panel.qml LinePanel.qml LineWindow.qml
 - `python3 daemon/stub_test.py` checks the stub against the protocol. It runs
   inside its own temporary `XDG_STATE_HOME`.
 - `omarchy plugin validate .` and `qmllint` need the local Omarchy shell.
+- `tools/qmllint.sh` checks every root QML file. It maps the installed shell
+  into a temporary `qs/` import directory for `qs.Commons` and `qs.Ui`.
+  `OMARCHY_PATH` selects another installation. The script preserves all native
+  diagnostics and the exit status. Use `tools/qmllint.sh --max-warnings 0` to
+  require zero warnings; the default warning limit depends on the Qt version.
 
 None of these proves the screen looks right. After a change, check it on
 real hardware:

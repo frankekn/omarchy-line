@@ -371,6 +371,16 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
       }
     }
     capCursors();
+    // A picture that settled while this round ran was written into the list
+    // this round is about to replace (settleAvatar patches the published
+    // rows), so take it along -- otherwise it vanished until the next full
+    // round, up to five minutes later. Nothing awaits between here and
+    // setChats, so a later settle patches the published list itself.
+    for (const row of next) {
+      if (row.avatarPath) continue;
+      const avatar = avatarNow(row.mid, c, generation);
+      if (avatar) row.avatarPath = avatar;
+    }
     // Replace rather than merge: boxes that dropped out of the list must not
     // keep an entry forever.
     const sorted = next.sort((a, b) => b.lastTime - a.lastTime);
@@ -390,6 +400,7 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     setChatListHealth(nextListHealth);
     // Before the write, so the fresh `at` and the fresh chats land together.
     noteRefreshOk();
+    fullRoundListener?.(c, generation);
     // Most full rounds answer exactly what the list already shows -- a read
     // receipt or an own-device read forces one just to settle unread -- and
     // rewriting ~64 KB with an fsync made every open panel re-parse the whole
@@ -802,6 +813,18 @@ async function runIncrementalRefresh(
   }
 }
 // enil:incremental-end
+
+/**
+ * Told after every published full round. socket.ts uses the first one of a
+ * session to warm the most recent chats; the hook keeps refresh.ts from
+ * importing socket.ts, which already imports it.
+ */
+let fullRoundListener: ((c: Client, generation: number) => void) | null = null;
+export function onFullRound(
+  listener: (c: Client, generation: number) => void,
+): void {
+  fullRoundListener = listener;
+}
 
 /** Login resets the round bookkeeping it retires; see logoutClaimed. */
 export function resetRefreshRound(generation: number): void {
