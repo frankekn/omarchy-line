@@ -10292,7 +10292,7 @@ ok(
   "drawn on the first message of a run only",
 );
 ok(
-  /readonly property bool withAvatar:\n\s+root\.showAvatarAt\(root\.messages, msgDelegate\.index\)/
+  /readonly property bool withAvatar:\n\s+root\.showAvatarAt\(root\.messages, msgDelegate\.index\)\n\s+\|\| \(msgDelegate\.firstUnread && root\.showAvatarAt\(\[modelData\], 0\)\)/
     .test(msgRows),
   "by the rule the tests above drive, not a second copy of it inside the delegate",
 );
@@ -17472,13 +17472,53 @@ group("(ux2) messages that land below a reader who scrolled up are counted");
 
 group("(ux3) readable rows");
 {
-  ok(/id: msgBody\n\s+width: Math\.min\(parent\.width, root\.readableWidth\)/.test(src),
-     "a message body stops at a readable line length in a wide window");
-  ok(/width: Math\.min\(implicitWidth, Math\.max\(0, parent\.width - x/.test(src),
-     "the header text takes only its own width, so 已讀 sits right after the time");
+  ok(/id: msgBody[\s\S]{0,400}: Math\.min\(parent\.width, root\.readableWidth\)\n/.test(src) &&
+     /id: msgBody[\s\S]{0,300}Math\.min\(parent\.width, root\.readableWidth,\n\s+Math\.ceil\(bodyMeasure\.implicitWidth\)/.test(src),
+     "a message body stops at a readable line length in a wide window, ours hugging its text");
+  ok(/readonly property bool mine: !msgDelegate\.systemEvent\n\s+&& String\(modelData\.from \|\| ""\) === root\.myMid/.test(src),
+     "our own messages are told apart once, in the delegate");
+  ok(/layoutDirection: msgDelegate\.mine \? Qt\.RightToLeft : Qt\.LeftToRight/.test(src) &&
+     /msgDelegate\.header\.full && !msgDelegate\.mine/.test(src),
+     "ours line up on the right like LINE, the header reading 已讀 then time, no 我");
+  ok((src.match(/x: msgDelegate\.mine \? parent\.width - width : 0/g) || []).length >= 8,
+     "every block of our message -- quote, body, failure, sticker, FLEX, thumbnail, file, reactions -- sits on the right");
+  ok(/id: bodyMeasure\n\s+visible: false\n\s+textFormat: Text\.RichText/.test(src),
+     "the bubble's width comes from a hidden Text, never the wrapping TextEdit's own implicitWidth (a binding loop)");
+  ok(/z: -1\n\s+anchors\.fill: parent\n\s+visible: msgDelegate\.mine\n\s+radius: Style\.space\(8\)\n\s+color: Qt\.rgba\(Color\.accent\.r, Color\.accent\.g, Color\.accent\.b, 0\.16\)/.test(src),
+     "our bubble is a faint tint of the theme's accent behind the text");
+  ok(/width: Math\.min\(implicitWidth, Math\.max\(0, parent\.width\n\s+- \(headerAvatar\.visible \? headerAvatar\.width \+ parent\.spacing : 0\)\n\s+- \(readLabel\.visible \? readLabel\.width \+ parent\.spacing : 0\)\)\)/.test(src),
+     "the header text takes only its own width, so 已讀 sits right after the time -- " +
+       "and never from x, which a right-to-left row derives from that same width");
   ok(/id: rowBadge[\s\S]{0,400}text: root\.agoText\(modelData\.lastTime\)/.test(src) &&
      /id: unreadCount[\s\S]{0,120}"99\+"/.test(src),
      "the chat list shows the time above an unread badge, not '2  12 分' on one line");
+}
+
+group("(ux4) the settings row folds behind ⚙; 同步 stays out");
+{
+  const row = src.slice(src.indexOf("          id: scaleRow"), src.indexOf("id: toolsHover"));
+  ok(/property bool toolsOpen: false/.test(src), "folded by default");
+  ok(/visible: root\.toolsOpen\n\s+text: root\.placementLabel/.test(row) &&
+     /required property var modelData\n\s+visible: root\.toolsOpen/.test(row) &&
+     /visible: root\.toolsOpen\n\s+text: tr\("label\.scroll"/.test(row) &&
+     /visible: root\.toolsOpen\n\s+text: tr\("label\.history"/.test(row) &&
+     /id: logoutLabel\n\s+visible: root\.loggedIn && root\.toolsOpen/.test(row),
+     "placement, A−/A+, scroll, history and 登出 only show when it is open");
+  ok(/id: syncLabel\n\s+visible: root\.loggedIn\n/.test(row),
+     "同步, used every day, is never folded away");
+  const gear = src.slice(src.indexOf("id: toolsToggle"), src.indexOf("id: toolsHover") + 400);
+  ok(/Keys\.onReturnPressed: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Keys\.onSpacePressed: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /onClicked: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Accessible\.onPressAction: root\.toolsOpen = !root\.toolsOpen/.test(gear) &&
+     /Accessible\.name: root\.toolsOpen \? tr\("acc\.toolsHide"\) : tr\("acc\.toolsShow"\)/.test(gear),
+     "⚙ toggles by mouse, keyboard and assistive tech");
+  ok(/onToolsOpenChanged: if \(!root\.toolsOpen && logoutLabel\.activeFocus\) toolsToggle\.forceActiveFocus\(\)/.test(src),
+     "folding it never leaves focus on the hidden 登出, where Enter would still log out");
+  ok(/item\.linkAt\(x - \(item\.leftPadding \|\| 0\), y - \(item\.topPadding \|\| 0\)\)/.test(body("  function openMessageMenu(item, x, y, m) {")),
+     "a right-click on a link inside our padded bubble still finds the link");
+  ok(/root\.toolsOpen = true\n\s+logoutLabel\.forceActiveFocus\(\)/.test(src),
+     "L still reaches 登出: it opens the row first, since a hidden item takes no focus");
 }
 
 require("./supervisor.js");

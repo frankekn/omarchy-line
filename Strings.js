@@ -49,6 +49,8 @@ var STRINGS = {
   "chat.newBelow":      { zh: "↓ %1 則新訊息", en: "↓ %1 new" },
   "chat.toLatest":      { zh: "↓ 回到最新", en: "↓ Latest" },
   "chat.toLatestKey":   { zh: "按 G 回到最新一則", en: "Press G to jump to the latest" },
+  "acc.toolsShow":      { zh: "顯示設定", en: "Show settings" },
+  "acc.toolsHide":      { zh: "收起設定", en: "Hide settings" },
 
   // 訊息列
   "msg.edited":        { zh: "已編輯", en: "edited" },
