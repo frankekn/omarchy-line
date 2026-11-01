@@ -66,6 +66,14 @@ export async function navigation(h) {
     await page.locator(`#${active}`).getAttribute("aria-selected"),
     "true",
   );
+  // The choice is a filled row, not a side stripe.
+  assert.deepEqual(
+    await page.locator(`#${active}`).evaluate((node) => {
+      const style = getComputedStyle(node);
+      return [style.boxShadow, style.borderLeftWidth];
+    }),
+    ["none", "0px"],
+  );
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
   assert.equal(

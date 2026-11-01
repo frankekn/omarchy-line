@@ -48,6 +48,41 @@
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
+    <!-- One stroke icon set, drawn like the gear and the pin and mute marks. -->
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="i-search" viewBox="0 0 16 16">
+        <circle cx="7" cy="7" r="4.5" />
+        <path d="m10.4 10.4 3.6 3.6" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 16 16">
+        <path d="M8 2.5v11M2.5 8h11" />
+      </symbol>
+      <symbol id="i-minus" viewBox="0 0 16 16">
+        <path d="M2.5 8h11" />
+      </symbol>
+      <symbol id="i-close" viewBox="0 0 16 16">
+        <path d="m3.5 3.5 9 9m0-9-9 9" />
+      </symbol>
+      <symbol id="i-left" viewBox="0 0 16 16">
+        <path d="M13 8H3m4.5-4.5L3 8l4.5 4.5" />
+      </symbol>
+      <symbol id="i-right" viewBox="0 0 16 16">
+        <path d="M3 8h10M8.5 3.5 13 8l-4.5 4.5" />
+      </symbol>
+      <symbol id="i-up" viewBox="0 0 16 16">
+        <path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" />
+      </symbol>
+      <symbol id="i-sticker" viewBox="0 0 16 16">
+        <circle cx="8" cy="8" r="5.5" />
+        <path d="M5.7 9.4a3.2 3.2 0 0 0 4.6 0M6.2 6.2v.6m3.6-.6v.6" />
+      </symbol>
+      <symbol id="i-download" viewBox="0 0 16 16">
+        <path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 16 16">
+        <path d="M5 3.5v9l7-4.5Z" />
+      </symbol>
+    </svg>
     <main id="signin-screen" class="auth-screen" hidden>
       <section class="auth-card" aria-labelledby="signin-title">
         <h1 id="signin-title" data-i18n="signinTitle">連接你的 LINE</h1>
@@ -94,7 +129,7 @@
                 aria-live="polite">同步</button>
             </div>
             <label
-              class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
+              class="search-wrap"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
             <div class="nav-actions">
               <button id="switcher-open" class="text-button" type="button"
                 data-i18n="switcher" aria-haspopup="dialog">切換聊天室</button>
@@ -120,7 +155,7 @@
           </div>
           <div id="chat-view" class="chat-view" hidden>
             <header
-              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><div class="chat-actions"><button id="chat-search" class="text-button" type="button" data-i18n="chatSearchShort" data-i18n-title="chatSearch" aria-label="在此聊天室搜尋" title="在此聊天室搜尋" aria-haspopup="dialog">搜尋</button><button id="pin-chat" class="text-button" type="button"></button><button id="mute-chat" class="text-button" type="button"></button><button id="hide-chat" class="text-button" type="button"></button></div></header>
+              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg></button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><div class="chat-actions"><button id="chat-search" class="text-button" type="button" data-i18n="chatSearchShort" data-i18n-title="chatSearch" aria-label="在此聊天室搜尋" title="在此聊天室搜尋" aria-haspopup="dialog">搜尋</button><button id="pin-chat" class="text-button" type="button"></button><button id="mute-chat" class="text-button" type="button"></button><button id="hide-chat" class="text-button" type="button"></button></div></header>
             <div id="messages" class="messages" role="log" aria-live="polite"
               aria-relevant="additions text" aria-labelledby="active-name"
               tabindex="0"></div>
@@ -132,14 +167,14 @@
               <div id="upload-status" class="upload-status" role="status"
                 hidden></div>
               <div id="reply-target" class="reply-target"
-                hidden><span id="reply-label"></span><button id="cancel-reply" class="icon-button" type="button" data-i18n-title="cancelReply" aria-label="取消回覆">×</button></div>
+                hidden><span id="reply-label"></span><button id="cancel-reply" class="icon-button" type="button" data-i18n-title="cancelReply" aria-label="取消回覆"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
               <div id="sticker-picker" class="sticker-picker" hidden>
                 <div
-                  class="picker-header"><strong data-i18n="stickers">貼圖</strong><button id="refresh-stickers" class="text-button" type="button" data-i18n="refresh">重新整理</button><button id="close-stickers" class="icon-button" type="button" data-i18n-title="close" aria-label="關閉">×</button></div>
+                  class="picker-header"><strong data-i18n="stickers">貼圖</strong><button id="refresh-stickers" class="text-button" type="button" data-i18n="refresh">重新整理</button><button id="close-stickers" class="icon-button" type="button" data-i18n-title="close" aria-label="關閉"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
                 <div id="sticker-content" class="sticker-content"></div>
               </div>
               <form id="composer"
-                class="composer"><div class="composer-tools"><button id="attach" class="tool-button" type="button" data-i18n-title="attach" aria-label="附加檔案">＋</button><button id="stickers" class="tool-button sticker-toggle" type="button" data-i18n-title="stickers" aria-label="貼圖">☺</button><input id="file-input" type="file" multiple hidden></div><label class="sr-only" for="message-input" data-i18n="messageLabel">訊息</label><textarea id="message-input" rows="1" data-placeholder="messagePlaceholder" placeholder="輸入訊息…"></textarea><button id="send" class="send-button" type="submit" data-i18n-title="send" aria-label="送出">↑</button></form>
+                class="composer"><div class="composer-tools"><button id="attach" class="tool-button" type="button" data-i18n-title="attach" aria-label="附加檔案"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button><button id="stickers" class="tool-button sticker-toggle" type="button" data-i18n-title="stickers" aria-label="貼圖"><svg class="icon" aria-hidden="true"><use href="#i-sticker"/></svg></button><input id="file-input" type="file" multiple hidden></div><label class="sr-only" for="message-input" data-i18n="messageLabel">訊息</label><textarea id="message-input" rows="1" data-placeholder="messagePlaceholder" placeholder="輸入訊息…"></textarea><button id="send" class="send-button" type="submit" data-i18n-title="send" aria-label="送出"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></button></form>
               <div class="composer-hint"
                 data-i18n="composerHint">Enter 送出 · Shift + Enter 換行</div>
             </div>
@@ -156,7 +191,8 @@
       <div class="settings-header">
         <h2 id="settings-title" data-i18n="settings">設定</h2>
         <button id="settings-close" class="icon-button" type="button"
-          data-i18n-title="close" aria-label="關閉">×</button>
+          data-i18n-title="close"
+          aria-label="關閉"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       </div>
       <div class="settings-body">
         <fieldset>
@@ -234,22 +270,23 @@
         <div class="lightbox-navigation">
           <button id="lightbox-prev" class="icon-button" type="button"
             data-i18n-title="previousImage"
-            aria-keyshortcuts="ArrowLeft">←</button>
+            aria-keyshortcuts="ArrowLeft"><svg class="icon" aria-hidden="true"><use href="#i-left"/></svg></button>
           <button id="lightbox-next" class="icon-button" type="button"
             data-i18n-title="nextImage"
-            aria-keyshortcuts="ArrowRight">→</button>
+            aria-keyshortcuts="ArrowRight"><svg class="icon" aria-hidden="true"><use href="#i-right"/></svg></button>
           <button id="lightbox-zoom-out" class="icon-button" type="button"
-            data-i18n-title="zoomOut" aria-keyshortcuts="-">−</button>
+            data-i18n-title="zoomOut"
+            aria-keyshortcuts="-"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
           <button id="lightbox-zoom-in" class="icon-button" type="button"
             data-i18n-title="zoomIn"
-            aria-keyshortcuts="= Shift+= Plus">+</button>
+            aria-keyshortcuts="= Shift+= Plus"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
         </div>
         <span id="lightbox-name"></span>
         <button id="lightbox-download" class="secondary" type="button"
           data-i18n="downloadOriginal">下載原圖</button>
         <button id="lightbox-close" class="icon-button" type="button"
           data-i18n-title="close" aria-label="關閉"
-          aria-keyshortcuts="Escape">×</button>
+          aria-keyshortcuts="Escape"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       </div>
       <p id="lightbox-error" role="alert" data-i18n="mediaFailed" hidden></p>
       <div id="lightbox-stage" class="lightbox-stage">

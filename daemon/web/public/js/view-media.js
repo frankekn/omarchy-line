@@ -6,6 +6,7 @@ import {
   el,
   fileUrl,
   httpsUrl,
+  icon,
   safeImage,
   sizeText,
 } from "./dom.js";
@@ -550,11 +551,9 @@ export function createMediaView(ctx) {
       const button = el("button", "download-button", t("download"));
       button.type = "button";
       button.addEventListener("click", () => downloadMessage(chat, message));
-      card.append(
-        el("span", "file-icon", type === "VIDEO" ? "▷" : "↓"),
-        info,
-        button,
-      );
+      const mark = el("span", "file-icon");
+      mark.append(icon(type === "VIDEO" ? "play" : "download"));
+      card.append(mark, info, button);
       bubble.append(card);
     }
   }
