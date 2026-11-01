@@ -615,6 +615,7 @@ Deno.test("replacement history retains older-page events without duplicate reads
       throw error;
     },
     isViewingChat: () => true,
+    messageSound: () => {},
     applyEvent: (event: object, render: boolean) =>
       state.applyEvent(event, render),
   };
@@ -748,6 +749,7 @@ Deno.test("background markRead failures only write a debug line", async () => {
     const ctx = {
       model,
       isViewingChat: () => true,
+      messageSound: () => {},
       command: () => Promise.reject(new Error("read failure")),
       renderMessages: () => {},
     };
@@ -1155,6 +1157,7 @@ Deno.test("acknowledged sends stay visible until their own echo", async () => {
       ...store,
       renderMessages: () => {},
       isViewingChat: () => false,
+      messageSound: () => {},
       displayError: () => {},
       toast: () => {},
       sendFiles: () => {},

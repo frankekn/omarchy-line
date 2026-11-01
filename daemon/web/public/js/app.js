@@ -19,6 +19,7 @@ import { createComposerView } from "./view-composer.js";
 import { createMentionsView } from "./view-mentions.js";
 import { createStickersView } from "./view-stickers.js";
 import { createUploadView } from "./view-upload.js";
+import { createSettingsView } from "./view-settings.js";
 
 const language = navigator.language || "";
 const english = isEnglish(language),
@@ -53,6 +54,7 @@ provide("view-composer", createComposerView(ctx));
 provide("view-mentions", createMentionsView(ctx));
 provide("view-stickers", createStickersView(ctx));
 provide("view-upload", createUploadView(ctx));
+provide("view-settings", createSettingsView(ctx));
 provide("controller-state", createStateController(ctx));
 provide("controller-chat", createChatController(ctx));
 provide("controller-send", createSendController(ctx));

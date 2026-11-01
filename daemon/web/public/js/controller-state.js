@@ -108,6 +108,7 @@ export function createStateController(ctx) {
     }
     if (!result.accepted) return;
     const chat = String(event.chat || "");
+    if (event.kind === "message") ctx.messageSound(chat, event.message);
     if (
       event.kind === "message" && event.message?.requestId &&
       event.message.from === model.account

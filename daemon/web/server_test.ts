@@ -658,6 +658,19 @@ Deno.test("modulepreload lists the entrypoint's runtime import graph", async () 
   assertEquals(preloads.sort(), paths.sort());
 });
 
+Deno.test("boot script runs synchronously before the stylesheet", async () => {
+  const publicDir = new URL("./public/", import.meta.url);
+  const html = await Deno.readTextFile(new URL("index.html", publicDir));
+  const head = html.slice(0, html.indexOf("</head>"));
+  const boot = head.indexOf('<script src="/js/boot.js"></script>');
+  assert(boot > 0, "boot.js is a classic script in <head>");
+  assert(boot < head.indexOf('<link rel="stylesheet"'));
+  // A module or deferred boot script would run after the first paint.
+  assertEquals([...head.matchAll(/<script\b/g)].length, 2);
+  const source = await Deno.readTextFile(new URL("js/boot.js", publicDir));
+  assert(!/^\s*(?:import|export)\b/m.test(source), "boot.js is not a module");
+});
+
 Deno.test("a POST from another origin is refused", async () => {
   const { stateDir, web } = await fixture();
   try {

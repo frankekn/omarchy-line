@@ -106,6 +106,7 @@ try {
     ["/app.css", "app.css"],
     ["/js/app.js", "js/app.js"],
     ["/js/text.js", "js/text.js"],
+    ["/js/boot.js", "js/boot.js"],
   ];
   const expected = new Map();
   for (const [url, path] of paths) {
