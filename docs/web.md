@@ -116,6 +116,24 @@ Esc also closes the mention picker from the message input. These shortcuts
 require the chat workspace and ignore Ctrl, Alt, Command and text composition.
 Use up/down, `j`/`k`, `/` and `r` without Shift.
 
+Ctrl+K (Command+K on a Mac) opens the chat switcher from anywhere in the
+workspace, including the message input. The "Switch chat" button above the
+list opens it too. Type part of a chat name: exact matches come first, then
+prefix, substring and in-order letter matches. Chats with unread messages and
+recent activity lead each group. Hidden chats are listed with a "Hidden" tag.
+Up/down select, Enter opens and Esc closes and returns focus.
+
+"Next unread" above the list appears when a visible chat has unread messages.
+It opens the next unread chat below the current one in list order and wraps
+to the top. Alt+Down does the same outside text fields, and `]` does it when
+focus is on the chat list or the messages. Opening a chat this way marks it
+read like a click.
+
+The tab title shows the unread total of visible chats, for example
+`(3) enil`, capped at `99+`. The favicon gets a dot while there is unread
+mail. The title adds "Offline" after the connection drops and "Sign-in
+required" when the web session needs a key.
+
 In the message input, Enter selects an open mention choice. Otherwise, Enter
 sends when the viewport is at least 701px wide and the primary pointer is
 fine; in other cases it adds a line. Shift+Enter adds a line. In the image
