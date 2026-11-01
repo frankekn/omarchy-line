@@ -141,7 +141,7 @@ focus is on the chat list or the messages. Opening a chat this way marks it
 read like a click.
 
 The tab title shows the unread total of visible chats, for example
-`(3) enil`, capped at `99+`. The favicon gets a dot while there is unread
+`(3) Line Web`, capped at `99+`. The favicon gets a dot while there is unread
 mail. The title adds "Offline" after the connection drops and "Sign-in
 required" when the web session needs a key.
 
@@ -164,8 +164,13 @@ are sent with Brotli or gzip when the browser accepts it. Media from
 
 ### Settings
 
-**Settings** in the top bar opens a dialog with three options. Each browser
-keeps its own settings in local storage; the server does not store them.
+The page has no top bar. The gear button at the bottom left, next to your
+name and the connection status, opens a dialog with three options. The status
+is a dot and a word, in the warning color while the page is disconnected. On
+a phone the button is at the bottom of the chat list; an open chat shows only
+its own header. On the LINE sign-in screen the button and the status sit in
+the bottom-left corner. Each browser keeps its own settings in local storage;
+the server does not store them.
 
 - **Text size** scales the whole page: 85%, 100%, 115%, 130% or 150%, where
   100% is 14 px.
@@ -218,6 +223,16 @@ dialog stays open:
 A row whose field the daemon does not write is left out. `state.json` has no
 daemon version or commit, so the block does not show one. It has no restart
 or other actions.
+
+### Account
+
+The **Account** section at the bottom of the dialog has two buttons, each
+with a short explanation:
+
+- **Leave web page** signs this browser out. LINE stays signed in.
+- **Sign out of LINE** asks for confirmation, then signs the daemon out of
+  LINE. The panel and every browser need a new QR code sign-in. It shows
+  only while LINE is signed in.
 
 ### Data use
 
