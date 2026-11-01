@@ -302,7 +302,9 @@ async function run(mode) {
     await checkAssets(page, base, modules);
     await page.getByLabel("Web key").fill(key);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await page.locator("#connection.connected").waitFor();
+    // Without a LINE session the sidebar stays hidden; the corner row shows
+    // the connection status.
+    await page.locator("#corner-connection.connected").waitFor();
     await page.locator("#line-login").waitFor();
     await page.getByRole("button", { name: "Sign in to LINE" }).waitFor();
     assert.match(

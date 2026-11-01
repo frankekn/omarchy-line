@@ -1,6 +1,21 @@
 // WebSocket lifecycle, request correlation and reconnect backoff. The socket
 // and clock are injectable.
 import { makeStateDecoder } from "./state-wire.js";
+
+/**
+ * The page's event position, offered as a second subprotocol that the
+ * server reads but never selects: the server then sends only the events
+ * after it. A page that has seen no events asks for the tail (watermark only).
+ * @param {{boot?: string, seq?: number, eventsSeen?: boolean}} model
+ */
+export function eventsProtocol(model) {
+  const boot = String(model.boot || ""), seq = Number(model.seq);
+  return model.eventsSeen && /^[A-Za-z0-9_-]{1,128}$/.test(boot) &&
+      Number.isSafeInteger(seq) && seq >= 0
+    ? `enil-events-v1.${boot}.${seq}`
+    : "enil-events-v1.tail";
+}
+
 /**
  * @typedef {object} Socket
  * @property {number} readyState
@@ -94,7 +109,10 @@ export function createConnection(
     cancel(model.retryTimer);
     model.retryTimer = null;
     if (!quiet) onStatus(model.everConnected ? "reconnecting" : "connecting");
-    const socket = new WebSocketClass(url, "enil-state-delta-v1");
+    const socket = new WebSocketClass(url, [
+      "enil-state-delta-v1",
+      eventsProtocol(model),
+    ]);
     const decodeState = makeStateDecoder();
     let gotFrame = false, resyncing = quiet;
     model.socket = socket;

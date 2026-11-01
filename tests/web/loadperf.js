@@ -253,7 +253,8 @@ async function checkWarmAuth(page, cdp) {
   try {
     await Promise.all([
       page.waitForNavigation({ waitUntil: "commit" }),
-      page.locator("#web-signout").click(),
+      page.locator("#settings-open").click()
+        .then(() => page.locator("#web-signout").click()),
     ]);
     await page.locator("#signin-screen").waitFor({ state: "visible" });
     assert.equal(await page.locator("#app").isHidden(), true);

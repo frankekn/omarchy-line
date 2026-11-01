@@ -25,6 +25,8 @@
 | `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |
 | `avatars.json` | 哪個 mid 的哪一版大頭貼已經處理過，重開不用重抓（daemon 專用） |
 | `hidden.json` | 被隱藏的聊天室 mid，`{"mids":[…]}`（原子寫入，daemon 專用，上限 1000） |
+| `pinned.json` | 釘選的聊天室 mid，格式和規則同 `hidden.json` |
+| `muted.json` | 靜音的聊天室 mid，格式和規則同 `hidden.json` |
 | `panel-stickers.json` | 最近用過的貼圖，照帳號分（**外掛**寫的，原子寫入；daemon 不讀） |
 | `qr-<ts>.png` | 登入 QR；每次產生都換檔名（同名檔 QML `Image` 不會重載） |
 
@@ -50,7 +52,9 @@
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
       "avatarPath": "…/media/avatars/<sha1>.jpg",    // 選用，沒有就是沒設大頭貼
       // 選用，只有被隱藏的那幾間才有
-      "hidden": true }
+      "hidden": true,
+      // 選用，只有釘選／靜音的那幾間才有
+      "pinned": true, "muted": true }
   ],
   "chatsRevision": 12,                 // chats／chatList 有變才遞增；心跳不動
   // 選用；false 代表伺服器還有下一頁
@@ -75,6 +79,9 @@
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }  // 選用，見下
 }
 ```
+
+`lastText` 是單行預覽：daemon 把它截到 200 個 code point，並加上 `…`。完整的文字
+仍在 `history` 裡。
 
 `login.reason`、`login.attempt`、`login.settled`、`link`、`refresh` 和 `wanted` 都是選用的：舊的 daemon 不會寫，面板
 缺了它們也要照樣畫得出來（`link.push` 是 `"up"` 或 `"down"`，`since` 是這個狀態
@@ -129,6 +136,11 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 （不是 `false`），舊的面板照樣畫得出來。被隱藏的聊天**仍然留在 `chats` 裡**，因為面板
 要靠它做搜尋，只是平常不畫。daemon 在每次寫 state 的當下才蓋上這個鍵，來源是
 `hidden.json`；聊天摘要本身的快取不帶它，不然隱藏之後那份快取會一直說著舊答案。
+
+`pinned` 和 `muted` 規則相同，來源是 `pinned.json` 和 `muted.json`：只在為 true 時
+出現，在寫 state 和推送單一列時蓋上。它們放在列上，而不是在最上層放一份 id 清單，
+因為網頁的 `state-delta` 每次都會重送所有最上層欄位，但只帶有變動的列。靜音的聊天室
+不發桌面通知，列本身和 `unread` 都不變。
 
 ## `wanted`：從通知點進來的聊天室
 
@@ -193,6 +205,7 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | cmd | 參數 | 成功時的 `data` |
 |---|---|---|
 | `history` | `chat`, `count`（1–200，超界夾住、非數字當 30）, `before?`（往前翻頁的訊息 id）, `markRead?` | 訊息陣列，舊的在前 |
+| `search` | `q`（1–100 個字）, `chat?`（一個聊天室 id）, `limit?`（1–100，預設 30）, `before?`（毫秒時間，只回比它舊的） | `{results, partial, more, scanned}`；見[搜尋](#搜尋) |
 | `markRead` | `chat`, `upTo`（已讀到最新訊息 id 的十進位字串） | `{ "marked": bool }`。若已讀位置已涵蓋 `upTo`、該列已是 0 未讀且沒有尚未計入的訊息，或 LINE 拒絕標記，就會是 `false` |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | 無 |
 | `reply` | `chat`, `text`, `replyTo`（要回覆的訊息 id）, `mentions?`, `requestId?` | 無 |
@@ -210,6 +223,10 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | 無 |
 | `hide` | `chat` | 無（把那一間從清單上拿掉，記在 `hidden.json`） |
 | `unhide` | `chat` | 無 |
+| `pin` | `chat` | 無（網頁上把這一列排到最前面，記在 `pinned.json`） |
+| `unpin` | `chat` | 無 |
+| `mute` | `chat` | 無（不發桌面通知，記在 `muted.json`） |
+| `unmute` | `chat` | 無 |
 | `login` | 無 | 無 |
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
@@ -254,6 +271,27 @@ URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
 傳送用的 `requestId` 不同。bridge 拒絕剪貼簿指令，`sendFile` 只接受 web server
 持有的上傳檔。
 
+### 增量補齊事件
+
+網頁在第二個提供的子協定中帶上自己的事件位置。bridge 只讀取它，不會選用它，
+所以 `/api/ws` 的 URL 不變：
+
+- `enil-events-v1.tail`：網頁還沒看過任何事件（第一次連線）。events 幀的
+  `events` 是空陣列。網頁開啟聊天室時會載入歷史，所以只需要水位，不需要整個
+  200 筆的環。
+- `enil-events-v1.<bootId>.<seq>`：網頁最後套用的事件。`bootId` 和
+  `events.json` 相同時，幀只包含 `seq` 較大的項目。環已經丟掉的部分會讓第一個
+  `seq` 大於 `seq + 1`，網頁照舊重新載入開啟中的聊天室。網頁比檔案新時（推播
+  已送達，但合併寫入還沒寫出），不會收到項目，並保留自己的水位；同一個 boot 內
+  `seq` 不會倒退。`bootId` 不同代表 daemon 重啟過，`seq` 從 1 重新開始：幀包含
+  整個環。
+
+帶位置時，幀是
+`{ "web": "events", "events": { "bootId": …, "updatedAt": …, "events": [ … ],
+"seq": N } }`。`seq` 是檔案中最大的 `seq`（環是空的時候為 0）。網頁把水位提高
+到這個值，但不會降低。沒有帶位置，或位置格式不對的網頁，照舊收到原封不動的
+檔案內容。
+
 ## 推播幀
 
 面板連著 socket 的時候，daemon 會主動寫兩種**推播幀**。推播幀沒有 `id`、不對應任何
@@ -277,6 +315,10 @@ URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
 `hide`／`unhide` 在門檻之前：它只寫我們自己的檔案、不碰 LINE，沒有理由因為 session
 還沒接上就拒絕。兩個都是**冪等**的（已經隱藏的再隱藏一次照樣 `{ok:true}`，只是不寫
 檔），`chat` 是空的則回 `{ok:false, error:"沒有指定是哪一間聊天室"}`。
+
+`pin`、`unpin`、`mute`、`unmute` 的規則和 `hide`／`unhide` 相同：未登入也能用、
+冪等、`chat` 是空的回同一個錯誤，不是聊天室 id 的則回
+`{ok:false, error:"不支援的聊天室"}`。
 
 `history` 可以直接回傳非空的本機快取頁，即使筆數少於 `count`；短頁不能證明沒有更舊訊息。
 首頁的快取會由 daemon 在背景重新驗證。
@@ -351,6 +393,39 @@ linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）�
 `NICE`／`LOVE`／`FUN`／`AMAZING`／`SAD`／`OMG`，外加把自己的收回來的 `UNDO`；
 其他一律回 `{ok:false, error:"不支援的表情"}`。一個人在同一則訊息上只會有一個表情，
 再送一次就是換掉，不是疊加。
+
+## 搜尋
+
+`search` 讀本機的訊息庫 `STATE_DIR/messages/<myMid>/<chatMid>.jsonl`，不會去問
+LINE，所以只找得到這台 daemon 存下來的訊息：它執行期間收到的訊息，以及面板開過的
+歷史頁。沒有索引，每次請求都重新串流讀檔。
+
+比對方式是不分大小寫的子字串比對，只看純文字訊息（`contentType` 為 `NONE`）的
+文字，所以中文、日文這類不用空白分詞的文字也找得到。貼圖、圖片、檔案、FLEX 的
+`altText` 和引言文字都不比對。後來收回的訊息（`_unsent` 或 `UNSENT`）一律不回；
+編輯過或重新抓過的訊息只算一次，以最後一行為準。斷掉或不合法的行會跳過。
+
+Letter Sealing（E2EE）的文字只有在訊息庫存的是解密後內容時才找得到。推播收到的
+訊息是解密後才寫入，所以找得到；歷史頁照 LINE 傳來的原樣寫入，所以只透過歷史頁
+看過的 E2EE 訊息只有 `chunks`，比對不到。
+
+已隱藏的聊天室預設跳過，除非 `chat` 指定它。聊天室依聊天清單順序讀取。結果新的
+在前（先比 `time`，再比 id），每筆是 `{chat, id, time, from, fromName?, snippet,
+match}`。`snippet` 是命中處前後約 120 個 UTF-16 單位的文字，換行壓平，截斷處加
+`…`。`match` 是命中範圍在 `snippet` 裡的 `[start, end)`，單位是 UTF-16。`more`
+為 `true` 表示還有更舊的結果；用最後一筆的 `time` 當 `before` 再問一次（同一毫秒
+的訊息在這個邊界可能被跳過）。
+
+同一時間只跑一個掃描。每 2000 行讓出一次事件迴圈，超過 2 秒就停下，回
+`partial: true` 和目前找到的結果。`scanned` 是讀過的聊天室檔案數。拒絕訊息：
+`沒有搜尋文字`（`q` 是空的）、`搜尋文字太長`（超過 100 個字）、`不支援的聊天室`
+（`chat` 不是聊天室 id）和 `before 不對`。只讀帳號目錄底下直接放的一般 `.jsonl`
+檔，symlink 會跳過。
+
+在合成資料上（121 個聊天室、100,000 則訊息、98.5 MB，一半是 E2EE chunks）搜尋
+約 360–460 ms，事件迴圈最長只被卡住約 6 ms。`deno task bench:search` 可以重跑
+這個量測。掃描成本約每 MB 4–5 ms，所以 2 秒的預算大約涵蓋 400 MB 的訊息庫；
+更大的訊息庫就需要索引。
 
 ## 貼圖
 
@@ -443,6 +518,8 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 | `stickerUrl` | string | `STICKER` 且 metadata 有 `STKID` |
 | `fileName` | string | metadata 有 `FILE_NAME` |
 | `fileSize` | number | metadata 有 `FILE_SIZE` |
+| `audioMs` | number | `AUDIO` 且 metadata 有正數的 `AUDLEN` 或 `DURATION`；ms |
+| `location` | object | `LOCATION` 且位置有效，含 E2EE；`{ title, address, latitude, longitude }`，沒有的欄位是空字串 |
 | `mentions` | object[] | 訊息 metadata 有 `MENTION`；`{ start, end, name, mid? , all? }`，位移單位同上，`all` 的 `name` 是「全部」 |
 | `replyTo` | object | 這則是回覆（`messageRelationType` 是 `REPLY`）；`{ id, fromName?, text? }` |
 | `reactions` | object[] | 這則有表情；`[{ type, count, mine }]`，照 LINE 列舉的順序 |

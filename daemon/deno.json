@@ -50,6 +50,7 @@
     "test": "deno test -A",
     "build": "sh -c '. ./enil-flags.sh && deno compile $ENIL_DENO_FLAGS --include web/public --output enil daemon.ts' && git rev-parse HEAD > enil.rev",
     "bench:startup": "deno run -A bench/startup_bench.ts",
-    "bench:thrift": "deno run -A bench/thrift_decode_bench.ts"
+    "bench:thrift": "deno run -A bench/thrift_decode_bench.ts",
+    "bench:search": "deno run -A bench/search_bench.ts"
   }
 }

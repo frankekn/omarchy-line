@@ -5,13 +5,13 @@
  * state.json (openChat) before raising the shell panel.
  *
  * Dependency direction: imports from below -- avatars (avatarSoon), names
- * (resolveName), state (isHidden, setWanted, writeState), caches (isMe),
- * session. socket.ts reports panel opens/closes through the accessors here.
+ * (resolveName), state (isHidden, isMuted, setWanted, writeState), caches
+ * (isMe), session. socket.ts reports panel opens/closes through the accessors here.
  */
 import { avatarNow, avatarTokens, resolveAvatar } from "./avatars.ts";
 import { isMe } from "./caches.ts";
 import { resolveName } from "./names.ts";
-import { isHidden, setWanted, writeState } from "./state.ts";
+import { isHidden, isMuted, setWanted, writeState } from "./state.ts";
 import { sessionIsCurrent } from "./session.ts";
 import { errorLine } from "./text.ts";
 import type { Client } from "@evex/linejs";
@@ -155,6 +155,9 @@ async function notify(
     // still saying "look at me" about a row the user took away. It also stays
     // hidden -- nothing in this path calls setHidden().
     if (isHidden(chatMid)) return;
+    // A muted chat stays on the list with its unread count, but the user
+    // asked it not to call for attention: no toast.
+    if (isMuted(chatMid)) return;
 
     const now = Date.now();
     const prev = lastNotified.get(chatMid) ?? 0;

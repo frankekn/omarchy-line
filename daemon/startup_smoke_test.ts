@@ -15,6 +15,7 @@
  *
  * The same boot also drives one socket command end to end: `hide` writes
  * hidden.json, and only a real daemon shows that a refused id writes nothing.
+ * `pin` and `mute` get the same end-to-end check against their own files.
  *
  *   deno test -A startup_smoke_test.ts
  */
@@ -210,6 +211,90 @@ Deno.test("hide refuses a 1 MiB chat id and writes nothing", async () => {
     assertEquals(JSON.parse(await Deno.readTextFile(hiddenPath)), {
       mids: ["cgroup"],
     });
+  } finally {
+    try {
+      conn?.close();
+    } catch { /* already closed */ }
+    child.kill("SIGTERM");
+    await child.status;
+    while (await out.read(1_000) !== null) { /* drain to EOF */ }
+    await Deno.remove(stateHome, { recursive: true }).catch(() => {});
+  }
+});
+
+Deno.test("pin and mute write their own files and refuse bad ids", async () => {
+  const stateHome = await Deno.makeTempDir({ prefix: "enil-smoke-pin-" });
+  const child = new Deno.Command(Deno.execPath(), {
+    args: [
+      "run",
+      ...await daemonPermissionFlags(stateHome),
+      new URL("./daemon.ts", import.meta.url).pathname,
+    ],
+    stdin: "null",
+    stdout: "piped",
+    stderr: "null",
+    env: { XDG_STATE_HOME: stateHome, ENIL_WEB_ADDR: "" },
+  }).spawn();
+  const out = lineReader(child.stdout);
+  let conn: Deno.UnixConn | undefined;
+  try {
+    const deadline = Date.now() + 30_000;
+    for (;;) {
+      assert(Date.now() < deadline, "daemon never printed its startup banner");
+      const line = await out.read(5_000);
+      if (line?.startsWith("enil: ")) break;
+    }
+    conn = await Deno.connect({
+      transport: "unix",
+      path: `${stateHome}/enil/sock`,
+    });
+    const replies = lineReader(conn.readable);
+    const encoder = new TextEncoder();
+    let id = 0;
+    const ask = async (request: Record<string, unknown>) => {
+      const mine = ++id;
+      const bytes = encoder.encode(
+        JSON.stringify({ id: mine, ...request }) + "\n",
+      );
+      let off = 0;
+      while (off < bytes.length) off += await conn!.write(bytes.subarray(off));
+      for (;;) {
+        const line = await replies.read(10_000);
+        assert(line !== null, `no reply to request ${mine}`);
+        const reply = JSON.parse(line);
+        if (reply.id === mine) {
+          delete reply.id;
+          return reply;
+        }
+      }
+    };
+    const file = (name: string) =>
+      Deno.readTextFile(`${stateHome}/enil/${name}`).then(
+        (text) => JSON.parse(text),
+        () => null,
+      );
+    // Logged out: these are preferences, so the login gate does not apply.
+    for (const cmd of ["pin", "unpin", "mute", "unmute"]) {
+      assertEquals(await ask({ cmd }), {
+        ok: false,
+        error: "沒有指定是哪一間聊天室",
+      });
+      assertEquals(await ask({ cmd, chat: "../c" }), {
+        ok: false,
+        error: "不支援的聊天室",
+      });
+    }
+    assertEquals(await file("pinned.json"), null);
+    assertEquals(await file("muted.json"), null);
+
+    assertEquals(await ask({ cmd: "pin", chat: "cgroup" }), { ok: true });
+    assertEquals(await ask({ cmd: "pin", chat: "cgroup" }), { ok: true });
+    assertEquals(await ask({ cmd: "mute", chat: "cnoisy" }), { ok: true });
+    assertEquals(await file("pinned.json"), { mids: ["cgroup"] });
+    assertEquals(await file("muted.json"), { mids: ["cnoisy"] });
+    assertEquals(await ask({ cmd: "unmute", chat: "cnoisy" }), { ok: true });
+    assertEquals(await file("muted.json"), { mids: [] });
+    assertEquals(await file("hidden.json"), null, "hide is untouched");
   } finally {
     try {
       conn?.close();

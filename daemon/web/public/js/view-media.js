@@ -1,6 +1,24 @@
 // Attachment rendering, lightbox and preview observation. Uses DOM helpers and
 // injected actions.
-import { $, el, fileUrl, httpsUrl, safeImage, sizeText } from "./dom.js";
+import {
+  $,
+  durationText,
+  el,
+  fileUrl,
+  httpsUrl,
+  safeImage,
+  sizeText,
+} from "./dom.js";
+const AUDIO_URL_MAX = 16;
+/** The name a saved attachment gets; the cache stores it by message id. */
+export function downloadName(message) {
+  if (message.fileName) return String(message.fileName);
+  const id = String(message.id || "");
+  const type = String(message.contentType || "");
+  if (type === "AUDIO") return `line-voice-${id}.m4a`;
+  if (type === "VIDEO") return `line-video-${id}.mp4`;
+  return `line-${type === "IMAGE" ? "image" : "file"}-${id}`;
+}
 export function createMediaView(ctx) {
   const model = ctx.model, t = ctx.t;
   const command = (...args) => ctx.command(...args);
@@ -9,6 +27,7 @@ export function createMediaView(ctx) {
   let lightboxChat = "", lightboxAccount = "";
   let lightboxGeneration = 0, pictureGeneration = 0;
   const downloads = new Map(), originals = new Map();
+  const audioUrls = new Map();
   let pinch = null, touchDrag = null, mouseDrag = null;
   function originalKey(account, chat, message) {
     return JSON.stringify([account, chat, String(message.id)]);
@@ -45,8 +64,9 @@ export function createMediaView(ctx) {
         ).promise;
       if (model.account !== account) return;
       const link = el("a");
-      link.href = fileUrl(path, true);
-      link.download = String(message.fileName || "");
+      const name = downloadName(message);
+      link.href = fileUrl(path, true, name);
+      link.download = name;
       link.hidden = true;
       document.body.append(link);
       link.click();
@@ -475,9 +495,13 @@ export function createMediaView(ctx) {
       }
     }
     if (message.pending) return;
-    if (!["IMAGE", "VIDEO", "FILE"].includes(type)) return;
+    if (!["IMAGE", "VIDEO", "FILE", "AUDIO"].includes(type)) return;
     if (state !== "ok") {
       bubble.append(el("div", "muted", t("mediaExpired")));
+      return;
+    }
+    if (type === "AUDIO") {
+      if (message.hasMedia) addVoice(bubble, message, chat);
       return;
     }
     if (message.previewable) {
@@ -534,6 +558,67 @@ export function createMediaView(ctx) {
       bubble.append(card);
     }
   }
+  // A blob URL plays without range requests, which iOS Safari needs for
+  // /api/file, and keeps the auth cookie on a same-origin fetch.
+  async function audioSource(chat, message) {
+    const account = model.account;
+    const key = originalKey(account, chat, message);
+    const cached = audioUrls.get(key);
+    if (cached) return cached;
+    const path = await requestOriginal(account, chat, message, null).promise;
+    const response = await fetch(fileUrl(path));
+    if (!response.ok) throw new Error(t("mediaFailed"));
+    const bytes = await response.arrayBuffer();
+    const type = response.headers.get("content-type") === "video/mp4"
+      ? "audio/mp4"
+      : "";
+    const url = URL.createObjectURL(new Blob([bytes], type ? { type } : {}));
+    audioUrls.set(key, url);
+    if (audioUrls.size > AUDIO_URL_MAX) {
+      const [oldest, old] = audioUrls.entries().next().value;
+      audioUrls.delete(oldest);
+      URL.revokeObjectURL(old);
+    }
+    return url;
+  }
+  function addVoice(bubble, message, chat) {
+    const card = el("div", "voice-card");
+    const length = el(
+      "span",
+      "voice-length",
+      message.audioMs ? durationText(message.audioMs) : "",
+    );
+    const play = el("button", "voice-play", t("playVoice"));
+    play.type = "button";
+    play.addEventListener("click", async () => {
+      play.disabled = true;
+      play.textContent = t("loading");
+      try {
+        const url = await audioSource(chat, message);
+        if (!play.isConnected) return;
+        const audio = el("audio", "voice-player");
+        audio.controls = true;
+        audio.preload = "metadata";
+        audio.setAttribute("aria-label", t("voiceMessage"));
+        audio.addEventListener("loadedmetadata", () => {
+          if (!length.textContent && Number.isFinite(audio.duration)) {
+            length.textContent = durationText(audio.duration * 1000);
+          }
+        });
+        audio.src = url;
+        const focused = document.activeElement === play;
+        play.replaceWith(audio);
+        if (focused) audio.focus({ preventScroll: true });
+        audio.play().catch(() => {});
+      } catch (error) {
+        play.disabled = false;
+        play.textContent = t("playVoice");
+        displayError(error);
+      }
+    });
+    card.append(play, length);
+    bubble.append(card);
+  }
   function unobservePreviews(row) {
     for (const node of row.querySelectorAll(".media-placeholder")) {
       previewObserver.unobserve(node);
@@ -542,6 +627,7 @@ export function createMediaView(ctx) {
   }
   return {
     addMedia,
+    downloadMessage,
     unobservePreviews,
     refreshLightbox,
     visiblePreviewIds,

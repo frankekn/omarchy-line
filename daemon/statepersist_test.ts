@@ -42,6 +42,9 @@ const hidden = new Set<string>();
 function hiddenStamped<T extends { mid: string }>(rows: T[]): T[] {
   return rows.map((row) => hidden.has(row.mid) ? { ...row, hidden: true } : row);
 }
+// writeState() stamps through chatsStamped(), which wraps hiddenStamped();
+// chatprefs_test.ts covers the pinned and muted half.
+const chatsStamped = hiddenStamped;
 function noteStateWritten() {}
 function noteStatePublished(_revision: number, _refresh: unknown) {}
 export const timingSamples: number[] = [];

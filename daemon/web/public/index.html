@@ -7,7 +7,9 @@
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#101411">
     <script src="/js/boot.js"></script>
-    <title>enil</title>
+    <title>Line Web</title>
+    <meta name="application-name" content="Line Web">
+    <meta name="apple-mobile-web-app-title" content="Line Web">
     <link rel="icon"
       href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=">
     <link rel="stylesheet" href="/app.css">
@@ -40,6 +42,9 @@
     <link rel="modulepreload" href="/js/view-stickers.js">
     <link rel="modulepreload" href="/js/view-upload.js">
     <link rel="modulepreload" href="/js/view-switcher.js">
+    <link rel="modulepreload" href="/js/view-status.js">
+    <link rel="modulepreload" href="/js/view-message-actions.js">
+    <link rel="modulepreload" href="/js/view-search.js">
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
@@ -65,11 +70,6 @@
     </main>
 
     <main id="app" class="app" hidden>
-      <header class="app-bar">
-        <div class="brand">enil</div>
-        <div
-          class="bar-right"><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span><button id="settings-open" class="text-button settings-button" type="button" aria-haspopup="dialog" aria-controls="settings" data-i18n="settings">設定</button><button id="web-signout" class="text-button" type="button" data-i18n="webSignout">離開網頁</button></div>
-      </header>
       <div id="notices" class="notices" aria-live="polite" hidden></div>
       <section id="line-login" class="line-login" hidden>
         <div class="login-card">
@@ -101,13 +101,16 @@
               <button id="next-unread" class="text-button" type="button"
                 data-i18n="nextUnread" aria-keyshortcuts="Alt+ArrowDown ]"
                 hidden>下一個未讀</button>
+              <button id="message-search-open" class="text-button"
+                type="button" data-i18n="messageSearch"
+                aria-haspopup="dialog">搜尋訊息</button>
             </div>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
           <div id="chat-list" class="chat-list" role="region" aria-label="聊天"
             data-i18n-aria-label="chats" tabindex="0"></div>
           <div
-            class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><small data-i18n="lineAccount">LINE 帳號</small></span></div><button id="line-logout" class="text-button logout" type="button" data-i18n="lineLogout" data-i18n-title="lineLogout" aria-label="登出 LINE">登出 LINE</button></div>
+            class="sidebar-bottom"><div class="account"><span id="account-avatar" class="avatar account-avatar"></span><span><strong id="account-name"></strong><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span></span></div><button id="settings-open" class="icon-button settings-button" type="button" aria-haspopup="dialog" aria-controls="settings" data-i18n-title="settings" aria-label="設定" title="設定"><svg class="gear-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.96 6.13 14.86 6.61V9.39L12.96 9.87 12.83 10.19 13.83 11.87 11.87 13.83 10.19 12.83 9.87 12.96 9.39 14.86H6.61L6.13 12.96 5.81 12.83 4.13 13.83 2.17 11.87 3.17 10.19 3.04 9.87 1.14 9.39V6.61L3.04 6.13 3.17 5.81 2.17 4.13 4.13 2.17 5.81 3.17 6.13 3.04 6.61 1.14H9.39L9.87 3.04 10.19 3.17 11.87 2.17 13.83 4.13 12.83 5.81Z"/><circle cx="8" cy="8" r="2.2"/></svg></button></div>
         </aside>
         <section id="conversation" class="conversation" aria-label="聊天室"
           data-i18n-aria-label="direct">
@@ -117,7 +120,7 @@
           </div>
           <div id="chat-view" class="chat-view" hidden>
             <header
-              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><button id="hide-chat" class="text-button" type="button"></button></header>
+              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><div class="chat-actions"><button id="chat-search" class="text-button" type="button" data-i18n="chatSearchShort" data-i18n-title="chatSearch" aria-label="在此聊天室搜尋" title="在此聊天室搜尋" aria-haspopup="dialog">搜尋</button><button id="pin-chat" class="text-button" type="button"></button><button id="mute-chat" class="text-button" type="button"></button><button id="hide-chat" class="text-button" type="button"></button></div></header>
             <div id="messages" class="messages" role="log" aria-live="polite"
               aria-relevant="additions text" aria-labelledby="active-name"
               tabindex="0"></div>
@@ -143,6 +146,10 @@
           </div>
         </section>
       </div>
+      <!-- Shown only while the workspace is hidden: before the first state and
+           on the LINE sign-in screen. -->
+      <div
+        class="app-corner"><button id="corner-settings" class="icon-button settings-button" type="button" aria-haspopup="dialog" aria-controls="settings" data-i18n-title="settings" aria-label="設定" title="設定"><svg class="gear-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.96 6.13 14.86 6.61V9.39L12.96 9.87 12.83 10.19 13.83 11.87 11.87 13.83 10.19 12.83 9.87 12.96 9.39 14.86H6.61L6.13 12.96 5.81 12.83 4.13 13.83 2.17 11.87 3.17 10.19 3.04 9.87 1.14 9.39V6.61L3.04 6.13 3.17 5.81 2.17 4.13 4.13 2.17 5.81 3.17 6.13 3.04 6.61 1.14H9.39L9.87 3.04 10.19 3.17 11.87 2.17 13.83 4.13 12.83 5.81Z"/><circle cx="8" cy="8" r="2.2"/></svg></button><span id="corner-connection" class="connection" role="status"><span class="status-dot"></span><span id="corner-connection-text"></span></span></div>
       <div id="toast" class="toast" role="alert" hidden></div>
     </main>
     <dialog id="settings" class="settings" aria-labelledby="settings-title">
@@ -162,6 +169,29 @@
         </fieldset>
         <label class="settings-toggle"><input id="sound-toggle"
             type="checkbox"><span data-i18n="messageSound">新訊息提示音</span></label>
+        <section id="daemon-status" class="daemon-status"
+          aria-labelledby="daemon-status-title" hidden>
+          <h3 id="daemon-status-title" data-i18n="daemonStatus">狀態</h3>
+          <dl id="daemon-status-list"></dl>
+        </section>
+        <section class="settings-account"
+          aria-labelledby="settings-account-title">
+          <h3 id="settings-account-title" data-i18n="account">帳號</h3>
+          <div class="settings-action">
+            <p id="web-signout-note"
+              data-i18n="webSignoutNote">只登出這個瀏覽器，LINE 保持登入。</p>
+            <button id="web-signout" class="danger-button" type="button"
+              aria-describedby="web-signout-note"
+              data-i18n="webSignout">離開網頁</button>
+          </div>
+          <div id="line-logout-row" class="settings-action" hidden>
+            <p id="line-logout-note"
+              data-i18n="lineLogoutNote">讓 daemon 登出 LINE。面板和所有瀏覽器都要重新掃描 QR code 才能使用。</p>
+            <button id="line-logout" class="danger-button" type="button"
+              aria-describedby="line-logout-note"
+              data-i18n="lineLogout">登出 LINE</button>
+          </div>
+        </section>
       </div>
     </dialog>
     <dialog id="switcher" class="switcher" aria-labelledby="switcher-title">
@@ -175,6 +205,29 @@
       <ul id="switcher-list" class="switcher-list" role="listbox"
         aria-labelledby="switcher-title"></ul>
       <p id="switcher-status" class="sr-only" role="status"></p>
+    </dialog>
+    <dialog id="message-search" class="switcher message-search"
+      aria-labelledby="message-search-title">
+      <h2 id="message-search-title" class="sr-only"
+        data-i18n="messageSearch">搜尋訊息</h2>
+      <input id="message-search-input" type="text" role="combobox"
+        aria-labelledby="message-search-title" aria-expanded="true"
+        aria-controls="message-search-list" aria-autocomplete="list"
+        aria-describedby="message-search-scope" autocomplete="off"
+        spellcheck="false" maxlength="100"
+        data-placeholder="messageSearchPlaceholder"
+        placeholder="輸入要找的文字，按 Enter 搜尋">
+      <p id="message-search-scope" class="message-search-scope"><span
+          data-i18n="messageSearchScope">只搜尋這台 daemon 已快取的訊息。</span>
+        <span id="message-search-chat" hidden><span
+            data-i18n="messageSearchIn">只搜尋：</span><strong
+            id="message-search-chat-name"></strong></span></p>
+      <button id="message-search-all" class="text-button message-search-all"
+        type="button" data-i18n="messageSearchAll"
+        hidden>搜尋全部聊天室</button>
+      <ul id="message-search-list" class="switcher-list" role="listbox"
+        aria-labelledby="message-search-title"></ul>
+      <p id="message-search-status" class="sr-only" role="status"></p>
     </dialog>
     <dialog id="lightbox" class="lightbox">
       <div class="lightbox-toolbar">

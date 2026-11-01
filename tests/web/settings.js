@@ -147,6 +147,12 @@ async function keyboardAndSound(h) {
 
   await page.reload({ waitUntil: "load" });
   await page.locator("#connection.connected").waitFor();
+  // WebKit can lay out the page and connect before its first rendering
+  // update runs the requestAnimationFrame callback that records the frame.
+  await until(
+    () => page.evaluate(() => globalThis.__firstFrame !== undefined),
+    "first frame",
+  );
   const first = await page.evaluate(() => globalThis.__firstFrame);
   assert.deepEqual(first, {
     theme: "nord",
@@ -294,7 +300,7 @@ async function narrow(h) {
       [
         document.scrollingElement,
         ...document.querySelectorAll(
-          ".app-bar, .sidebar, .chat-header, .composer, .settings",
+          ".sidebar, .sidebar-bottom, .chat-header, .composer, .settings",
         ),
       ].flatMap((node) =>
         node && node.getClientRects().length &&

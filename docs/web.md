@@ -123,6 +123,17 @@ prefix, substring and in-order letter matches. Chats with unread messages and
 recent activity lead each group. Hidden chats are listed with a "Hidden" tag.
 Up/down select, Enter opens and Esc closes and returns focus.
 
+"Search messages" above the list, or Enter in the chat search box, opens
+message search. It searches only messages this daemon has cached, not all of
+your LINE history. Type text and press Enter. Results list the chat, the time
+and a snippet with the match marked, newest first. Up/down select, Enter on
+an unchanged query opens the selected message, and Esc closes and returns
+focus. The chat opens like a click, so it is marked read the same way, and
+older pages load until the message is in view. "Search" in the chat header
+searches only the open chat; "Search all chats" widens it. Hidden chats are
+left out unless searched from their own header. See
+[Search](protocol.md#search) for what can be matched.
+
 "Next unread" above the list appears when a visible chat has unread messages.
 It opens the next unread chat below the current one in list order and wraps
 to the top. Alt+Down does the same outside text fields, and `]` does it when
@@ -130,7 +141,7 @@ focus is on the chat list or the messages. Opening a chat this way marks it
 read like a click.
 
 The tab title shows the unread total of visible chats, for example
-`(3) enil`, capped at `99+`. The favicon gets a dot while there is unread
+`(3) Line Web`, capped at `99+`. The favicon gets a dot while there is unread
 mail. The title adds "Offline" after the connection drops and "Sign-in
 required" when the web session needs a key.
 
@@ -153,8 +164,13 @@ are sent with Brotli or gzip when the browser accepts it. Media from
 
 ### Settings
 
-**Settings** in the top bar opens a dialog with three options. Each browser
-keeps its own settings in local storage; the server does not store them.
+The page has no top bar. The gear button at the bottom left, next to your
+name and the connection status, opens a dialog with three options. The status
+is a dot and a word, in the warning color while the page is disconnected. On
+a phone the button is at the bottom of the chat list; an open chat shows only
+its own header. On the LINE sign-in screen the button and the status sit in
+the bottom-left corner. Each browser keeps its own settings in local storage;
+the server does not store them.
 
 - **Text size** scales the whole page: 85%, 100%, 115%, 130% or 150%, where
   100% is 14 px.
@@ -170,6 +186,95 @@ keeps its own settings in local storage; the server does not store them.
 
 Changes apply immediately. Esc or the close button closes the dialog and
 returns focus to **Settings**.
+
+### Pinned and muted chats
+
+**Pin** and **Mute** in the chat header turn each preference on or off for the
+open chat. The daemon keeps them in `pinned.json` and `muted.json` in its
+state directory, so every device that opens the page sees the same pinned and
+muted chats.
+
+- Pinned chats stay at the top of the list, sorted among themselves by recent
+  activity, with a small pin mark. The quick switcher puts them first in each
+  match group, and "Next unread" follows the same order.
+- A muted chat stays in the list. Its unread count shows in a dimmer badge
+  next to a muted-bell mark, and the chat does not move to the unread group.
+  It plays no new message sound, does not count in the tab title, and "Next
+  unread" skips it. The daemon also sends no desktop notification for it.
+- Screen readers hear "Pinned" or "Muted" as part of the chat row name.
+
+The panel (QML plugin) does not show pinned or muted chats yet. A muted chat
+still gets no desktop notification when you use only the panel.
+
+### Daemon status
+
+Below the settings, a read-only **Status** block shows what the daemon
+reports in `state.json` when the dialog opens. It does not update while the
+dialog stays open:
+
+- **LINE sign-in**: signed in (with your LINE name), signed out, signing in,
+  or failed.
+- **Push connection**: connected or disconnected since a time, or paused by a
+  LINE restriction with its code.
+- **Last sync**: the last time the chat list was fresh.
+- **Sync failures in a row**, with the reason when there is one.
+- **State updated**: the last time the daemon wrote its state.
+
+A row whose field the daemon does not write is left out. `state.json` has no
+daemon version or commit, so the block does not show one. It has no restart
+or other actions.
+
+### Account
+
+The **Account** section at the bottom of the dialog has two buttons, each
+with a short explanation:
+
+- **Leave web page** signs this browser out. LINE stays signed in.
+- **Sign out of LINE** asks for confirmation, then signs the daemon out of
+  LINE. The panel and every browser need a new QR code sign-in. It shows
+  only while LINE is signed in.
+
+### Data use
+
+On the first connection the page gets no old events, only the latest event
+number. On a reconnect it gets only the events after the last one it
+applied, or the whole recent list after a daemon restart. See
+[protocol.md](protocol.md#incremental-event-catch-up). The chat list preview
+is at most 200 characters, so list search matches only that part of a long
+last message.
+
+### Message actions, voice and location
+
+Next to **Reply** and **React**, a message can offer these actions:
+
+- **Copy** copies the text of a text, FLEX or other message with text. On a
+  secure origin (HTTPS or `localhost`), the page uses the browser clipboard
+  API. A plain HTTP address, such as a Tailscale IP, has no clipboard API, so
+  the page selects the text in a hidden field and copies it with the browser's
+  copy command. If the browser refuses both, a dialog shows the text already
+  selected so that you can copy it by hand. "Copied" appears briefly on
+  success.
+- **Save** downloads an image, video, file or voice message through
+  `/api/file`, with the same session cookie and host checks as other media.
+  The file gets its LINE file name; without one it gets a name such as
+  `line-image-<id>.png`, where the extension comes from the file's contents.
+  The image viewer also has **Download original**.
+- **Forward** is on text messages only. It opens a chat picker with the same
+  ranking as the chat switcher, asks for confirmation, and sends the same text
+  to the chosen chat as a new message. Hidden chats are not listed. Media
+  cannot be forwarded yet.
+
+A voice message shows its length from LINE's `AUDLEN` metadata and a **Play
+voice message** button. The button downloads the clip through the normal
+download and E2EE decryption path and replaces itself with the browser's audio
+player. When LINE did not send a length, it appears after the player reads the
+clip. The page plays the clip from a `blob:` URL, so the player does not need
+range requests.
+
+A location message shows the place's title, its address and an **Open in
+Maps** link to `https://www.google.com/maps?q=<lat>,<lng>`. The link opens in
+a new tab without a referrer. The page does not embed a map or load map
+images.
 
 ## Known limitations
 

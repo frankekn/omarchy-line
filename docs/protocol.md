@@ -27,6 +27,8 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 | `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |
 | `avatars.json` | which mid's which avatar version was already handled, so a restart doesn't refetch (daemon-only) |
 | `hidden.json` | hidden-chat mids, `{"mids":[…]}` (atomic write, daemon-only, cap 1000) |
+| `pinned.json` | pinned-chat mids, same shape and rules as `hidden.json` |
+| `muted.json` | muted-chat mids, same shape and rules as `hidden.json` |
 | `panel-stickers.json` | recent stickers, per account (written by the **plugin**, atomic; the daemon doesn't read it) |
 | `qr-<ts>.png` | login QR; a fresh filename each time (QML `Image` won't reload a same-named file) |
 
@@ -56,7 +58,9 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
       // optional, absent means no avatar set
       "avatarPath": "…/media/avatars/<sha1>.jpg",
       // optional, only on hidden chats
-      "hidden": true }
+      "hidden": true,
+      // optional, only on pinned / muted chats
+      "pinned": true, "muted": true }
   ],
   // bumps only when chats/chatList change; heartbeats don't
   "chatsRevision": 12,
@@ -86,6 +90,9 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
   "wanted": { "chat": "u…", "at": 1735000000000, "seq": 1 }
 }
 ```
+
+`lastText` is a one-line preview: the daemon cuts it to 200 code points and
+adds `…`. The whole text stays in `history`.
 
 `login.reason`, `login.attempt`, `login.settled`, `link`, `refresh` and
 `wanted` are all optional: older daemons don't write them and the panel must
@@ -163,6 +170,13 @@ search, but doesn't draw them normally. The daemon stamps the key at
 state-write time from `hidden.json`. The chat-summary cache itself doesn't
 carry it, otherwise a stale cached answer would keep hiding state wrong.
 
+`pinned` and `muted` follow the same rules, from `pinned.json` and
+`muted.json`: present only when true, stamped at state-write time and on
+single-row pushes. They are row keys, not a list of ids at the top level,
+because a web `state-delta` frame repeats every top-level field on each
+update but carries only the rows that changed. A muted chat gets no desktop
+notification; its row and `unread` are unchanged.
+
 ## `wanted`: the chat opened from a notification
 
 On a desktop-notification click, the daemon writes one `wanted` entry before
@@ -238,6 +252,7 @@ Socket commands (one JSON line per request, replies
 | cmd | Args | `data` on success |
 |---|---|---|
 | `history` | `chat`, `count` (1–200, clamped, non-numbers count as 30), `before?` (message id to page back from), `markRead?` | message array, oldest first |
+| `search` | `q` (1–100 characters), `chat?` (one chat id), `limit?` (1–100, default 30), `before?` (ms time; only older hits) | `{results, partial, more, scanned}`; see [Search](#search) |
 | `markRead` | `chat`, `upTo` (newest message id read, as a decimal string) | `{ "marked": bool }`. It is `false` when nothing went to LINE: our own read cursor already covers `upTo`, the row already shows 0 unread with nothing uncounted, or LINE refused the check |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | none |
 | `reply` | `chat`, `text`, `replyTo` (message id), `mentions?`, `requestId?` | none |
@@ -255,6 +270,10 @@ Socket commands (one JSON line per request, replies
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | none |
 | `hide` | `chat` | none (removes the row from the list, recorded in `hidden.json`) |
 | `unhide` | `chat` | none |
+| `pin` | `chat` | none (sorts the row first on the web page, recorded in `pinned.json`) |
+| `unpin` | `chat` | none |
+| `mute` | `chat` | none (no desktop notification, recorded in `muted.json`) |
+| `unmute` | `chat` | none |
 | `login` | none | none |
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
@@ -310,6 +329,29 @@ outstanding commands close the connection. This reply-matching `id` is
 separate from the send's `requestId` below. The bridge refuses clipboard
 commands and accepts `sendFile` only for an upload owned by the web server.
 
+### Incremental event catch-up
+
+The page names its event position in a second offered subprotocol. The
+bridge reads it but never selects it, so the `/api/ws` URL does not change:
+
+- `enil-events-v1.tail`: the page has seen no events yet (first connection).
+  The events frame has an empty `events` list. A page loads history when it
+  opens a chat, so it needs only the watermark, not the 200-entry ring.
+- `enil-events-v1.<bootId>.<seq>`: the page's last applied event. If
+  `bootId` matches `events.json`, the frame has only the entries with a
+  larger `seq`. A gap that the ring dropped shows as a first `seq` above
+  `seq + 1`, and the page reloads the open chat as before. A page ahead of the
+  file (a pushed event that the coalesced write has not flushed) gets no
+  entries and keeps its watermark; `seq` never goes back inside one boot.
+  A different `bootId` means the daemon restarted and its `seq` began again
+  at 1: the frame has the whole ring.
+
+With a position, the frame is
+`{ "web": "events", "events": { "bootId": …, "updatedAt": …, "events": [ … ],
+"seq": N } }`. `seq` is the largest `seq` in the file (0 when the ring is
+empty). The page raises its watermark to it and never lowers it. A page that
+offers no position, or a malformed one, gets the file verbatim as before.
+
 ## Push frames
 
 While a panel holds the socket, the daemon also writes two kinds of **push
@@ -340,6 +382,11 @@ only touch our own file and never LINE, so a missing session is no reason to
 refuse. Both are **idempotent** (hiding an already-hidden chat still returns
 `{ok:true}`, just without a write), and an empty `chat` answers
 `{ok:false, error:"沒有指定是哪一間聊天室"}`.
+
+`pin`, `unpin`, `mute` and `unmute` follow the same rules as `hide`/`unhide`:
+they also work while logged out, are idempotent, refuse an empty `chat` with
+the same error, and refuse an id that is not a chat id with
+`{ok:false, error:"不支援的聊天室"}`.
 
 `history` may answer from a non-empty local cache page, including one shorter
 than `count`; that length does not prove that older messages do not exist.
@@ -439,6 +486,49 @@ still go out as a plain message, silently eating the quote the user picked.
 `NICE`/`LOVE`/`FUN`/`AMAZING`/`SAD`/`OMG`, plus `UNDO` to take yours back.
 Anything else answers `{ok:false, error:"不支援的表情"}`. One person holds one
 reaction per message. Resending swaps it instead of stacking.
+
+## Search
+
+`search` reads the local message store,
+`STATE_DIR/messages/<myMid>/<chatMid>.jsonl`. It does not ask LINE, so it
+finds only messages this daemon has stored: what arrived while it ran and
+the history pages the panel opened. There is no index. Each request streams
+the files again.
+
+Matching is a case-insensitive substring match on the text of plain text
+messages (`contentType` `NONE`), so Chinese, Japanese and other text without
+spaces works. Stickers, images, files, FLEX `altText` and quoted text do not
+match. A message that was later unsent (`_unsent` or `UNSENT`) is never
+returned, and an edited or re-fetched message counts once, as its last line.
+Torn or invalid lines are skipped.
+
+Letter Sealing (E2EE) text is only searchable when the store holds it
+decrypted. Messages that arrived by push are stored after decryption, so
+their text is searchable. History pages are stored as they came from LINE, so
+an E2EE message seen only through history keeps only its `chunks` and does
+not match.
+
+Hidden chats are skipped unless `chat` names one. Chats are read in chat-list
+order. Hits come back newest first (by `time`, then id), each as
+`{chat, id, time, from, fromName?, snippet, match}`. `snippet` is about 120
+UTF-16 units of the text around the hit, with newlines flattened and `…`
+where it was cut. `match` is the `[start, end)` of the hit inside `snippet`,
+in UTF-16 units. `more` is `true` when older hits exist; ask again with
+`before` set to the `time` of the last hit (messages from the same
+millisecond can be skipped at that edge).
+
+One scan runs at a time. It yields to the event loop every 2000 lines and
+stops after 2 s with `partial: true` and the hits found so far. `scanned` is
+the number of chat files read. Refusals: `沒有搜尋文字` (empty `q`),
+`搜尋文字太長` (over 100 characters), `不支援的聊天室` (`chat` is not a chat
+id) and `before 不對`. Only plain `.jsonl` files directly in the account's
+directory are read; symlinks are skipped.
+
+On synthetic data (121 chats, 100,000 messages, 98.5 MB, half of them E2EE
+chunks) a search takes about 360–460 ms and never blocks the event loop for
+more than about 6 ms. `deno task bench:search` repeats the measurement. The
+scan costs about 4–5 ms per MB, so the 2 s budget covers about 400 MB of
+store. A larger store needs an index.
 
 ## Stickers
 
@@ -548,6 +638,8 @@ Messages returned by `history` (absent fields are omitted, never `null`):
 | `stickerUrl` | string | `STICKER` and metadata has `STKID` |
 | `fileName` | string | metadata has `FILE_NAME` |
 | `fileSize` | number | metadata has `FILE_SIZE` |
+| `audioMs` | number | `AUDIO` whose metadata has a positive `AUDLEN` or `DURATION`; ms |
+| `location` | object | `LOCATION` with a valid position, E2EE included; `{ title, address, latitude, longitude }`, empty strings when absent |
 | `mentions` | object[] | message metadata has `MENTION`; `{ start, end, name, mid? , all? }`, same offset units, `all`'s `name` is "全部" |
 | `replyTo` | object | this message is a reply (`messageRelationType` is `REPLY`); `{ id, fromName?, text? }` |
 | `reactions` | object[] | the message has reactions; `[{ type, count, mine }]` in LINE's enum order |

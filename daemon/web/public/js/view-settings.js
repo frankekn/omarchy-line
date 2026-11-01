@@ -23,7 +23,10 @@ export function createSettingsView(ctx) {
   let settings = store.read();
   let audio = null;
   const lastSound = new Map();
-  const dialog = $("settings"), opener = $("settings-open");
+  const dialog = $("settings");
+  // The sidebar button, or the corner button while the sidebar is hidden.
+  const openers = [$("settings-open"), $("corner-settings")];
+  let opener = openers[0];
 
   function save() {
     store.apply(settings);
@@ -57,7 +60,8 @@ export function createSettingsView(ctx) {
     if (
       chat === model.active && ctx.isViewingChat() && document.hasFocus()
     ) return;
-    if (model.chats.find((row) => String(row.mid) === chat)?.hidden) return;
+    const row = model.chats.find((item) => String(item.mid) === chat);
+    if (row?.hidden || row?.muted) return;
     const now = Date.now(), last = lastSound.get(chat);
     if (last !== undefined && now - last < SOUND_GAP_MS) return;
     lastSound.set(chat, now);
@@ -113,22 +117,25 @@ export function createSettingsView(ctx) {
     save();
   });
 
-  function close() {
+  function closeSettings() {
     if (!dialog.open) return;
     dialog.close();
     opener.focus();
   }
-  opener.addEventListener("click", () => {
-    dialog.showModal();
-    sizes.querySelector("input:checked")?.focus();
-  });
-  $("settings-close").addEventListener("click", close);
+  for (const button of openers) {
+    button.addEventListener("click", () => {
+      opener = button;
+      dialog.showModal();
+      sizes.querySelector("input:checked")?.focus();
+    });
+  }
+  $("settings-close").addEventListener("click", closeSettings);
   dialog.addEventListener("click", (event) => {
-    if (event.target === dialog) close();
+    if (event.target === dialog) closeSettings();
   });
   dialog.addEventListener("cancel", (event) => {
     event.preventDefault();
-    close();
+    closeSettings();
   });
   // Keep the app's global shortcuts away from the open dialog. Native controls
   // still get their default key handling.
@@ -137,7 +144,7 @@ export function createSettingsView(ctx) {
     event.stopPropagation();
     if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
-      close();
+      closeSettings();
     }
   }, true);
   // A system theme follows the OS scheme, so keep theme-color in step.
@@ -145,5 +152,5 @@ export function createSettingsView(ctx) {
     "change",
     () => store.apply(settings),
   );
-  return { messageSound };
+  return { messageSound, closeSettings };
 }

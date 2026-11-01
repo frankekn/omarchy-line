@@ -18,6 +18,12 @@ import { drafts } from "./drafts.js";
 import { messageWindow } from "./message-window.js";
 import { settings } from "./settings.js";
 import { navigation } from "./navigation.js";
+import { pinMute } from "./pin-mute.js";
+import { eventsCatchup } from "./events-catchup.js";
+import { daemonStatus } from "./daemon-status.js";
+import { messageActions } from "./message-actions.js";
+import { search } from "./search.js";
+import { chrome } from "./chrome.js";
 
 const suites = {
   main,
@@ -38,6 +44,12 @@ const suites = {
   "message-window": messageWindow,
   settings,
   navigation,
+  "pin-mute": pinMute,
+  "events-catchup": eventsCatchup,
+  "daemon-status": daemonStatus,
+  "message-actions": messageActions,
+  search,
+  chrome,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

@@ -2,7 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
 import { pathToFileURL } from "node:url";
 import { WebAuth } from "./auth.ts";
-import { sniffInline, uploadName, Uploads } from "./files.ts";
+import { downloadName, sniffInline, uploadName, Uploads } from "./files.ts";
 import { canonicalHost, createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
@@ -986,6 +986,52 @@ Deno.test("/api/file serves media and the QR, never storage.json", async () => {
   }
 });
 
+Deno.test("a download name is one path component with a proven type", () => {
+  assertEquals(downloadName(null, "123", "image/png"), "123");
+  assertEquals(downloadName("", "123", null), "123");
+  assertEquals(downloadName("line-123", "123", "image/png"), "line-123.png");
+  assertEquals(downloadName("voice.m4a", "123", "video/mp4"), "voice.m4a");
+  assertEquals(downloadName("../../etc/passwd", "1", null), "passwd");
+  assertEquals(downloadName("a\u0000b.txt", "1", null), "ab.txt");
+  assertEquals(downloadName(".env", "1", "image/jpeg"), ".env.jpg");
+});
+
+Deno.test("/api/file names a download as the page asks", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    const path = `${stateDir}/media/9001`;
+    await Deno.writeFile(
+      path,
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]),
+    );
+    const res = await web.handle(
+      get(
+        `/api/file?path=${encodeURIComponent(path)}&download=1&name=${
+          encodeURIComponent("照片")
+        }`,
+        { headers: { cookie } },
+      ),
+    );
+    await res.body?.cancel();
+    assertEquals(res.status, 200);
+    assertEquals(
+      res.headers.get("content-disposition"),
+      `attachment; filename="__.png"; filename*=UTF-8''${
+        encodeURIComponent("照片.png")
+      }`,
+    );
+    const denied = await web.handle(
+      get(`/api/file?path=${encodeURIComponent(path)}&download=1&name=x`),
+    );
+    await denied.body?.cancel();
+    assertEquals(denied.status, 401);
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
 Deno.test("file reads reject hard links and a file swapped before open", async () => {
   const { stateDir, web } = await fixture();
   const secret = `${stateDir}/storage.json`;
@@ -1582,12 +1628,17 @@ Deno.test("the bridge forwards only the commands the page sends", async () => {
       "preview",
       "react",
       "reply",
+      "search",
       "send",
       "sendSticker",
       "stickers",
       "sync",
       "unhide",
       "unsend",
+      "mute",
+      "pin",
+      "unmute",
+      "unpin",
     ];
     // Real daemon commands the page never sends, and one it does not know.
     const other = ["image", "poke", "readFile", "toString"];
@@ -1619,6 +1670,95 @@ Deno.test("the bridge forwards only the commands the page sends", async () => {
         peer.close();
       } catch { /* already closed */ }
     }
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+type EventsWire = {
+  web: string;
+  events: { bootId: string; seq: number; events: { seq: number }[] };
+};
+
+Deno.test("the bridge sends only the events after the page's position", async () => {
+  const { stateDir, web, server, addr } = await served();
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const conns: Deno.Conn[] = [];
+  (async () => {
+    for await (const conn of daemon) conns.push(conn);
+  })().catch(() => {});
+  const ring = (bootId: string, seqs: number[]) =>
+    JSON.stringify({
+      bootId,
+      updatedAt: 1,
+      events: seqs.map((seq) => ({ seq, at: seq, kind: "read", chat: "c" })),
+    });
+  try {
+    const cookie = await signedInCookie(web, addr);
+    const port = server.addr.port;
+    const eventsFrame = async (protocols?: string[]) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+        headers: { cookie, origin: `http://127.0.0.1:${port}` },
+        ...(protocols ? { protocols } : {}),
+      });
+      try {
+        return await new Promise<{ raw: string; frame: EventsWire }>(
+          (resolve, reject) => {
+            ws.onmessage = (ev) => {
+              const frame = JSON.parse(ev.data);
+              if (frame.web === "events") resolve({ raw: ev.data, frame });
+            };
+            ws.onclose = () => reject(new Error("closed before events"));
+          },
+        );
+      } finally {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
+    const seqs = (frame: EventsWire) =>
+      frame.events.events.map((event) => event.seq);
+    const file = ring("boot-a", [1, 2, 3]);
+    await Deno.writeTextFile(`${stateDir}/events.json`, file);
+
+    // A page that names no position gets the file verbatim, as before.
+    const legacy = await eventsFrame();
+    assertEquals(legacy.raw, `{"web":"events","events":${file}}`);
+
+    // A first page gets only the watermark.
+    const tail = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.tail",
+    ]);
+    assertEquals(seqs(tail.frame), []);
+    assertEquals(tail.frame.events.seq, 3);
+    assertEquals(tail.frame.events.bootId, "boot-a");
+
+    // A reconnecting page gets only what it has not seen.
+    const resumed = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.boot-a.2",
+    ]);
+    assertEquals(seqs(resumed.frame), [3]);
+    assert(resumed.raw.length < legacy.raw.length);
+
+    // The daemon restarted: its seqs began again at 1 under a new boot, so
+    // the old position means nothing and the whole ring is sent.
+    await Deno.writeTextFile(`${stateDir}/events.json`, ring("boot-b", [1, 2]));
+    const restarted = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.boot-a.3",
+    ]);
+    assertEquals(seqs(restarted.frame), [1, 2]);
+    assertEquals(restarted.frame.events.bootId, "boot-b");
+  } finally {
+    for (const conn of conns) {
+      try {
+        conn.close();
+      } catch { /* closed by the bridge */ }
+    }
+    web.close();
+    daemon.close();
     await server.shutdown();
     await Deno.remove(stateDir, { recursive: true });
   }

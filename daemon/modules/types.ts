@@ -25,6 +25,10 @@ interface PluginChat {
   avatarPath?: string;
   /** Stamped by hiddenStamped() alone, and only when it is true. */
   hidden?: true;
+  /** Stamped by chatsStamped() alone, and only when it is true. */
+  pinned?: true;
+  /** Stamped by chatsStamped() alone, and only when it is true. */
+  muted?: true;
 }
 
 interface PluginMessage {
@@ -57,6 +61,18 @@ interface PluginMessage {
   requestId?: string;
   /** The sender rewrote this message after sending (LINE's edit feature). */
   edited?: boolean;
+  /** AUDIO: the clip length in milliseconds, from AUDLEN or DURATION. */
+  audioMs?: number;
+  /** LOCATION: the shared place. Absent when the payload had no position. */
+  location?: PluginLocation;
+}
+
+/** A shared place. The page links to a map; it never embeds one. */
+interface PluginLocation {
+  title: string;
+  address: string;
+  latitude: number;
+  longitude: number;
 }
 
 /** A Mention with the display name resolved, which is what the panel gets. */
@@ -138,6 +154,7 @@ export type {
   MessageCursor,
   PluginChat,
   PluginEvent,
+  PluginLocation,
   PluginMember,
   PluginMention,
   PluginMessage,

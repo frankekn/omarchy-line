@@ -75,6 +75,52 @@ export function createMessagesView(ctx) {
     }
     ctx.resetReactionPickers();
   }
+  // enil:message-actions-begin
+  function locationCard(place) {
+    const card = el("div", "location-card");
+    const title = String(place.title || ""),
+      address = String(place.address || "");
+    card.append(el("strong", "location-title", title || t("location")));
+    if (address) card.append(el("span", "location-address", address));
+    const lat = Number(place.latitude), lng = Number(place.longitude);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      const link = el("a", "location-link", t("openInMaps"));
+      link.href = `https://www.google.com/maps?q=${lat},${lng}`;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      card.append(link);
+    }
+    return card;
+  }
+  function appendMessageActions(actions, chat, message, text) {
+    if (text) {
+      const copy = el("button", "", t("copy"));
+      copy.type = "button";
+      copy.addEventListener("click", () => void ctx.copyText(text));
+      actions.append(copy);
+    }
+    if (
+      ["IMAGE", "VIDEO", "FILE", "AUDIO"].includes(message.contentType) &&
+      message.hasMedia && (!message.mediaState || message.mediaState === "ok")
+    ) {
+      const save = el("button", "", t("save"));
+      save.type = "button";
+      save.addEventListener("click", () => {
+        const current = rowMessages.get(save.closest(".message-row"));
+        void ctx.downloadMessage(chat, current || message);
+      });
+      actions.append(save);
+    }
+    if (
+      text && message.contentType === "NONE" && !message.decryptFailed
+    ) {
+      const forward = el("button", "", t("forward"));
+      forward.type = "button";
+      forward.addEventListener("click", () => ctx.forwardText(text, forward));
+      actions.append(forward);
+    }
+  }
+  // enil:message-actions-end
   function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
@@ -107,6 +153,11 @@ export function createMessagesView(ctx) {
     if (message.contentType === "FLEX" && message.altText) {
       body = String(message.altText);
     }
+    const place = message.contentType === "LOCATION" && !message.unsent
+      ? message.location
+      : null;
+    // LINE repeats a place's title as the message text.
+    if (place && body.trim() === String(place.title || "")) body = "";
     if (
       ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) &&
       (!body || body.toUpperCase() === message.contentType)
@@ -122,12 +173,16 @@ export function createMessagesView(ctx) {
     }
     if (
       !message.unsent &&
-      ["STICKER", "FLEX", "IMAGE", "VIDEO", "FILE"].includes(
+      ["STICKER", "FLEX", "IMAGE", "VIDEO", "FILE", "AUDIO"].includes(
         message.contentType,
       )
     ) {
       const media = el("div", "message-media");
       if (includeMedia) addMedia(media, message, chat);
+      bubble.append(media);
+    } else if (place) {
+      const media = el("div", "message-media");
+      if (includeMedia) media.append(locationCard(place));
       bubble.append(media);
     }
     column.append(bubble);
@@ -252,6 +307,7 @@ export function createMessagesView(ctx) {
         currentColumn.append(picker);
       });
       actions.append(react);
+      appendMessageActions(actions, chat, message, system ? "" : body);
       if (own) {
         const unsend = el("button", "", t("unsend"));
         unsend.type = "button";
@@ -463,6 +519,9 @@ export function createMessagesView(ctx) {
     protect(rowOf(document.activeElement));
     for (const video of list.getElementsByTagName("video")) {
       if (!video.paused && !video.ended) protect(rowOf(video));
+    }
+    for (const audio of list.getElementsByTagName("audio")) {
+      if (!audio.paused && !audio.ended) protect(rowOf(audio));
     }
     const selection = globalThis.getSelection();
     if (selection && !selection.isCollapsed) {
@@ -923,6 +982,8 @@ export function createMessagesView(ctx) {
           item.message.flexImages,
           item.message.fileName,
           item.message.fileSize,
+          item.message.audioMs,
+          item.message.location,
           preview,
           hasPreview,
         ]);
@@ -1148,5 +1209,5 @@ export function createMessagesView(ctx) {
       resumePaging(false);
     }
   }, true);
-  return { renderMessages, closeOpenReactions };
+  return { renderMessages, closeOpenReactions, scrollToMessage };
 }

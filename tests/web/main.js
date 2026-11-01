@@ -218,7 +218,8 @@ export async function main(h) {
   await h.request({ id: 3, cmd: "poke", chat: CHAT, text: "未開啟時的訊息" });
   await phone.locator("#chat-list").getByText("未開啟時的訊息").waitFor();
   await phoneTap.socket.close({ code: 4001, reason: "test disconnect" });
-  await phone.getByText("連線中斷，準備重連", { exact: true }).waitFor();
+  await phone.locator("#sidebar")
+    .getByText("連線中斷，準備重連", { exact: true }).waitFor();
   await phone.locator("#connection.connected").waitFor({ timeout: 10000 });
   await until(
     () =>

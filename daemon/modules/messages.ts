@@ -51,7 +51,13 @@ import {
 } from "./protocol.ts";
 import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import type { Client } from "@evex/linejs";
-import type { Json, PluginMention, PluginMessage, TalkMsg } from "./types.ts";
+import type {
+  Json,
+  PluginLocation,
+  PluginMention,
+  PluginMessage,
+  TalkMsg,
+} from "./types.ts";
 
 // Exactly TalkMessage's `hasContents` (client/features/message/talk.ts:24);
 // getData() throws "message have no contents" for anything else. There is no
@@ -163,6 +169,15 @@ async function toPluginMessage(
     : fileNameOf(meta, await e2eeFilePayload(raw, owner, generation));
   if (fileName) out.fileName = fileName;
   if (meta.FILE_SIZE) out.fileSize = Number(meta.FILE_SIZE);
+  if (contentType === "AUDIO") {
+    const audioMs = audioLengthOf(meta);
+    if (audioMs !== undefined) out.audioMs = audioMs;
+  }
+  // decryptE2EEMessage has already moved a sealed position into raw.location.
+  if (contentType === "LOCATION") {
+    const location = locationOf(raw.location);
+    if (location) out.location = location;
+  }
   // Reported even once it is in the past: the panel needs the moment to say
   // when the file went away, not just that it is gone.
   const expiresAt = expiresAtOf(meta);
@@ -575,7 +590,29 @@ interface RawPreviewFields {
   contentMetadata?: Json;
 }
 
+/**
+ * The list shows one line of the preview, and the panel elides it, so a
+ * long message is cut here instead of riding in every state write whole.
+ * The whole text stays in history. Code points, so no surrogate is split.
+ */
+const PREVIEW_MAX_CHARS = 200;
+
+function clipPreview(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  const chars = Array.from(text);
+  if (chars.length <= PREVIEW_MAX_CHARS) return text;
+  return chars.slice(0, PREVIEW_MAX_CHARS).join("") + "…";
+}
+
 function previewText(
+  text: string,
+  raw: RawPreviewFields,
+  decrypted?: Json | null,
+): string {
+  return clipPreview(previewLine(text, raw, decrypted));
+}
+
+function previewLine(
   text: string,
   raw: RawPreviewFields,
   decrypted?: Json | null,
@@ -612,7 +649,8 @@ function pushedPreviewText(
   raw: RawPreviewFields,
 ): string {
   if (message.unsent) return UNSENT_TEXT;
-  return message.fileName || message.altText || previewText(message.text, raw);
+  return clipPreview(message.fileName || message.altText || "") ||
+    previewText(message.text, raw);
 }
 // enil:preview-end
 
@@ -656,7 +694,43 @@ async function e2eeFilePayload(
 }
 // enil:filepayload-end
 
+/** A voice clip's length in ms; LINE writes AUDLEN, our uploads DURATION. */
+function audioLengthOf(meta: Json): number | undefined {
+  for (const key of ["AUDLEN", "DURATION"]) {
+    const value = Number(meta[key]);
+    if (meta[key] !== undefined && Number.isFinite(value) && value > 0) {
+      return Math.round(value);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The place a LOCATION message shares, or null without a usable position.
+ * Coordinates outside the globe are dropped: the page builds a map link
+ * from them.
+ */
+function locationOf(value: unknown): PluginLocation | null {
+  if (!value || typeof value !== "object") return null;
+  const place = value as Json;
+  const latitude = Number(place.latitude), longitude = Number(place.longitude);
+  if (
+    place.latitude === undefined || place.latitude === null ||
+    place.longitude === undefined || place.longitude === null ||
+    !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+    Math.abs(latitude) > 90 || Math.abs(longitude) > 180
+  ) return null;
+  const text = (v: unknown) => typeof v === "string" ? v.trim() : "";
+  return {
+    title: text(place.title),
+    address: text(place.address),
+    latitude,
+    longitude,
+  };
+}
+
 export {
+  audioLengthOf,
   cacheMedia,
   collectFlexImages,
   downloadErrorText,
@@ -665,6 +739,7 @@ export {
   fileNameOf,
   finalizeMessageState,
   isSystemEventName,
+  locationOf,
   mediaPending,
   mediaStateFrom,
   previewableMessage,

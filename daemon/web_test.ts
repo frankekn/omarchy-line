@@ -1,9 +1,17 @@
 // State snapshots and their recovery across the web bridge.
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { notifyStateWritten, StateFeed } from "./web/bridge.ts";
+import {
+  eventsCursor,
+  eventsFrame,
+  notifyStateWritten,
+  StateFeed,
+} from "./web/bridge.ts";
 import { makeStateDecoder } from "./web/public/js/state-wire.js";
 import { applyChatPush, applyChatState } from "./web/public/js/protocol.js";
-import { createConnection } from "./web/public/js/connection.js";
+import {
+  createConnection,
+  eventsProtocol,
+} from "./web/public/js/connection.js";
 import { createModel } from "./web/public/js/model.js";
 
 type Chat = { mid: string; name: string; lastTime: number };
@@ -324,13 +332,13 @@ Deno.test("failed connections always retry the state delta subprotocol", () => {
     cancel: () => {},
   });
   connection.start();
-  assertEquals(Socket.instances[0].protocol, "enil-state-delta-v1");
+  assertEquals(Socket.instances[0].protocol?.[0], "enil-state-delta-v1");
   Socket.instances[0].close();
   callbacks.shift()?.();
-  assertEquals(Socket.instances[1].protocol, "enil-state-delta-v1");
+  assertEquals(Socket.instances[1].protocol?.[0], "enil-state-delta-v1");
   Socket.instances[1].close();
   callbacks.shift()?.();
-  assertEquals(Socket.instances[2].protocol, "enil-state-delta-v1");
+  assertEquals(Socket.instances[2].protocol?.[0], "enil-state-delta-v1");
   assertEquals(delays, [1000, 2000]);
   connection.stop();
 });
@@ -377,7 +385,7 @@ Deno.test("a bad delta reconnects immediately without a false offline status", a
   };
   Socket.instances[0].receive(gap);
   assertEquals(Socket.instances.length, 2);
-  assertEquals(Socket.instances[1].protocol, "enil-state-delta-v1");
+  assertEquals(Socket.instances[1].protocol?.[0], "enil-state-delta-v1");
   assertEquals(model.connected, true);
   assertEquals(statuses, ["connecting", "connected"]);
   assertEquals(delays, []);
@@ -643,4 +651,115 @@ Deno.test("online or a visible tab skips one backoff wait per outage", () => {
   connection.stop();
   network.dispatchEvent(new Event("online"));
   assertEquals(Socket.instances.length, 4);
+});
+
+Deno.test("the events cursor comes only from a well-formed subprotocol", () => {
+  assertEquals(eventsCursor(null), null);
+  assertEquals(eventsCursor("enil-state-delta-v1"), null);
+  assertEquals(
+    eventsCursor("enil-state-delta-v1, enil-events-v1.tail"),
+    "tail",
+  );
+  assertEquals(eventsCursor("enil-events-v1.boot-1.42"), {
+    boot: "boot-1",
+    seq: 42,
+  });
+  // Malformed positions keep the legacy full ring.
+  for (
+    const bad of [
+      "enil-events-v1.",
+      "enil-events-v1.boot",
+      "enil-events-v1.boot.-1",
+      "enil-events-v1.boot.01",
+      "enil-events-v1.boot.1e3",
+      "enil-events-v1.boot.1234567890123456",
+      "enil-events-v1.b/oot.1",
+      `enil-events-v1.${"b".repeat(129)}.1`,
+    ]
+  ) assertEquals(eventsCursor(bad), null, bad);
+});
+
+Deno.test("eventsFrame sends the part of the ring a page has not seen", () => {
+  const file = JSON.stringify({
+    bootId: "boot-a",
+    updatedAt: 5,
+    events: [7, 8, 9].map((seq) => ({ seq, kind: "read", chat: "c" })),
+  });
+  const seqs = (frame: string | null) =>
+    (JSON.parse(frame ?? "null").events.events as { seq: number }[])
+      .map((event) => event.seq);
+  assertEquals(eventsFrame("{", null), null);
+  assertEquals(eventsFrame("", "tail"), null);
+  assertEquals(eventsFrame(file, null), `{"web":"events","events":${file}}`);
+  const tail = JSON.parse(eventsFrame(file, "tail") ?? "null");
+  assertEquals(tail.events, {
+    bootId: "boot-a",
+    updatedAt: 5,
+    events: [],
+    seq: 9,
+  });
+  assertEquals(seqs(eventsFrame(file, { boot: "boot-a", seq: 7 })), [8, 9]);
+  assertEquals(seqs(eventsFrame(file, { boot: "boot-a", seq: 9 })), []);
+  // Events that fell off the ring leave a gap the page detects itself.
+  assertEquals(seqs(eventsFrame(file, { boot: "boot-a", seq: 2 })), [7, 8, 9]);
+  // A page ahead of the file (a live push not yet flushed) gets nothing and
+  // keeps its own watermark: seqs never go back within one boot.
+  const ahead = JSON.parse(
+    eventsFrame(file, { boot: "boot-a", seq: 12 }) ?? "null",
+  );
+  assertEquals(ahead.events.events, []);
+  assertEquals(ahead.events.seq, 9);
+  // A daemon restart resets seqs under a new boot: the whole ring again.
+  assertEquals(seqs(eventsFrame(file, { boot: "boot-z", seq: 12 })), [7, 8, 9]);
+  assertEquals(seqs(eventsFrame(file, { boot: "boot-z", seq: 1 })), [7, 8, 9]);
+  // An empty ring (after a logout) still names a watermark.
+  const empty = JSON.parse(
+    eventsFrame('{"bootId":"boot-a","events":[]}', {
+      boot: "boot-a",
+      seq: 3,
+    }) ??
+      "null",
+  );
+  assertEquals(empty.events.seq, 0);
+});
+
+Deno.test("the page offers its event position on every connection", () => {
+  assertEquals(eventsProtocol(createModel()), "enil-events-v1.tail");
+  assertEquals(
+    eventsProtocol({ boot: "boot-a", seq: 4, eventsSeen: true }),
+    "enil-events-v1.boot-a.4",
+  );
+  // Before the first events frame, or with a boot that is not a token.
+  assertEquals(
+    eventsProtocol({ boot: "boot-a", seq: 4, eventsSeen: false }),
+    "enil-events-v1.tail",
+  );
+  assertEquals(
+    eventsProtocol({ boot: "a b", seq: 4, eventsSeen: true }),
+    "enil-events-v1.tail",
+  );
+  Socket.instances = [];
+  const model = createModel();
+  const connection = createConnection({
+    model,
+    url: "ws://test",
+    WebSocketClass: Socket,
+    schedule: () => 1,
+    cancel: () => {},
+  });
+  connection.start();
+  assertEquals(Socket.instances[0].protocol, [
+    "enil-state-delta-v1",
+    "enil-events-v1.tail",
+  ]);
+  Object.assign(model, { boot: "boot-a", seq: 9, eventsSeen: true });
+  Socket.instances[0].close();
+  model.retryTimer = null;
+  connection.stop();
+  connection.start();
+  assertEquals(Socket.instances.at(-1)?.protocol, [
+    "enil-state-delta-v1",
+    "enil-events-v1.boot-a.9",
+  ]);
+  connection.stop();
 });

@@ -51,6 +51,7 @@ import {
   panelMediaLane,
   panelMediaRetirementSignal,
   sendClipboardImageRequest,
+  STATE_DIR,
   timings,
   wlPaste,
 } from "./env.ts";
@@ -61,6 +62,7 @@ import {
   memberCache,
   MEMBERS_TTL_MS,
   midKind,
+  nameCache,
   rawsById,
   readRanges,
   rememberGoneMedia,
@@ -75,8 +77,11 @@ import {
   chatSummaryStore,
   dirtyMids,
   isChatMid,
+  isHidden,
   login,
   me,
+  mutedChats,
+  pinnedChats,
   pushEvent,
   saveHidden,
   scheduleStateWrite,
@@ -119,6 +124,46 @@ import {
   stickerPackages,
 } from "./stickers.ts";
 import { loginOperation, logout, startLogin, syncNow } from "./login.ts";
+import { searchArgs, searchMessages } from "./search.ts";
+
+// enil:search-begin
+/**
+ * One store scan at a time: a second search waits for the first instead of
+ * doubling the disk and CPU work. Each scan has its own 2 s budget, so the
+ * wait is bounded too.
+ */
+let searchQueue: Promise<unknown> = Promise.resolve();
+
+async function runSearch(req: Json): Promise<Json> {
+  const args = searchArgs(req);
+  if ("error" in args) return { ok: false, error: args.error };
+  const myMid = String(me.mid ?? "");
+  const run = searchQueue.then(async () => {
+    // Appends coalesce for 150 ms; a message that just arrived is findable.
+    await messageStore.flush();
+    return await searchMessages({
+      root: `${STATE_DIR}/messages`,
+      myMid,
+      order: chats.map((c) => c.mid),
+      isHidden,
+    }, args);
+  });
+  searchQueue = run.catch(() => {});
+  const result = await run;
+  return {
+    ok: true,
+    data: {
+      results: result.hits.map((hit) => {
+        const name = nameCache.get(hit.from);
+        return name ? { ...hit, fromName: name } : hit;
+      }),
+      partial: result.partial,
+      more: result.more,
+      scanned: result.scanned,
+    },
+  };
+}
+// enil:search-end
 // enil:histcount-begin
 /** What `count` means when the caller did not say. */
 const HISTORY_COUNT = 30;
@@ -336,6 +381,23 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     return { ok: true };
   }
 
+  // Pin and mute follow hide: daemon-side preferences in pinned.json and
+  // muted.json, shared by every device, idempotent both ways, and answered
+  // without a LINE session.
+  if (
+    cmd === "pin" || cmd === "unpin" || cmd === "mute" || cmd === "unmute"
+  ) {
+    const mid = String(req.chat ?? "");
+    if (!mid) return { ok: false, error: "沒有指定是哪一間聊天室" };
+    if (!isChatMid(mid)) return { ok: false, error: "不支援的聊天室" };
+    const pref = cmd === "pin" || cmd === "unpin" ? pinnedChats : mutedChats;
+    if (!pref.set(mid, cmd === "pin" || cmd === "mute")) return { ok: true };
+    bumpChatsRevision();
+    await pref.save();
+    await writeState();
+    return { ok: true };
+  }
+
   // A probe result can arrive after the panel moved to another chat. Let that
   // panel release the staged clipboard file without requiring a live LINE
   // session; clipboardStagePath confines deletion to daemon-created stages.
@@ -363,6 +425,9 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
       return { ok: false, error: "圖片下載失敗" };
     }
   }
+
+  // Local only: it reads the message store and never asks LINE.
+  if (cmd === "search") return await runSearch(req);
 
   if (cmd === "history") {
     const chatMid = String(req.chat ?? "");

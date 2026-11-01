@@ -32,6 +32,8 @@ import { errorLine } from "./modules/text.ts";
 import {
   loadHidden,
   login,
+  mutedChats,
+  pinnedChats,
   setLogin,
   setLoginState,
   setStateSink,
@@ -81,6 +83,9 @@ async function main() {
   // Before the first writeState(): a boot that published the list unstamped
   // would put every hidden row back on screen for one refresh.
   await loadHidden();
+  // Same reason: pinned and muted rows are stamped by the first write too.
+  await pinnedChats.load();
+  await mutedChats.load();
   await Deno.chmod(STATE_DIR, 0o700).catch(() => {});
   await Deno.chmod(STORAGE_PATH, 0o600).catch(() => {});
   await writeState();

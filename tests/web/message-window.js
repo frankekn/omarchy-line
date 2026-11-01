@@ -266,7 +266,8 @@ async function quoteDuringOlder(h) {
     import.meta.url,
   );
   let view = await Deno.readTextFile(viewUrl);
-  const marker = "  return { renderMessages, closeOpenReactions };";
+  const marker =
+    "  return { renderMessages, closeOpenReactions, scrollToMessage };";
   assert.equal(view.split(marker).length, 2);
   view = view.replace(
     marker,
@@ -719,7 +720,8 @@ async function scrollFollow(h) {
     });
     await page.evaluate(() => globalThis.__followTouch.writes = []);
     const cdp = await context.newCDPSession(page);
-    const x = box.x + box.width / 2, y = box.y + box.height * 0.75;
+    // The left gutter: a tap there must not land on a message action.
+    const x = box.x + 8, y = box.y + box.height * 0.75;
     await cdp.send("Input.dispatchTouchEvent", {
       type: "touchStart",
       touchPoints: [{ x, y, id: 1 }],

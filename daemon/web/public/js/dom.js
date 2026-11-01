@@ -7,10 +7,16 @@ export function el(tag, className, text) {
   if (text !== undefined) node.textContent = String(text);
   return node;
 }
-export const fileUrl = (path, download = false) =>
+export const fileUrl = (path, download = false, name = "") =>
   `/api/file?path=${encodeURIComponent(String(path))}${
     download ? "&download=1" : ""
-  }`;
+  }${download && name ? `&name=${encodeURIComponent(String(name))}` : ""}`;
+/** Minutes and seconds of a clip length in milliseconds. */
+export function durationText(ms) {
+  const total = Math.round(Number(ms) / 1000);
+  if (!Number.isFinite(total) || total < 0) return "";
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
 export function httpsUrl(value) {
   try {
     const url = new URL(String(value));

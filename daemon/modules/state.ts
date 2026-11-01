@@ -24,6 +24,8 @@ import {
   BOOT_ID,
   EVENTS_PATH,
   HIDDEN_PATH,
+  MUTED_PATH,
+  PINNED_PATH,
   STATE_PATH,
   stateWriteBytes,
   timings,
@@ -293,6 +295,119 @@ async function loadHidden(path: string = HIDDEN_PATH): Promise<void> {
 }
 // enil:hidden-end
 
+// The block between the enil:chatprefs markers is sliced out verbatim by
+// daemon/chatprefs_test.ts on top of the hidden block, which gives it
+// isChatMid() and hiddenStamped(). The test supplies the two paths,
+// writeAtomic() and errorLine().
+// enil:chatprefs-begin
+/**
+ * Pinned and muted chats. Like hidden.json, these are daemon-side files and
+ * not LINE attributes, so every device that opens the web page sees the same
+ * set and nothing reaches the phone's own LINE settings.
+ *
+ * A pinned chat sorts above the others on the page. A muted chat stays on the
+ * list with its unread count, but it does not raise a desktop toast here and
+ * the page neither plays a sound for it nor counts it in the tab title.
+ */
+const CHAT_PREF_MAX = 1000;
+
+interface ChatPref {
+  readonly mids: Set<string>;
+  has(mid: string): boolean;
+  /** Returns whether anything moved, so a repeat costs no disk write. */
+  set(mid: string, on: boolean): boolean;
+  save(path?: string): Promise<void>;
+  load(path?: string): Promise<void>;
+}
+
+function createChatPref(label: string, defaultPath: string): ChatPref {
+  const mids = new Set<string>();
+  let writing = Promise.resolve();
+  // Insertion order is age order, so the first is the oldest.
+  const cap = () => {
+    while (mids.size > CHAT_PREF_MAX) {
+      const oldest = mids.values().next().value;
+      if (oldest === undefined) return;
+      mids.delete(oldest);
+    }
+  };
+  return {
+    mids,
+    has: (mid) => mids.has(mid),
+    set(mid, on) {
+      if (on === mids.has(mid)) return false;
+      if (on) {
+        mids.add(mid);
+        cap();
+      } else {
+        mids.delete(mid);
+      }
+      return true;
+    },
+    save(path = defaultPath) {
+      // Serialised, and the set is read inside the queue: a queued write
+      // always carries the set as it is now, as saveHidden() does.
+      writing = writing.then(() =>
+        writeAtomic(path, JSON.stringify({ mids: [...mids] }))
+      ).catch((e) => {
+        // Losing the file costs the user one click again, never a message.
+        console.error(`[${label}] write failed:`, errorLine(e));
+      });
+      return writing;
+    },
+    async load(path = defaultPath) {
+      let text: string;
+      try {
+        text = await Deno.readTextFile(path);
+      } catch {
+        return; // no file yet: nothing is set
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        console.error(`[${label}] unreadable file:`, errorLine(e));
+        return;
+      }
+      const list = (parsed as { mids?: unknown } | null)?.mids;
+      if (!Array.isArray(list)) return;
+      for (const mid of list) {
+        if (typeof mid === "string" && isChatMid(mid)) mids.add(mid);
+      }
+      cap();
+    },
+  };
+}
+
+const pinnedChats = createChatPref("pinned", PINNED_PATH);
+const mutedChats = createChatPref("muted", MUTED_PATH);
+
+function isMuted(mid: string): boolean {
+  return mutedChats.has(mid);
+}
+
+/**
+ * Every flag a chat row carries from a local preference, stamped on copies
+ * and only when true -- the same rules as hiddenStamped(). A flag on the row,
+ * not a list of ids in the state: a state-delta frame carries every top-level
+ * field on each update, but only the rows that changed.
+ */
+function chatsStamped<T extends { mid: string }>(list: T[]): T[] {
+  const rows = hiddenStamped(list);
+  if (pinnedChats.mids.size === 0 && mutedChats.mids.size === 0) return rows;
+  return rows.map((c) => {
+    const pinned = pinnedChats.mids.has(c.mid);
+    const muted = mutedChats.mids.has(c.mid);
+    if (!pinned && !muted) return c;
+    return {
+      ...c,
+      ...(pinned ? { pinned: true } : {}),
+      ...(muted ? { muted: true } : {}),
+    };
+  });
+}
+// enil:chatprefs-end
+
 // enil:statepersist-begin
 let writing = Promise.resolve();
 let stateSink: (() => void) | null = null;
@@ -364,11 +479,11 @@ function writeState(): Promise<void> {
     const snapshot = JSON.stringify(
       {
         ...stateSnapshot,
-        // Hidden chats are a local preference and may change while this
-        // snapshot waits behind an older disk write. Stamp the current set at
-        // the serialization point so a queued write cannot restore an old
-        // preference for one state-file cycle.
-        chats: hiddenStamped(stateSnapshot.chats),
+        // Hidden, pinned and muted chats are local preferences and may change
+        // while this snapshot waits behind an older disk write. Stamp the
+        // current sets at the serialization point so a queued write cannot
+        // restore an old preference for one state-file cycle.
+        chats: chatsStamped(stateSnapshot.chats),
         updatedAt: Date.now(),
         ...(Object.keys(timingSnapshot).length
           ? { timings: timingSnapshot }
@@ -637,9 +752,10 @@ function setChatSink(
 /** The panel invalidates its list rendering off this counter. */
 export function bumpChatsRevision(changed?: PluginChat): void {
   chatsRevision++;
-  // `hidden` lives on the serialized copy, not the stored row; stamp it before
-  // the row leaves the process or a hidden chat would resurface for a beat.
-  if (changed) chatSink?.(hiddenStamped([changed])[0], chatsRevision);
+  // `hidden`, `pinned` and `muted` live on the serialized copy, not the
+  // stored row; stamp them before the row leaves the process or a hidden
+  // chat would resurface for a beat.
+  if (changed) chatSink?.(chatsStamped([changed])[0], chatsRevision);
 }
 
 /** Published together with chats. */
@@ -666,6 +782,7 @@ export {
   chatListHealth,
   chats,
   chatsRevision,
+  chatsStamped,
   chatSummaryStore,
   chatSummaryVersions,
   clearRefreshHealth,
@@ -676,13 +793,16 @@ export {
   invalidateStateWrites,
   isChatMid,
   isHidden,
+  isMuted,
   link,
   loadHidden,
   login,
   me,
+  mutedChats,
   noteRefreshFailed,
   noteRefreshOk,
   noteStateWritten,
+  pinnedChats,
   pushEvent,
   refreshHealthState,
   refreshHealthValue,

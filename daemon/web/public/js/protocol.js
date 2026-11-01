@@ -60,9 +60,11 @@ export function applyChatPush(snapshot, row, revision, boot) {
   };
 }
 
+// Pinned chats lead, in recency order; then chats with unread messages that
+// are not muted; then the rest. Hidden chats appear only in a search.
 export function visibleChats(chats, query) {
   const search = String(query || "").trim().toLowerCase();
-  const unread = [], rest = [], hidden = [];
+  const pinned = [], unread = [], rest = [], hidden = [];
   for (const chat of chats) {
     if (search) {
       const haystack = `${chat.name || chat.mid} ${chat.lastFrom || ""} ${
@@ -71,10 +73,13 @@ export function visibleChats(chats, query) {
       if (!haystack.includes(search)) continue;
     }
     if (chat.hidden) hidden.push(chat);
-    else if (Number(chat.unread || 0) > 0) unread.push(chat);
+    else if (chat.pinned) pinned.push(chat);
+    else if (!chat.muted && Number(chat.unread || 0) > 0) unread.push(chat);
     else rest.push(chat);
   }
-  return search ? unread.concat(rest, hidden) : unread.concat(rest);
+  return search
+    ? pinned.concat(unread, rest, hidden)
+    : pinned.concat(unread, rest);
 }
 
 export function compareMessages(a, b) {

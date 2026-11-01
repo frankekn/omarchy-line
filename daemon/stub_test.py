@@ -45,7 +45,9 @@ CHAT_TYPES = {
 }
 # Absent, never empty, when the contact has no picture. `hidden` is absent
 # unless it is true -- an older panel build must not have to know the key.
-CHAT_OPTIONAL = {"avatarPath": str, "hidden": bool}
+CHAT_OPTIONAL = {
+    "avatarPath": str, "hidden": bool, "pinned": bool, "muted": bool,
+}
 # PluginMessage in daemon.ts: the always-present half, then the optional half.
 MSG_REQUIRED = {
     "id": str, "chat": str, "from": str, "fromName": str, "text": str,
@@ -1804,6 +1806,104 @@ class HiddenTest(unittest.TestCase):
             self.assertTrue(s.call(cmd="unhide", chat="cstub-family")["ok"])
         finally:
             s.close()
+
+
+
+class ChatPrefsTest(unittest.TestCase):
+    """`pin` / `unpin` / `mute` / `unmute`: daemon-side chat preferences."""
+
+    def setUp(self):
+        self.s = Stub("--fixture", "default")
+        self.addCleanup(self.s.close)
+
+    def rows(self):
+        return {c["mid"]: c for c in self.s.state()["chats"]}
+
+    def test_only_the_flagged_rows_carry_the_keys(self):
+        self.assertTrue(self.s.call(cmd="pin", chat="ustub-alice")["ok"])
+        self.assertTrue(self.s.call(cmd="mute", chat="cstub-family")["ok"])
+        rows = self.rows()
+        self.assertIs(True, rows["ustub-alice"]["pinned"])
+        self.assertNotIn("muted", rows["ustub-alice"])
+        self.assertIs(True, rows["cstub-family"]["muted"])
+        # Muted stays on the list with its unread count.
+        self.assertGreater(rows["cstub-family"]["unread"], 0)
+        for mid, c in rows.items():
+            if mid != "ustub-alice":
+                self.assertNotIn("pinned", c, mid)
+
+    def test_undo_takes_the_key_away_and_repeats_change_nothing(self):
+        for cmd in ("pin", "pin", "unpin", "unpin"):
+            self.assertTrue(self.s.call(cmd=cmd, chat="ustub-alice")["ok"])
+        self.assertNotIn("pinned", self.rows()["ustub-alice"])
+        for cmd in ("mute", "unmute", "unmute"):
+            self.assertTrue(self.s.call(cmd=cmd, chat="ustub-alice")["ok"])
+        self.assertNotIn("muted", self.rows()["ustub-alice"])
+
+    def test_bad_ids_are_refused_with_the_daemon_s_words(self):
+        for cmd in ("pin", "unpin", "mute", "unmute"):
+            res = self.s.call(cmd=cmd)
+            self.assertEqual(
+                {"ok": False, "error": "沒有指定是哪一間聊天室",
+                 "id": res["id"]}, res)
+            res = self.s.call(cmd=cmd, chat="../c")
+            self.assertEqual(
+                {"ok": False, "error": "不支援的聊天室", "id": res["id"]}, res)
+
+    def test_works_with_no_session(self):
+        s = Stub("--logged-out")
+        try:
+            for cmd in ("pin", "unpin", "mute", "unmute"):
+                self.assertTrue(s.call(cmd=cmd, chat="cstub-family")["ok"])
+        finally:
+            s.close()
+
+
+class SearchTest(unittest.TestCase):
+    """`search`: the daemon's store scan, answered from the fixture."""
+
+    def setUp(self):
+        self.s = Stub("--fixture", "default")
+        self.addCleanup(self.s.close)
+
+    def test_hits_are_newest_first_with_a_marked_snippet(self):
+        res = self.s.call(cmd="search", q="deploy")
+        self.assertTrue(res["ok"], res)
+        # Only text messages: the FLEX altText and quoted lines do not count.
+        self.assertEqual([], res["data"]["results"])
+        res = self.s.call(cmd="search", q="明天")
+        hits = res["data"]["results"]
+        self.assertEqual(["cstub-family-m8", "ustub-alice-m1"],
+                         [h["id"] for h in hits])
+        for h in hits:
+            # UTF-16 offsets: the family hit has an emoji in front of it.
+            units = h["snippet"].encode("utf-16-le")
+            a, b = h["match"]
+            self.assertEqual("明天", units[a * 2:b * 2].decode("utf-16-le"))
+        self.assertEqual({"chat", "id", "time", "from", "fromName", "snippet",
+                          "match"}, set(hits[0]))
+
+    def test_unsent_hidden_and_chat_scope(self):
+        # The recalled message's text is LINE's own notice; never a hit.
+        res = self.s.call(cmd="search", q="收回")
+        self.assertEqual([], res["data"]["results"])
+        self.s.call(cmd="hide", chat="ustub-alice")
+        res = self.s.call(cmd="search", q="明天")
+        self.assertEqual(["cstub-family-m8"],
+                         [h["id"] for h in res["data"]["results"]])
+        res = self.s.call(cmd="search", q="明天", chat="ustub-alice")
+        self.assertEqual(["ustub-alice-m1"],
+                         [h["id"] for h in res["data"]["results"]])
+
+    def test_refusals_match_the_daemon(self):
+        for req, error in (
+                ({}, "沒有搜尋文字"),
+                ({"q": "  "}, "沒有搜尋文字"),
+                ({"q": "x" * 101}, "搜尋文字太長"),
+                ({"q": "x", "chat": "../x"}, "不支援的聊天室"),
+                ({"q": "x", "before": -1}, "before 不對")):
+            res = self.s.call(cmd="search", **req)
+            self.assertEqual(error, res.get("error"), req)
 
 
 class AvatarTest(unittest.TestCase):
