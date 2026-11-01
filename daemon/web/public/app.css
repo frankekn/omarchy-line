@@ -1632,6 +1632,7 @@ textarea::placeholder {
   color: var(--muted);
   box-shadow: inset 0 0 0 1px var(--line);
   font-weight: 600;
+}
 /* Message actions, voice and location. */
 /* More actions per message: wrap them on a narrow screen. */
 .message-meta {
@@ -1738,6 +1739,7 @@ textarea::placeholder {
   text-decoration: underline;
   text-underline-offset: 2px;
   font-size: calc(12rem / 14);
+}
 /* Full message search. Reuses the switcher dialog and list styles. */
 .message-search-scope {
   margin: 0 12px 6px;
