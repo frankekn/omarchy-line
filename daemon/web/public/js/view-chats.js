@@ -3,6 +3,22 @@
 import { $, el, formatTime, setAvatar } from "./dom.js";
 import { visibleChats } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
+const SVG = "http://www.w3.org/2000/svg";
+// Outline icons on a 16-unit grid, stroked in currentColor (app.css).
+const MARK_PATHS = {
+  pinned: "M6 2h4l-.5 4 2.5 2.5v1H4v-1L6.5 6zM8 9.5V14",
+  muted: "M4 10V6a4 4 0 0 1 8 0v4l1.5 1.5h-11zM6.5 13.5h3M2 2l12 12",
+};
+function markIcon(kind) {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("class", `row-mark-icon ${kind}`);
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute("d", MARK_PATHS[kind]);
+  svg.append(path);
+  return svg;
+}
 export function createChatsView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
@@ -67,9 +83,10 @@ export function createChatsView(ctx) {
       time = el("time", "row-time"),
       preview = el("span", "row-preview"),
       badge = el("span", "badge");
+    const marks = el("span", "row-marks");
     const timeText = document.createTextNode("");
     time.append(timeText);
-    top.append(name, time);
+    top.append(name, marks, time);
     bottom.append(preview);
     content.append(top, bottom);
     button.append(avatar, content);
@@ -83,7 +100,24 @@ export function createChatsView(ctx) {
       preview,
       badge,
       bottom,
+      marks,
     };
+  }
+  // Pinned and muted marks: an icon each, with the words for screen readers.
+  function updateMarks(record, pinned, muted) {
+    const nodes = [];
+    for (
+      const [on, kind, key] of [
+        [pinned, "pinned", "pinnedChat"],
+        [muted, "muted", "mutedChat"],
+      ]
+    ) {
+      if (on) nodes.push(markIcon(kind), el("span", "sr-only", t(key)));
+    }
+    record.marks.replaceChildren(...nodes);
+    record.node.classList.toggle("pinned", pinned);
+    record.node.classList.toggle("quiet", muted);
+    record.badge.classList.toggle("quiet", muted);
   }
   function updateChat(record, chat, today, times) {
     const unread = Number(chat.unread);
@@ -99,8 +133,14 @@ export function createChatsView(ctx) {
         chat.lastText || ""
       }`,
       unread: unread > 0 ? unread : 0,
+      pinned: !!chat.pinned,
+      muted: !!chat.muted,
     };
     const previous = record.values;
+    if (
+      !previous || previous.pinned !== values.pinned ||
+      previous.muted !== values.muted
+    ) updateMarks(record, values.pinned, values.muted);
     if (!previous || previous.label !== values.label) {
       record.name.textContent = values.label;
     }
@@ -224,6 +264,10 @@ export function createChatsView(ctx) {
     if ($("hide-chat").textContent !== action) {
       $("hide-chat").textContent = action;
     }
+    const pin = chat.pinned ? t("unpin") : t("pin");
+    if ($("pin-chat").textContent !== pin) $("pin-chat").textContent = pin;
+    const mute = chat.muted ? t("unmute") : t("mute");
+    if ($("mute-chat").textContent !== mute) $("mute-chat").textContent = mute;
   }
   function isViewingChat() {
     return !!model.active && !document.hidden &&
@@ -250,6 +294,20 @@ export function createChatsView(ctx) {
         .catch(ctx.displayError);
     }
   });
+  for (
+    const [id, flag, on, off] of [
+      ["pin-chat", "pinned", "pin", "unpin"],
+      ["mute-chat", "muted", "mute", "unmute"],
+    ]
+  ) {
+    $(id).addEventListener("click", () => {
+      const chat = model.chats.find((row) => String(row.mid) === model.active);
+      if (chat) {
+        ctx.command(chat[flag] ? off : on, { chat: model.active })
+          .catch(ctx.displayError);
+      }
+    });
+  }
   $("back").addEventListener("click", () => ctx.backToList());
   document.addEventListener("visibilitychange", () => ctx.markCurrentRead());
   document.addEventListener("keydown", (event) => {

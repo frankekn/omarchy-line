@@ -72,6 +72,13 @@ const strings = {
   hidden: ["已隱藏", "Hidden"],
   hide: ["隱藏", "Hide"],
   unhide: ["取消隱藏", "Unhide"],
+  // Pin and mute.
+  pin: ["釘選", "Pin"],
+  unpin: ["取消釘選", "Unpin"],
+  pinnedChat: ["已釘選", "Pinned"],
+  mute: ["靜音", "Mute"],
+  unmute: ["取消靜音", "Unmute"],
+  mutedChat: ["已靜音", "Muted"],
   back: ["返回", "Back"],
   group: ["群組聊天", "Group conversation"],
   direct: ["聊天室", "Conversation"],

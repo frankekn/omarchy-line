@@ -1561,3 +1561,46 @@ textarea::placeholder {
   color: var(--muted);
   font-size: 0.85em;
 }
+
+/* Pinned and muted chats. */
+.chat-header {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.chat-heading {
+  flex-basis: 6rem;
+}
+.chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.row-marks {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  margin-right: auto;
+  color: var(--muted);
+}
+.row-marks:empty {
+  display: none;
+}
+.row-mark-icon {
+  width: calc(12rem / 14);
+  height: calc(12rem / 14);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.chat-row.pinned .row-mark-icon.pinned {
+  color: var(--accent);
+}
+.badge.quiet {
+  background: transparent;
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-weight: 600;
+}

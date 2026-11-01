@@ -22,7 +22,10 @@ function fuzzy(name, query) {
   return true;
 }
 
-/** Rank chats by name: exact, prefix, substring, then subsequence. */
+/**
+ * Rank chats by name: exact, prefix, substring, then subsequence. Inside a
+ * tier the chat list's order applies: pinned, unread (not muted), recency.
+ */
 export function rankChats(chats, query) {
   const q = fold(query).trim();
   const ranked = [];
@@ -43,16 +46,24 @@ export function rankChats(chats, query) {
   }
   ranked.sort((a, b) =>
     a.tier - b.tier ||
-    Number(Number(b.chat.unread) > 0) - Number(Number(a.chat.unread) > 0) ||
+    Number(!!b.chat.pinned) - Number(!!a.chat.pinned) ||
+    Number(loud(b.chat)) - Number(loud(a.chat)) ||
     Number(b.chat.lastTime || 0) - Number(a.chat.lastTime || 0)
   );
   return ranked.map((item) => item.chat);
 }
 
+/** Unread messages that call for attention: not hidden and not muted. */
+function loud(chat) {
+  return !chat.hidden && !chat.muted && Number(chat.unread) > 0;
+}
+
 export function unreadTotal(chats) {
   let total = 0;
   for (const chat of chats) {
-    if (!chat.hidden) total += Math.max(0, Number(chat.unread) || 0);
+    if (!chat.hidden && !chat.muted) {
+      total += Math.max(0, Number(chat.unread) || 0);
+    }
   }
   return total;
 }
@@ -106,7 +117,7 @@ export function createSwitcherView(ctx) {
   function nextUnread() {
     const search = $("search").value;
     let rows = visibleChats(model.chats, search);
-    const unread = (chat) => !chat.hidden && Number(chat.unread) > 0;
+    const unread = loud;
     if (!rows.some(unread)) rows = visibleChats(model.chats, "");
     const start = rows.findIndex((chat) => String(chat.mid) === model.active);
     for (let step = 1; step <= rows.length; step++) {
@@ -132,9 +143,19 @@ export function createSwitcherView(ctx) {
       if (chat.hidden) {
         option.append(el("span", "switcher-tag", t("hidden")));
       }
+      if (chat.pinned) {
+        option.append(el("span", "switcher-tag", t("pinnedChat")));
+      }
+      if (chat.muted) {
+        option.append(el("span", "switcher-tag", t("mutedChat")));
+      }
       const unread = Number(chat.unread) || 0;
       if (unread > 0) {
-        const badge = el("span", "badge", unread > 99 ? "99+" : String(unread));
+        const badge = el(
+          "span",
+          chat.muted ? "badge quiet" : "badge",
+          unread > 99 ? "99+" : String(unread),
+        );
         badge.setAttribute("aria-label", `${t("unreadCount")} ${unread}`);
         option.append(badge);
       }

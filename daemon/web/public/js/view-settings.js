@@ -57,7 +57,8 @@ export function createSettingsView(ctx) {
     if (
       chat === model.active && ctx.isViewingChat() && document.hasFocus()
     ) return;
-    if (model.chats.find((row) => String(row.mid) === chat)?.hidden) return;
+    const row = model.chats.find((item) => String(item.mid) === chat);
+    if (row?.hidden || row?.muted) return;
     const now = Date.now(), last = lastSound.get(chat);
     if (last !== undefined && now - last < SOUND_GAP_MS) return;
     lastSound.set(chat, now);
