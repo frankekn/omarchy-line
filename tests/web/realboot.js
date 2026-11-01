@@ -136,9 +136,11 @@ async function build(temp, env, children) {
   if (job.error || job.code !== 0) {
     throw new Error(`Build failed: ${job.error || job.code}; see ${log}`);
   }
+  // enil-build.sh stamps the source and binary fingerprints, which
+  // enil-run.sh recomputes before it trusts the binary.
   assert.equal(
     (await Deno.readTextFile(join(buildDir, "enil.rev"))).trim(),
-    head,
+    await fingerprint(buildDir, join(buildDir, "enil")),
   );
   assert.equal(
     await git("rev-parse", "HEAD"),
@@ -151,17 +153,26 @@ async function build(temp, env, children) {
   return join(buildDir, "enil");
 }
 
+async function fingerprint(dir, binary) {
+  const result = await new Deno.Command("sh", {
+    args: [join(dir, "enil-fingerprint.sh"), binary],
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
+  if (!result.success) throw new Error(new TextDecoder().decode(result.stderr));
+  return new TextDecoder().decode(result.stdout).trim();
+}
+
 async function ensureSourceLauncher() {
   try {
-    const [binary, revision, source, head] = await Promise.all([
-      Deno.stat(join(daemonDir, "enil")),
+    const binaryPath = join(daemonDir, "enil");
+    const [binary, revision] = await Promise.all([
+      Deno.stat(binaryPath),
       Deno.readTextFile(join(daemonDir, "enil.rev")),
-      Deno.stat(join(daemonDir, "daemon.ts")),
-      git("rev-parse", "HEAD"),
     ]);
     if (
-      revision.trim() === head && binary.isFile && (binary.mode & 0o111) &&
-      binary.mtime >= source.mtime
+      binary.isFile && (binary.mode & 0o111) &&
+      revision.trim() === await fingerprint(daemonDir, binaryPath)
     ) {
       throw new Error("enil-run.sh would select an existing compiled binary");
     }
