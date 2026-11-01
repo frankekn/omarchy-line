@@ -253,5 +253,5 @@ export function createSwitcherView(ctx) {
     if (go && nextUnread()) event.preventDefault();
   });
 
-  return { renderTitle, openSwitcher: open, nextUnread };
+  return { renderTitle };
 }
