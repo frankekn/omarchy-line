@@ -195,12 +195,7 @@ export function createChatsView(ctx) {
     if ($("list-warning").textContent !== warning) {
       $("list-warning").textContent = warning;
     }
-    const unread = model.chats.filter((c) => !c.hidden).reduce(
-      (sum, c) => sum + Math.max(0, Number(c.unread) || 0),
-      0,
-    );
-    const title = unread ? `(${unread}) enil` : "enil";
-    if (document.title !== title) document.title = title;
+    ctx.renderTitle();
     if (!initialFocusDone && !$("workspace").hidden) {
       initialFocusDone = true;
       if (

@@ -1504,3 +1504,72 @@ textarea::placeholder {
   margin: 0;
   accent-color: var(--accent);
 }
+/* Quick switcher and next unread. */
+.nav-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.switcher {
+  width: min(520px, calc(100vw - 24px));
+  max-height: min(480px, calc(100dvh - 48px));
+  margin: max(12px, 12dvh) auto auto;
+  padding: 0;
+  display: none;
+  flex-direction: column;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.switcher[open] {
+  display: flex;
+}
+.switcher::backdrop {
+  background: #0007;
+}
+.switcher input {
+  margin: 8px;
+  padding: 10px 12px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px 6px;
+  overflow: auto;
+}
+.switcher-option,
+.switcher-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+.switcher-option {
+  cursor: pointer;
+}
+.switcher-option:hover {
+  background: var(--hover);
+}
+.switcher-option[aria-selected="true"] {
+  background: var(--hover);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.switcher-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.switcher-tag,
+.switcher-empty {
+  color: var(--muted);
+  font-size: 0.85em;
+}

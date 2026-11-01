@@ -17,6 +17,7 @@ import { previewCache } from "./preview-cache.js";
 import { drafts } from "./drafts.js";
 import { messageWindow } from "./message-window.js";
 import { settings } from "./settings.js";
+import { navigation } from "./navigation.js";
 
 const suites = {
   main,
@@ -36,6 +37,7 @@ const suites = {
   drafts,
   "message-window": messageWindow,
   settings,
+  navigation,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {
