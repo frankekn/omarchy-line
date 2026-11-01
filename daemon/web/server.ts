@@ -104,10 +104,62 @@ function crossSite(req: Request): boolean {
   return site === "cross-site" || site === "same-site";
 }
 
-interface Asset {
+type Coding = "br" | "gzip";
+
+interface Variant {
   body: Uint8Array<ArrayBuffer>;
   etag: string;
+}
+
+interface Asset extends Variant {
   type: string;
+  /** Compressed copies, made on first request and kept for the process. */
+  coded: Map<Coding, Promise<Variant>>;
+}
+
+/**
+ * The coding to send: br, then gzip, when the client accepts it. Media from
+ * /api/file is already compressed and never goes through here.
+ */
+export function pickCoding(accept: string | null): Coding | null {
+  if (!accept) return null;
+  const q = new Map<string, number>();
+  for (const part of accept.toLowerCase().split(",")) {
+    const [name, ...params] = part.split(";").map((s) => s.trim());
+    if (!name) continue;
+    let weight = 1;
+    for (const param of params) {
+      const m = /^q=([0-9.]+)$/.exec(param);
+      if (m) weight = Number(m[1]);
+    }
+    q.set(name, Number.isFinite(weight) ? weight : 0);
+  }
+  const weight = (name: Coding) => q.get(name) ?? q.get("*") ?? 0;
+  if (weight("br") > 0) return "br";
+  if (weight("gzip") > 0) return "gzip";
+  return null;
+}
+
+async function compress(
+  asset: Asset,
+  coding: Coding,
+): Promise<Variant> {
+  const stream = new Blob([asset.body]).stream().pipeThrough(
+    new CompressionStream(coding === "br" ? "brotli" : "gzip"),
+  );
+  const body = new Uint8Array(await new Response(stream).arrayBuffer());
+  // Each coding has its own tag, so a cache never pairs one coding's tag
+  // with another coding's bytes.
+  return { body, etag: `${asset.etag.slice(0, -1)}-${coding}"` };
+}
+
+function variant(asset: Asset, coding: Coding): Promise<Variant> {
+  let made = asset.coded.get(coding);
+  if (!made) {
+    made = compress(asset, coding);
+    asset.coded.set(coding, made);
+  }
+  return made;
 }
 
 /** Snapshot public assets once. Compiled assets do not have reliable mtimes. */
@@ -132,37 +184,42 @@ async function loadAssets(publicDir: URL): Promise<Map<string, Asset>> {
         : path.endsWith(".js")
         ? "text/javascript; charset=utf-8"
         : "text/css; charset=utf-8";
-      assets.set(path, { body, etag, type });
+      assets.set(path, { body, etag, type, coded: new Map() });
     } catch { /* An unreadable asset keeps its existing 404 behavior. */ }
   }));
   return assets;
 }
 
-function serveAsset(
+async function serveAsset(
   assets: Map<string, Asset>,
   path: string,
   req: Request,
   code = 200,
-): Response {
+): Promise<Response> {
   const asset = assets.get(path);
   if (!asset) return status(404);
+  const coding = pickCoding(req.headers.get("accept-encoding"));
+  const sent: Variant = coding ? await variant(asset, coding) : asset;
   const headers = securityHeaders({
     "Content-Type": asset.type,
     "Cache-Control": code === 200 ? "no-cache" : "no-store",
-    ETag: asset.etag,
+    ETag: sent.etag,
+    Vary: "Accept-Encoding",
   });
+  if (coding) headers.set("Content-Encoding", coding);
   if (path === "/index.html") {
     headers.set("Link", "</api/session>; rel=preload; as=fetch; crossorigin");
   }
   const matches = req.headers.get("if-none-match")?.split(",").some((value) => {
     const tag = value.trim();
-    return tag === "*" || tag.replace(/^W\//, "") === asset.etag;
+    return tag === "*" || tag.replace(/^W\//, "") === sent.etag;
   });
   if (code === 200 && matches) {
+    headers.delete("Content-Encoding");
     return new Response(null, { status: 304, headers });
   }
-  headers.set("Content-Length", String(asset.body.byteLength));
-  return new Response(asset.body, { status: code, headers });
+  headers.set("Content-Length", String(sent.body.byteLength));
+  return new Response(sent.body, { status: code, headers });
 }
 
 function signedInRedirect(auth: WebAuth): Response {
