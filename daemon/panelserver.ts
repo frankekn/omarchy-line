@@ -12,6 +12,10 @@ export const PANEL_SESSION_INDEPENDENT_COMMANDS: ReadonlySet<string> = new Set([
   "sync",
   "hide",
   "unhide",
+  "pin",
+  "unpin",
+  "mute",
+  "unmute",
   "discardClipboardImage",
 ]);
 export const PANEL_MESSAGE_COMMANDS: ReadonlySet<string> = new Set([
@@ -26,6 +30,10 @@ export const PANEL_MUTATION_COMMANDS: ReadonlySet<string> = new Set([
   "logout",
   "hide",
   "unhide",
+  "pin",
+  "unpin",
+  "mute",
+  "unmute",
   "discardClipboardImage",
   "react",
   "unsend",

@@ -1588,6 +1588,10 @@ Deno.test("the bridge forwards only the commands the page sends", async () => {
       "sync",
       "unhide",
       "unsend",
+      "mute",
+      "pin",
+      "unmute",
+      "unpin",
     ];
     // Real daemon commands the page never sends, and one it does not know.
     const other = ["image", "poke", "readFile", "toString"];

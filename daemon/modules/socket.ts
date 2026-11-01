@@ -77,6 +77,8 @@ import {
   isChatMid,
   login,
   me,
+  mutedChats,
+  pinnedChats,
   pushEvent,
   saveHidden,
   scheduleStateWrite,
@@ -332,6 +334,23 @@ async function handle(req: Json, signal?: AbortSignal): Promise<Json> {
     if (!setHidden(mid, cmd === "hide")) return { ok: true };
     bumpChatsRevision();
     await saveHidden();
+    await writeState();
+    return { ok: true };
+  }
+
+  // Pin and mute follow hide: daemon-side preferences in pinned.json and
+  // muted.json, shared by every device, idempotent both ways, and answered
+  // without a LINE session.
+  if (
+    cmd === "pin" || cmd === "unpin" || cmd === "mute" || cmd === "unmute"
+  ) {
+    const mid = String(req.chat ?? "");
+    if (!mid) return { ok: false, error: "沒有指定是哪一間聊天室" };
+    if (!isChatMid(mid)) return { ok: false, error: "不支援的聊天室" };
+    const pref = cmd === "pin" || cmd === "unpin" ? pinnedChats : mutedChats;
+    if (!pref.set(mid, cmd === "pin" || cmd === "mute")) return { ok: true };
+    bumpChatsRevision();
+    await pref.save();
     await writeState();
     return { ok: true };
   }

@@ -25,6 +25,10 @@ interface PluginChat {
   avatarPath?: string;
   /** Stamped by hiddenStamped() alone, and only when it is true. */
   hidden?: true;
+  /** Stamped by chatsStamped() alone, and only when it is true. */
+  pinned?: true;
+  /** Stamped by chatsStamped() alone, and only when it is true. */
+  muted?: true;
 }
 
 interface PluginMessage {

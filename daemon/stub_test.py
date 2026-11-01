@@ -45,7 +45,9 @@ CHAT_TYPES = {
 }
 # Absent, never empty, when the contact has no picture. `hidden` is absent
 # unless it is true -- an older panel build must not have to know the key.
-CHAT_OPTIONAL = {"avatarPath": str, "hidden": bool}
+CHAT_OPTIONAL = {
+    "avatarPath": str, "hidden": bool, "pinned": bool, "muted": bool,
+}
 # PluginMessage in daemon.ts: the always-present half, then the optional half.
 MSG_REQUIRED = {
     "id": str, "chat": str, "from": str, "fromName": str, "text": str,
@@ -1805,6 +1807,56 @@ class HiddenTest(unittest.TestCase):
         finally:
             s.close()
 
+
+
+class ChatPrefsTest(unittest.TestCase):
+    """`pin` / `unpin` / `mute` / `unmute`: daemon-side chat preferences."""
+
+    def setUp(self):
+        self.s = Stub("--fixture", "default")
+        self.addCleanup(self.s.close)
+
+    def rows(self):
+        return {c["mid"]: c for c in self.s.state()["chats"]}
+
+    def test_only_the_flagged_rows_carry_the_keys(self):
+        self.assertTrue(self.s.call(cmd="pin", chat="ustub-alice")["ok"])
+        self.assertTrue(self.s.call(cmd="mute", chat="cstub-family")["ok"])
+        rows = self.rows()
+        self.assertIs(True, rows["ustub-alice"]["pinned"])
+        self.assertNotIn("muted", rows["ustub-alice"])
+        self.assertIs(True, rows["cstub-family"]["muted"])
+        # Muted stays on the list with its unread count.
+        self.assertGreater(rows["cstub-family"]["unread"], 0)
+        for mid, c in rows.items():
+            if mid != "ustub-alice":
+                self.assertNotIn("pinned", c, mid)
+
+    def test_undo_takes_the_key_away_and_repeats_change_nothing(self):
+        for cmd in ("pin", "pin", "unpin", "unpin"):
+            self.assertTrue(self.s.call(cmd=cmd, chat="ustub-alice")["ok"])
+        self.assertNotIn("pinned", self.rows()["ustub-alice"])
+        for cmd in ("mute", "unmute", "unmute"):
+            self.assertTrue(self.s.call(cmd=cmd, chat="ustub-alice")["ok"])
+        self.assertNotIn("muted", self.rows()["ustub-alice"])
+
+    def test_bad_ids_are_refused_with_the_daemon_s_words(self):
+        for cmd in ("pin", "unpin", "mute", "unmute"):
+            res = self.s.call(cmd=cmd)
+            self.assertEqual(
+                {"ok": False, "error": "沒有指定是哪一間聊天室",
+                 "id": res["id"]}, res)
+            res = self.s.call(cmd=cmd, chat="../c")
+            self.assertEqual(
+                {"ok": False, "error": "不支援的聊天室", "id": res["id"]}, res)
+
+    def test_works_with_no_session(self):
+        s = Stub("--logged-out")
+        try:
+            for cmd in ("pin", "unpin", "mute", "unmute"):
+                self.assertTrue(s.call(cmd=cmd, chat="cstub-family")["ok"])
+        finally:
+            s.close()
 
 class AvatarTest(unittest.TestCase):
     """avatarPath / fromAvatar: the picture fields the panel draws rows from."""

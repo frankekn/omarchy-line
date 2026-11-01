@@ -69,6 +69,10 @@ const messageStore = createMessageStore(`${STATE_DIR}/messages`);
 // updateChat has no attribute for it, so there is nowhere to put it server
 // side and nothing to sync -- see the enil:hidden block.
 const HIDDEN_PATH = `${STATE_DIR}/hidden.json`;
+// Pinned and muted chats: daemon-side preferences, like hidden.json, so every
+// device that opens the web page shares them -- see the enil:chatprefs block.
+const PINNED_PATH = `${STATE_DIR}/pinned.json`;
+const MUTED_PATH = `${STATE_DIR}/muted.json`;
 
 // The block between the enil:envint markers is sliced out verbatim by
 // daemon/envint_test.ts, so it must stay self-contained.
@@ -228,7 +232,9 @@ export {
   LOCK_PATH,
   MEDIA_DIR,
   messageStore,
+  MUTED_PATH,
   panelMediaLane,
+  PINNED_PATH,
   POLL_MS,
   PUSH_REINIT_GRACE_MS,
   PUSH_STALE_MS,

@@ -279,6 +279,10 @@ reactors = {}             # message id -> {reactor mid: reaction type}
 # whole of it. It outlives a logout for the same reason the daemon's file
 # does: it is a preference about a chat, not part of a session.
 hidden = set()
+# Pinned and muted chats: pinned.json and muted.json in the daemon, kept the
+# same way as `hidden` here.
+pinned = set()
+muted = set()
 login_timer = None
 event_seq = 0
 wanted_seq = 0
@@ -461,6 +465,11 @@ def write_state():
                 c["hidden"] = True
             else:
                 c.pop("hidden", None)
+            for key, mids in (("pinned", pinned), ("muted", muted)):
+                if c["mid"] in mids:
+                    c[key] = True
+                else:
+                    c.pop(key, None)
         # The daemon's refresh health (README 契約). The stub has no network
         # to fail, so an ordinary write stands for a getMessageBoxes round
         # that just succeeded: fresh `at`, zero streak. `fail-refresh` arms
@@ -1474,6 +1483,28 @@ def handle(req):
             else:
                 hidden.discard(mid)
             moved = was != (mid in hidden)
+            if moved:
+                state["chatsRevision"] = int(state.get("chatsRevision") or 0) + 1
+        if moved:
+            write_state()
+        return {"ok": True}
+
+    # Pin and mute: the daemon's chatprefs, answered like hide/unhide.
+    if cmd in ("pin", "unpin", "mute", "unmute"):
+        mid = req.get("chat")
+        mid = "" if mid is None else str(mid)
+        if not mid:
+            return {"ok": False, "error": "沒有指定是哪一間聊天室"}
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", mid):
+            return {"ok": False, "error": "不支援的聊天室"}
+        mids = pinned if cmd in ("pin", "unpin") else muted
+        with lock:
+            was = mid in mids
+            if cmd in ("pin", "mute"):
+                mids.add(mid)
+            else:
+                mids.discard(mid)
+            moved = was != (mid in mids)
             if moved:
                 state["chatsRevision"] = int(state.get("chatsRevision") or 0) + 1
         if moved:

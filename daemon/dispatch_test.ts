@@ -1745,9 +1745,10 @@ Deno.test("chat row pushes ride the same sink the events do", async () => {
   const avatars = await Deno.readTextFile(
     new URL("./modules/avatars.ts", import.meta.url),
   );
-  // The row must be stamped before it leaves: hidden lives on the serialized
-  // copy, and an unstamped push would un-hide a chat until the file lands.
-  assert(state.includes("chatSink?.(hiddenStamped([changed])[0]"));
+  // The row must be stamped before it leaves: hidden, pinned and muted live on
+  // the serialized copy, and an unstamped push would un-hide a chat until the
+  // file lands. chatsStamped() wraps hiddenStamped() (chatprefs_test.ts).
+  assert(state.includes("chatSink?.(chatsStamped([changed])[0]"));
   assert(
     socket.includes("chat: row") &&
       socket.includes("chatsRevision: revision") &&

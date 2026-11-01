@@ -63,6 +63,11 @@ const ALLOWED_CMDS = new Set([
   "sync",
   "unhide",
   "unsend",
+  // Pin and mute: chat preferences kept by the daemon.
+  "mute",
+  "pin",
+  "unmute",
+  "unpin",
 ]);
 const CLIPBOARD_CMDS = new Set([
   "probeClipboardImage",

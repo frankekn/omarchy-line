@@ -277,8 +277,9 @@ Deno.test("the four call sites in daemon.ts are still wired up", async () => {
     await Deno.readTextFile(new URL("./daemon.ts", import.meta.url)),
   ].join("\n");
   // state.json is the only way the panel learns a row is hidden.
+  // chatsStamped() calls hiddenStamped() first; chatprefs_test.ts pins that.
   assert(
-    src.includes("chats: hiddenStamped(stateSnapshot.chats),"),
+    src.includes("chats: chatsStamped(stateSnapshot.chats),"),
     "writeState() no longer stamps the chat rows",
   );
   // Read before the first writeState(), or one refresh publishes every hidden
