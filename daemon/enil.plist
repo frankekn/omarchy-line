@@ -20,9 +20,10 @@
   <string>@CHECKOUT@/daemon</string>
   <key>EnvironmentVariables</key>
   <dict>
-    <!-- deno and ffmpeg from Homebrew; git for enil-run.sh's checks. -->
+    <!-- deno and ffmpeg from Homebrew; git for enil-run.sh's checks;
+         /sbin for sha256sum, which checks the compiled binary. -->
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>HOME</key>
     <string>@HOME@</string>
     <!-- This Mac's Tailscale IP, never 0.0.0.0. -->
