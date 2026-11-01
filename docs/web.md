@@ -217,6 +217,39 @@ applied, or the whole recent list after a daemon restart. See
 is at most 200 characters, so list search matches only that part of a long
 last message.
 
+### Message actions, voice and location
+
+Next to **Reply** and **React**, a message can offer these actions:
+
+- **Copy** copies the text of a text, FLEX or other message with text. On a
+  secure origin (HTTPS or `localhost`), the page uses the browser clipboard
+  API. A plain HTTP address, such as a Tailscale IP, has no clipboard API, so
+  the page selects the text in a hidden field and copies it with the browser's
+  copy command. If the browser refuses both, a dialog shows the text already
+  selected so that you can copy it by hand. "Copied" appears briefly on
+  success.
+- **Save** downloads an image, video, file or voice message through
+  `/api/file`, with the same session cookie and host checks as other media.
+  The file gets its LINE file name; without one it gets a name such as
+  `line-image-<id>.png`, where the extension comes from the file's contents.
+  The image viewer also has **Download original**.
+- **Forward** is on text messages only. It opens a chat picker with the same
+  ranking as the chat switcher, asks for confirmation, and sends the same text
+  to the chosen chat as a new message. Hidden chats are not listed. Media
+  cannot be forwarded yet.
+
+A voice message shows its length from LINE's `AUDLEN` metadata and a **Play
+voice message** button. The button downloads the clip through the normal
+download and E2EE decryption path and replaces itself with the browser's audio
+player. When LINE did not send a length, it appears after the player reads the
+clip. The page plays the clip from a `blob:` URL, so the player does not need
+range requests.
+
+A location message shows the place's title, its address and an **Open in
+Maps** link to `https://www.google.com/maps?q=<lat>,<lng>`. The link opens in
+a new tab without a referrer. The page does not embed a map or load map
+images.
+
 ## Known limitations
 
 - The page reaches the daemon only through the exact address in

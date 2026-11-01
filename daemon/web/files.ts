@@ -98,7 +98,32 @@ function contentDisposition(name: string): string {
   }`;
 }
 
-/** GET /api/file?path=…[&download=1] */
+const INLINE_EXTENSIONS: Record<string, string> = {
+  "image/jpeg": ".jpg",
+  "image/png": ".png",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+  "video/mp4": ".mp4",
+};
+
+/**
+ * The name a download is saved under. Cached media is stored by message id
+ * without an extension, so the page may ask for the name LINE showed; it is
+ * cleaned to one path component, and a name without an extension takes the
+ * one the bytes prove.
+ */
+export function downloadName(
+  asked: string | null,
+  stored: string,
+  inline: string | null,
+): string {
+  if (!asked) return stored;
+  const name = uploadName(asked);
+  const ext = inline ? INLINE_EXTENSIONS[inline] : undefined;
+  return ext && !name.slice(1).includes(".") ? uploadName(name + ext) : name;
+}
+
+/** GET /api/file?path=…[&download=1[&name=…]] */
 export async function serveFile(stateDir: string, url: URL): Promise<Response> {
   const asked = url.searchParams.get("path");
   if (!asked || !asked.startsWith("/")) return status(404);
@@ -144,7 +169,12 @@ export async function serveFile(stateDir: string, url: URL): Promise<Response> {
     "Content-Security-Policy": FILE_CSP,
   });
   if (url.searchParams.get("download") === "1" || !inline) {
-    headers.set("Content-Disposition", contentDisposition(name));
+    headers.set(
+      "Content-Disposition",
+      contentDisposition(
+        downloadName(url.searchParams.get("name"), name, inline),
+      ),
+    );
   }
   return new Response(file.readable, { headers });
 }

@@ -484,6 +484,8 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 | `stickerUrl` | string | `STICKER` 且 metadata 有 `STKID` |
 | `fileName` | string | metadata 有 `FILE_NAME` |
 | `fileSize` | number | metadata 有 `FILE_SIZE` |
+| `audioMs` | number | `AUDIO` 且 metadata 有正數的 `AUDLEN` 或 `DURATION`；ms |
+| `location` | object | `LOCATION` 且位置有效，含 E2EE；`{ title, address, latitude, longitude }`，沒有的欄位是空字串 |
 | `mentions` | object[] | 訊息 metadata 有 `MENTION`；`{ start, end, name, mid? , all? }`，位移單位同上，`all` 的 `name` 是「全部」 |
 | `replyTo` | object | 這則是回覆（`messageRelationType` 是 `REPLY`）；`{ id, fromName?, text? }` |
 | `reactions` | object[] | 這則有表情；`[{ type, count, mine }]`，照 LINE 列舉的順序 |

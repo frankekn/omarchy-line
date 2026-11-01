@@ -189,6 +189,22 @@ const strings = {
   statusSynced: ["上次同步", "Last sync"],
   statusFailures: ["連續同步失敗", "Sync failures in a row"],
   statusUpdated: ["狀態更新", "State updated"],
+  // Message actions, voice and location.
+  copy: ["複製", "Copy"],
+  copied: ["已複製", "Copied"],
+  copyManual: [
+    "瀏覽器不允許自動複製，請手動複製以下文字。",
+    "The browser blocked copying. Copy the text below by hand.",
+  ],
+  save: ["另存", "Save"],
+  forward: ["轉傳", "Forward"],
+  forwardTo: ["轉傳到", "Forward to"],
+  confirmForward: ["要把這則訊息轉傳到", "Forward this message to"],
+  forwarded: ["已轉傳到", "Forwarded to"],
+  playVoice: ["播放語音", "Play voice message"],
+  voiceMessage: ["語音訊息", "Voice message"],
+  location: ["位置", "Location"],
+  openInMaps: ["在地圖中開啟", "Open in Maps"],
 };
 
 export function isEnglish(language = "") {

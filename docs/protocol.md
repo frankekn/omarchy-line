@@ -594,6 +594,8 @@ Messages returned by `history` (absent fields are omitted, never `null`):
 | `stickerUrl` | string | `STICKER` and metadata has `STKID` |
 | `fileName` | string | metadata has `FILE_NAME` |
 | `fileSize` | number | metadata has `FILE_SIZE` |
+| `audioMs` | number | `AUDIO` whose metadata has a positive `AUDLEN` or `DURATION`; ms |
+| `location` | object | `LOCATION` with a valid position, E2EE included; `{ title, address, latitude, longitude }`, empty strings when absent |
 | `mentions` | object[] | message metadata has `MENTION`; `{ start, end, name, mid? , all? }`, same offset units, `all`'s `name` is "全部" |
 | `replyTo` | object | this message is a reply (`messageRelationType` is `REPLY`); `{ id, fromName?, text? }` |
 | `reactions` | object[] | the message has reactions; `[{ type, count, mine }]` in LINE's enum order |

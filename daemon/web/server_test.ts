@@ -2,7 +2,7 @@ import { assert, assertEquals } from "@std/assert";
 import { TextLineStream } from "@std/streams/text-line-stream";
 import { pathToFileURL } from "node:url";
 import { WebAuth } from "./auth.ts";
-import { sniffInline, uploadName, Uploads } from "./files.ts";
+import { downloadName, sniffInline, uploadName, Uploads } from "./files.ts";
 import { canonicalHost, createWeb, parseAddr } from "./server.ts";
 
 const KEY = "test-key-0123456789abcdef";
@@ -980,6 +980,52 @@ Deno.test("/api/file serves media and the QR, never storage.json", async () => {
     const page = await file(`${stateDir}/media/page.jpg`);
     assertEquals(page.headers.get("content-type"), "application/octet-stream");
     assert(page.headers.get("content-disposition")?.startsWith("attachment"));
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("a download name is one path component with a proven type", () => {
+  assertEquals(downloadName(null, "123", "image/png"), "123");
+  assertEquals(downloadName("", "123", null), "123");
+  assertEquals(downloadName("line-123", "123", "image/png"), "line-123.png");
+  assertEquals(downloadName("voice.m4a", "123", "video/mp4"), "voice.m4a");
+  assertEquals(downloadName("../../etc/passwd", "1", null), "passwd");
+  assertEquals(downloadName("a\u0000b.txt", "1", null), "ab.txt");
+  assertEquals(downloadName(".env", "1", "image/jpeg"), ".env.jpg");
+});
+
+Deno.test("/api/file names a download as the page asks", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    const path = `${stateDir}/media/9001`;
+    await Deno.writeFile(
+      path,
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]),
+    );
+    const res = await web.handle(
+      get(
+        `/api/file?path=${encodeURIComponent(path)}&download=1&name=${
+          encodeURIComponent("照片")
+        }`,
+        { headers: { cookie } },
+      ),
+    );
+    await res.body?.cancel();
+    assertEquals(res.status, 200);
+    assertEquals(
+      res.headers.get("content-disposition"),
+      `attachment; filename="__.png"; filename*=UTF-8''${
+        encodeURIComponent("照片.png")
+      }`,
+    );
+    const denied = await web.handle(
+      get(`/api/file?path=${encodeURIComponent(path)}&download=1&name=x`),
+    );
+    await denied.body?.cancel();
+    assertEquals(denied.status, 401);
   } finally {
     web.close();
     await Deno.remove(stateDir, { recursive: true });
