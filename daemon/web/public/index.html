@@ -40,6 +40,7 @@
     <link rel="modulepreload" href="/js/view-stickers.js">
     <link rel="modulepreload" href="/js/view-upload.js">
     <link rel="modulepreload" href="/js/view-switcher.js">
+    <link rel="modulepreload" href="/js/view-status.js">
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
@@ -162,6 +163,11 @@
         </fieldset>
         <label class="settings-toggle"><input id="sound-toggle"
             type="checkbox"><span data-i18n="messageSound">新訊息提示音</span></label>
+        <section id="daemon-status" class="daemon-status"
+          aria-labelledby="daemon-status-title" hidden>
+          <h3 id="daemon-status-title" data-i18n="daemonStatus">狀態</h3>
+          <dl id="daemon-status-list"></dl>
+        </section>
       </div>
     </dialog>
     <dialog id="switcher" class="switcher" aria-labelledby="switcher-title">

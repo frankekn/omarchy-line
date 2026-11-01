@@ -174,6 +174,21 @@ const strings = {
   nextUnread: ["下一個未讀", "Next unread"],
   titleSignin: ["需要登入", "Sign-in required"],
   titleOffline: ["離線", "Offline"],
+  // Daemon status in the settings dialog.
+  daemonStatus: ["狀態", "Status"],
+  statusLogin: ["LINE 登入", "LINE sign-in"],
+  statusLoggedIn: ["已登入", "Signed in"],
+  statusLoggedOut: ["未登入", "Signed out"],
+  statusLoginError: ["登入失敗", "Sign-in failed"],
+  statusLoggingIn: ["登入中", "Signing in"],
+  statusPush: ["推播連線", "Push connection"],
+  statusPushUp: ["已連線", "Connected"],
+  statusPushDown: ["已中斷", "Disconnected"],
+  statusPushHalted: ["因 LINE 限制暫停", "Paused by a LINE restriction"],
+  statusSince: ["自", "since"],
+  statusSynced: ["上次同步", "Last sync"],
+  statusFailures: ["連續同步失敗", "Sync failures in a row"],
+  statusUpdated: ["狀態更新", "State updated"],
 };
 
 export function isEnglish(language = "") {

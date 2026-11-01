@@ -1492,6 +1492,35 @@ textarea::placeholder {
   margin: 0;
   accent-color: var(--accent);
 }
+/* Daemon status in the settings dialog. */
+.daemon-status h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: calc(12rem / 14);
+  font-weight: 400;
+}
+.daemon-status dl {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: 6px 16px;
+  margin: 0;
+}
+.daemon-status dt {
+  color: var(--muted);
+}
+.daemon-status dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 360px) {
+  .daemon-status dl {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+  .daemon-status dd {
+    margin-bottom: 6px;
+  }
+}
 /* Quick switcher and next unread. */
 .nav-actions {
   display: flex;

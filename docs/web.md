@@ -190,6 +190,33 @@ muted chats.
 The panel (QML plugin) does not show pinned or muted chats yet. A muted chat
 still gets no desktop notification when you use only the panel.
 
+### Daemon status
+
+Below the settings, a read-only **Status** block shows what the daemon
+reports in `state.json` when the dialog opens. It does not update while the
+dialog stays open:
+
+- **LINE sign-in**: signed in (with your LINE name), signed out, signing in,
+  or failed.
+- **Push connection**: connected or disconnected since a time, or paused by a
+  LINE restriction with its code.
+- **Last sync**: the last time the chat list was fresh.
+- **Sync failures in a row**, with the reason when there is one.
+- **State updated**: the last time the daemon wrote its state.
+
+A row whose field the daemon does not write is left out. `state.json` has no
+daemon version or commit, so the block does not show one. It has no restart
+or other actions.
+
+### Data use
+
+On the first connection the page gets no old events, only the latest event
+number. On a reconnect it gets only the events after the last one it
+applied, or the whole recent list after a daemon restart. See
+[protocol.md](protocol.md#incremental-event-catch-up). The chat list preview
+is at most 200 characters, so list search matches only that part of a long
+last message.
+
 ## Known limitations
 
 - The page reaches the daemon only through the exact address in

@@ -21,6 +21,7 @@ import { createStickersView } from "./view-stickers.js";
 import { createUploadView } from "./view-upload.js";
 import { createSettingsView } from "./view-settings.js";
 import { createSwitcherView } from "./view-switcher.js";
+import { createStatusView } from "./view-status.js";
 
 const language = navigator.language || "";
 const english = isEnglish(language),
@@ -57,6 +58,7 @@ provide("view-stickers", createStickersView(ctx));
 provide("view-upload", createUploadView(ctx));
 provide("view-settings", createSettingsView(ctx));
 provide("view-switcher", createSwitcherView(ctx));
+provide("view-status", createStatusView(ctx));
 provide("controller-state", createStateController(ctx));
 provide("controller-chat", createChatController(ctx));
 provide("controller-send", createSendController(ctx));

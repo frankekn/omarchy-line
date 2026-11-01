@@ -25,6 +25,7 @@ import { loadBlocks } from "../slice_test.ts";
 import { planKeyChanges } from "./public/js/keyed.js";
 import { createChatController } from "./public/js/controller-chat.js";
 import { createStateController } from "./public/js/controller-state.js";
+import { statusRows } from "./public/js/view-status.js";
 import { createSendController } from "./public/js/controller-send.js";
 import { createComposerController } from "./public/js/controller-composer.js";
 import { putPreview } from "./public/js/preview-cache.js";
@@ -1678,4 +1679,62 @@ Deno.test("incremental events frames move the watermark forward only", () => {
   });
   assertEquals([model.boot, model.seq], ["boot-b", 2]);
   assertEquals(loads, ["c"]);
+});
+
+Deno.test("status rows show only the metadata the state carries", () => {
+  const t = (key: string) => key;
+  const format = (ms: number) => `t${ms}`;
+  assertEquals(statusRows(null, t, format), []);
+  assertEquals(statusRows({}, t, format), []);
+  assertEquals(
+    statusRows(
+      {
+        updatedAt: 9,
+        login: { status: "ok" },
+        me: { mid: "u1", displayName: "Me" },
+        link: { push: "up", since: 3 },
+        refresh: { at: 7, failures: 0 },
+      },
+      t,
+      format,
+    ),
+    [
+      ["statusLogin", "statusLoggedIn (Me)"],
+      ["statusPush", "statusPushUp · statusSince t3"],
+      ["statusSynced", "t7"],
+      ["statusFailures", "0"],
+      ["statusUpdated", "t9"],
+    ],
+  );
+  assertEquals(
+    statusRows(
+      {
+        login: { status: "qr" },
+        link: { push: "down", since: 0, reason: "restricted", code: "BANNED" },
+        refresh: { at: 7, failures: 3, reason: "network" },
+      },
+      t,
+      format,
+    ),
+    [
+      ["statusLogin", "statusLoggingIn"],
+      ["statusPush", "statusPushHalted (BANNED)"],
+      ["statusSynced", "t7"],
+      ["statusFailures", "3 (network)"],
+    ],
+  );
+  // Malformed fields are left out rather than shown wrong.
+  assertEquals(
+    statusRows(
+      {
+        login: { status: "" },
+        link: { push: "sideways" },
+        refresh: { at: "x", failures: -1 },
+        updatedAt: "soon",
+      },
+      t,
+      format,
+    ),
+    [],
+  );
 });
