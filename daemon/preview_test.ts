@@ -333,3 +333,26 @@ Deno.test("a payload that will not decrypt is not fatal", async () => {
   });
   assertEquals(await m.e2eeFilePayload(SEALED_FILE), null);
 });
+
+Deno.test("a long preview is cut to 200 code points", async () => {
+  const m = await mod();
+  const short = "字".repeat(200);
+  assertEquals(m.previewText(short, { contentType: "NONE" }), short);
+  const long = "字".repeat(150) + "😀".repeat(100);
+  const cut = m.previewText(long, { contentType: "NONE" });
+  assertEquals(Array.from(cut).length, 201);
+  assertEquals(cut, "字".repeat(150) + "😀".repeat(50) + "…");
+  // UTF-16 length over the cap but 200 code points or fewer: kept whole.
+  const emoji = "😀".repeat(200);
+  assertEquals(m.previewText(emoji, { contentType: "NONE" }), emoji);
+  const named = m.pushedPreviewText(
+    { unsent: false, fileName: "a".repeat(300), text: "" },
+    { contentType: "FILE" },
+  );
+  assertEquals(named, "a".repeat(200) + "…");
+  const alt = m.pushedPreviewText(
+    { unsent: false, altText: "b".repeat(250), text: "" },
+    { contentType: "FLEX" },
+  );
+  assertEquals(alt, "b".repeat(200) + "…");
+});

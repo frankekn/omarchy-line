@@ -575,7 +575,29 @@ interface RawPreviewFields {
   contentMetadata?: Json;
 }
 
+/**
+ * The list shows one line of the preview, and the panel elides it, so a
+ * long message is cut here instead of riding in every state write whole.
+ * The whole text stays in history. Code points, so no surrogate is split.
+ */
+const PREVIEW_MAX_CHARS = 200;
+
+function clipPreview(text: string): string {
+  if (text.length <= PREVIEW_MAX_CHARS) return text;
+  const chars = Array.from(text);
+  if (chars.length <= PREVIEW_MAX_CHARS) return text;
+  return chars.slice(0, PREVIEW_MAX_CHARS).join("") + "…";
+}
+
 function previewText(
+  text: string,
+  raw: RawPreviewFields,
+  decrypted?: Json | null,
+): string {
+  return clipPreview(previewLine(text, raw, decrypted));
+}
+
+function previewLine(
   text: string,
   raw: RawPreviewFields,
   decrypted?: Json | null,
@@ -612,7 +634,8 @@ function pushedPreviewText(
   raw: RawPreviewFields,
 ): string {
   if (message.unsent) return UNSENT_TEXT;
-  return message.fileName || message.altText || previewText(message.text, raw);
+  return clipPreview(message.fileName || message.altText || "") ||
+    previewText(message.text, raw);
 }
 // enil:preview-end
 

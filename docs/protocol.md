@@ -91,6 +91,9 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 }
 ```
 
+`lastText` is a one-line preview: the daemon cuts it to 200 code points and
+adds `…`. The whole text stays in `history`.
+
 `login.reason`, `login.attempt`, `login.settled`, `link`, `refresh` and
 `wanted` are all optional: older daemons don't write them and the panel must
 still render without them (`link.push` is `"up"` or `"down"`; `since` is the

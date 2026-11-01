@@ -80,6 +80,9 @@
 }
 ```
 
+`lastText` 是單行預覽：daemon 把它截到 200 個 code point，並加上 `…`。完整的文字
+仍在 `history` 裡。
+
 `login.reason`、`login.attempt`、`login.settled`、`link`、`refresh` 和 `wanted` 都是選用的：舊的 daemon 不會寫，面板
 缺了它們也要照樣畫得出來（`link.push` 是 `"up"` 或 `"down"`，`since` 是這個狀態
 從哪一刻開始的毫秒時間戳）。daemon 因為 LINE 拒絕帳號而停掉自動流量的期間，`link` 是
