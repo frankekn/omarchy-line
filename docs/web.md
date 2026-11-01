@@ -123,6 +123,17 @@ prefix, substring and in-order letter matches. Chats with unread messages and
 recent activity lead each group. Hidden chats are listed with a "Hidden" tag.
 Up/down select, Enter opens and Esc closes and returns focus.
 
+"Search messages" above the list, or Enter in the chat search box, opens
+message search. It searches only messages this daemon has cached, not all of
+your LINE history. Type text and press Enter. Results list the chat, the time
+and a snippet with the match marked, newest first. Up/down select, Enter on
+an unchanged query opens the selected message, and Esc closes and returns
+focus. The chat opens like a click, so it is marked read the same way, and
+older pages load until the message is in view. "Search" in the chat header
+searches only the open chat; "Search all chats" widens it. Hidden chats are
+left out unless searched from their own header. See
+[Search](protocol.md#search) for what can be matched.
+
 "Next unread" above the list appears when a visible chat has unread messages.
 It opens the next unread chat below the current one in list order and wraps
 to the top. Alt+Down does the same outside text fields, and `]` does it when

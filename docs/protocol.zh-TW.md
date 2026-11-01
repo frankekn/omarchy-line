@@ -205,6 +205,7 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | cmd | 參數 | 成功時的 `data` |
 |---|---|---|
 | `history` | `chat`, `count`（1–200，超界夾住、非數字當 30）, `before?`（往前翻頁的訊息 id）, `markRead?` | 訊息陣列，舊的在前 |
+| `search` | `q`（1–100 個字）, `chat?`（一個聊天室 id）, `limit?`（1–100，預設 30）, `before?`（毫秒時間，只回比它舊的） | `{results, partial, more, scanned}`；見[搜尋](#搜尋) |
 | `markRead` | `chat`, `upTo`（已讀到最新訊息 id 的十進位字串） | `{ "marked": bool }`。若已讀位置已涵蓋 `upTo`、該列已是 0 未讀且沒有尚未計入的訊息，或 LINE 拒絕標記，就會是 `false` |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | 無 |
 | `reply` | `chat`, `text`, `replyTo`（要回覆的訊息 id）, `mentions?`, `requestId?` | 無 |
@@ -392,6 +393,39 @@ linejs 自己改用 E2EE 重送一次（`mentions` 和引言都跟著過去）�
 `NICE`／`LOVE`／`FUN`／`AMAZING`／`SAD`／`OMG`，外加把自己的收回來的 `UNDO`；
 其他一律回 `{ok:false, error:"不支援的表情"}`。一個人在同一則訊息上只會有一個表情，
 再送一次就是換掉，不是疊加。
+
+## 搜尋
+
+`search` 讀本機的訊息庫 `STATE_DIR/messages/<myMid>/<chatMid>.jsonl`，不會去問
+LINE，所以只找得到這台 daemon 存下來的訊息：它執行期間收到的訊息，以及面板開過的
+歷史頁。沒有索引，每次請求都重新串流讀檔。
+
+比對方式是不分大小寫的子字串比對，只看純文字訊息（`contentType` 為 `NONE`）的
+文字，所以中文、日文這類不用空白分詞的文字也找得到。貼圖、圖片、檔案、FLEX 的
+`altText` 和引言文字都不比對。後來收回的訊息（`_unsent` 或 `UNSENT`）一律不回；
+編輯過或重新抓過的訊息只算一次，以最後一行為準。斷掉或不合法的行會跳過。
+
+Letter Sealing（E2EE）的文字只有在訊息庫存的是解密後內容時才找得到。推播收到的
+訊息是解密後才寫入，所以找得到；歷史頁照 LINE 傳來的原樣寫入，所以只透過歷史頁
+看過的 E2EE 訊息只有 `chunks`，比對不到。
+
+已隱藏的聊天室預設跳過，除非 `chat` 指定它。聊天室依聊天清單順序讀取。結果新的
+在前（先比 `time`，再比 id），每筆是 `{chat, id, time, from, fromName?, snippet,
+match}`。`snippet` 是命中處前後約 120 個 UTF-16 單位的文字，換行壓平，截斷處加
+`…`。`match` 是命中範圍在 `snippet` 裡的 `[start, end)`，單位是 UTF-16。`more`
+為 `true` 表示還有更舊的結果；用最後一筆的 `time` 當 `before` 再問一次（同一毫秒
+的訊息在這個邊界可能被跳過）。
+
+同一時間只跑一個掃描。每 2000 行讓出一次事件迴圈，超過 2 秒就停下，回
+`partial: true` 和目前找到的結果。`scanned` 是讀過的聊天室檔案數。拒絕訊息：
+`沒有搜尋文字`（`q` 是空的）、`搜尋文字太長`（超過 100 個字）、`不支援的聊天室`
+（`chat` 不是聊天室 id）和 `before 不對`。只讀帳號目錄底下直接放的一般 `.jsonl`
+檔，symlink 會跳過。
+
+在合成資料上（121 個聊天室、100,000 則訊息、98.5 MB，一半是 E2EE chunks）搜尋
+約 360–460 ms，事件迴圈最長只被卡住約 6 ms。`deno task bench:search` 可以重跑
+這個量測。掃描成本約每 MB 4–5 ms，所以 2 秒的預算大約涵蓋 400 MB 的訊息庫；
+更大的訊息庫就需要索引。
 
 ## 貼圖
 

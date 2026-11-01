@@ -1738,4 +1738,44 @@ textarea::placeholder {
   text-decoration: underline;
   text-underline-offset: 2px;
   font-size: calc(12rem / 14);
+/* Full message search. Reuses the switcher dialog and list styles. */
+.message-search-scope {
+  margin: 0 12px 6px;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.message-search-all {
+  align-self: flex-start;
+  margin: 0 8px 6px;
+}
+.search-option {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.search-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  color: var(--muted);
+  font-size: 0.85em;
+}
+.search-meta .switcher-name {
+  flex: 1 1 8em;
+  color: var(--text);
+  font-weight: 600;
+}
+.search-snippet {
+  overflow-wrap: anywhere;
+}
+.search-snippet mark {
+  color: inherit;
+  background: none;
+  font-weight: 700;
+  text-decoration: underline 2px var(--accent);
+  text-underline-offset: 2px;
+}
+.search-more {
+  justify-content: center;
+  color: var(--accent);
 }

@@ -1209,5 +1209,5 @@ export function createMessagesView(ctx) {
       resumePaging(false);
     }
   }, true);
-  return { renderMessages, closeOpenReactions };
+  return { renderMessages, closeOpenReactions, scrollToMessage };
 }

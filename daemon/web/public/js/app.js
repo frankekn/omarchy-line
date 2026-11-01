@@ -23,6 +23,7 @@ import { createSettingsView } from "./view-settings.js";
 import { createSwitcherView } from "./view-switcher.js";
 import { createStatusView } from "./view-status.js";
 import { createMessageActionsView } from "./view-message-actions.js";
+import { createSearchView } from "./view-search.js";
 
 const language = navigator.language || "";
 const english = isEnglish(language),
@@ -61,6 +62,7 @@ provide("view-settings", createSettingsView(ctx));
 provide("view-switcher", createSwitcherView(ctx));
 provide("view-status", createStatusView(ctx));
 provide("view-message-actions", createMessageActionsView(ctx));
+provide("view-search", createSearchView(ctx));
 provide("controller-state", createStateController(ctx));
 provide("controller-chat", createChatController(ctx));
 provide("controller-send", createSendController(ctx));

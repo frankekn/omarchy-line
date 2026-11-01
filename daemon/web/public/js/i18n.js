@@ -205,6 +205,33 @@ const strings = {
   voiceMessage: ["語音訊息", "Voice message"],
   location: ["位置", "Location"],
   openInMaps: ["在地圖中開啟", "Open in Maps"],
+  // Full message search.
+  messageSearch: ["搜尋訊息", "Search messages"],
+  messageSearchPlaceholder: [
+    "輸入要找的文字，按 Enter 搜尋",
+    "Type text to find, then press Enter",
+  ],
+  messageSearchScope: [
+    "只搜尋這台 daemon 已快取的訊息。",
+    "Searches only messages this daemon has cached.",
+  ],
+  messageSearchIn: ["只搜尋：", "Only in:"],
+  messageSearchAll: ["搜尋全部聊天室", "Search all chats"],
+  chatSearch: ["在此聊天室搜尋", "Search in this chat"],
+  chatSearchShort: ["搜尋", "Search"],
+  searching: ["搜尋中…", "Searching…"],
+  searchResults: ["筆結果", "results"],
+  searchNoResults: ["沒有找到符合的訊息。", "No cached messages match."],
+  searchPartial: [
+    "搜尋逾時，只列出部分結果。",
+    "The search timed out; the results are incomplete.",
+  ],
+  searchMore: ["載入更多結果", "Load more results"],
+  searchMissing: [
+    "找不到這則訊息，可能已收回或太舊。",
+    "The message could not be found. It may be unsent or too old.",
+  ],
+  searchJumping: ["正在找這則訊息…", "Finding the message…"],
 };
 
 export function isEnglish(language = "") {

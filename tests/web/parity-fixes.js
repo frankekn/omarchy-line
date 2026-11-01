@@ -496,6 +496,11 @@ export async function shortcutFocus(h) {
   await page.keyboard.press("Tab");
   assert.equal(
     await page.evaluate(() => document.activeElement.id),
+    "message-search-open",
+  );
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
     "chat-list",
   );
   assert.equal(

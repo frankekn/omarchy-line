@@ -22,6 +22,7 @@ import { pinMute } from "./pin-mute.js";
 import { eventsCatchup } from "./events-catchup.js";
 import { daemonStatus } from "./daemon-status.js";
 import { messageActions } from "./message-actions.js";
+import { search } from "./search.js";
 
 const suites = {
   main,
@@ -46,6 +47,7 @@ const suites = {
   "events-catchup": eventsCatchup,
   "daemon-status": daemonStatus,
   "message-actions": messageActions,
+  search,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

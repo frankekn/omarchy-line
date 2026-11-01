@@ -252,6 +252,7 @@ Socket commands (one JSON line per request, replies
 | cmd | Args | `data` on success |
 |---|---|---|
 | `history` | `chat`, `count` (1–200, clamped, non-numbers count as 30), `before?` (message id to page back from), `markRead?` | message array, oldest first |
+| `search` | `q` (1–100 characters), `chat?` (one chat id), `limit?` (1–100, default 30), `before?` (ms time; only older hits) | `{results, partial, more, scanned}`; see [Search](#search) |
 | `markRead` | `chat`, `upTo` (newest message id read, as a decimal string) | `{ "marked": bool }`. It is `false` when nothing went to LINE: our own read cursor already covers `upTo`, the row already shows 0 unread with nothing uncounted, or LINE refused the check |
 | `send` | `chat`, `text`, `mentions?`, `requestId?` | none |
 | `reply` | `chat`, `text`, `replyTo` (message id), `mentions?`, `requestId?` | none |
@@ -485,6 +486,49 @@ still go out as a plain message, silently eating the quote the user picked.
 `NICE`/`LOVE`/`FUN`/`AMAZING`/`SAD`/`OMG`, plus `UNDO` to take yours back.
 Anything else answers `{ok:false, error:"不支援的表情"}`. One person holds one
 reaction per message. Resending swaps it instead of stacking.
+
+## Search
+
+`search` reads the local message store,
+`STATE_DIR/messages/<myMid>/<chatMid>.jsonl`. It does not ask LINE, so it
+finds only messages this daemon has stored: what arrived while it ran and
+the history pages the panel opened. There is no index. Each request streams
+the files again.
+
+Matching is a case-insensitive substring match on the text of plain text
+messages (`contentType` `NONE`), so Chinese, Japanese and other text without
+spaces works. Stickers, images, files, FLEX `altText` and quoted text do not
+match. A message that was later unsent (`_unsent` or `UNSENT`) is never
+returned, and an edited or re-fetched message counts once, as its last line.
+Torn or invalid lines are skipped.
+
+Letter Sealing (E2EE) text is only searchable when the store holds it
+decrypted. Messages that arrived by push are stored after decryption, so
+their text is searchable. History pages are stored as they came from LINE, so
+an E2EE message seen only through history keeps only its `chunks` and does
+not match.
+
+Hidden chats are skipped unless `chat` names one. Chats are read in chat-list
+order. Hits come back newest first (by `time`, then id), each as
+`{chat, id, time, from, fromName?, snippet, match}`. `snippet` is about 120
+UTF-16 units of the text around the hit, with newlines flattened and `…`
+where it was cut. `match` is the `[start, end)` of the hit inside `snippet`,
+in UTF-16 units. `more` is `true` when older hits exist; ask again with
+`before` set to the `time` of the last hit (messages from the same
+millisecond can be skipped at that edge).
+
+One scan runs at a time. It yields to the event loop every 2000 lines and
+stops after 2 s with `partial: true` and the hits found so far. `scanned` is
+the number of chat files read. Refusals: `沒有搜尋文字` (empty `q`),
+`搜尋文字太長` (over 100 characters), `不支援的聊天室` (`chat` is not a chat
+id) and `before 不對`. Only plain `.jsonl` files directly in the account's
+directory are read; symlinks are skipped.
+
+On synthetic data (121 chats, 100,000 messages, 98.5 MB, half of them E2EE
+chunks) a search takes about 360–460 ms and never blocks the event loop for
+more than about 6 ms. `deno task bench:search` repeats the measurement. The
+scan costs about 4–5 ms per MB, so the 2 s budget covers about 400 MB of
+store. A larger store needs an index.
 
 ## Stickers
 

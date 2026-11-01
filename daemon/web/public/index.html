@@ -42,6 +42,7 @@
     <link rel="modulepreload" href="/js/view-switcher.js">
     <link rel="modulepreload" href="/js/view-status.js">
     <link rel="modulepreload" href="/js/view-message-actions.js">
+    <link rel="modulepreload" href="/js/view-search.js">
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
@@ -103,6 +104,9 @@
               <button id="next-unread" class="text-button" type="button"
                 data-i18n="nextUnread" aria-keyshortcuts="Alt+ArrowDown ]"
                 hidden>下一個未讀</button>
+              <button id="message-search-open" class="text-button"
+                type="button" data-i18n="messageSearch"
+                aria-haspopup="dialog">搜尋訊息</button>
             </div>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
@@ -119,7 +123,7 @@
           </div>
           <div id="chat-view" class="chat-view" hidden>
             <header
-              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><div class="chat-actions"><button id="pin-chat" class="text-button" type="button"></button><button id="mute-chat" class="text-button" type="button"></button><button id="hide-chat" class="text-button" type="button"></button></div></header>
+              class="chat-header"><button id="back" class="icon-button back" type="button" data-i18n-title="back" aria-label="返回">←</button><span id="active-avatar" class="avatar"></span><div class="chat-heading"><h1 id="active-name"></h1><span id="active-subtitle" class="muted"></span></div><div class="chat-actions"><button id="chat-search" class="text-button" type="button" data-i18n="chatSearchShort" data-i18n-title="chatSearch" aria-label="在此聊天室搜尋" title="在此聊天室搜尋" aria-haspopup="dialog">搜尋</button><button id="pin-chat" class="text-button" type="button"></button><button id="mute-chat" class="text-button" type="button"></button><button id="hide-chat" class="text-button" type="button"></button></div></header>
             <div id="messages" class="messages" role="log" aria-live="polite"
               aria-relevant="additions text" aria-labelledby="active-name"
               tabindex="0"></div>
@@ -182,6 +186,29 @@
       <ul id="switcher-list" class="switcher-list" role="listbox"
         aria-labelledby="switcher-title"></ul>
       <p id="switcher-status" class="sr-only" role="status"></p>
+    </dialog>
+    <dialog id="message-search" class="switcher message-search"
+      aria-labelledby="message-search-title">
+      <h2 id="message-search-title" class="sr-only"
+        data-i18n="messageSearch">搜尋訊息</h2>
+      <input id="message-search-input" type="text" role="combobox"
+        aria-labelledby="message-search-title" aria-expanded="true"
+        aria-controls="message-search-list" aria-autocomplete="list"
+        aria-describedby="message-search-scope" autocomplete="off"
+        spellcheck="false" maxlength="100"
+        data-placeholder="messageSearchPlaceholder"
+        placeholder="輸入要找的文字，按 Enter 搜尋">
+      <p id="message-search-scope" class="message-search-scope"><span
+          data-i18n="messageSearchScope">只搜尋這台 daemon 已快取的訊息。</span>
+        <span id="message-search-chat" hidden><span
+            data-i18n="messageSearchIn">只搜尋：</span><strong
+            id="message-search-chat-name"></strong></span></p>
+      <button id="message-search-all" class="text-button message-search-all"
+        type="button" data-i18n="messageSearchAll"
+        hidden>搜尋全部聊天室</button>
+      <ul id="message-search-list" class="switcher-list" role="listbox"
+        aria-labelledby="message-search-title"></ul>
+      <p id="message-search-status" class="sr-only" role="status"></p>
     </dialog>
     <dialog id="lightbox" class="lightbox">
       <div class="lightbox-toolbar">

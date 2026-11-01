@@ -266,7 +266,8 @@ async function quoteDuringOlder(h) {
     import.meta.url,
   );
   let view = await Deno.readTextFile(viewUrl);
-  const marker = "  return { renderMessages, closeOpenReactions };";
+  const marker =
+    "  return { renderMessages, closeOpenReactions, scrollToMessage };";
   assert.equal(view.split(marker).length, 2);
   view = view.replace(
     marker,
