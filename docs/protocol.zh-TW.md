@@ -236,6 +236,11 @@ URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
   完整快照幀小於 20 KiB、帳號或 boot 變更、清單不相容，或 patch 沒有比較小時，
   bridge 會改送完整快照。時間戳記（包括心跳）仍留在 `state` 中。
 
+只改到 `timings`、`stateBytes`、`updatedAt` 或 `refresh.at` 的寫入不會立刻送出，
+要等它的 `updatedAt` 比上次送出的晚 90 秒才送。網頁不顯示這些欄位，這樣也仍能讓
+網頁 180 秒的 offline 判斷持續收到心跳。下一個送出的幀會帶最新的值；其他變更都會
+立刻送出。
+
 沒有該子協定時，bridge 只送完整的 `{ "web": "state", "state": … }` 快照，
 供已開啟的舊版網頁使用。
 

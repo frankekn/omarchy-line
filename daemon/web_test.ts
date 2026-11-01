@@ -116,7 +116,8 @@ Deno.test("state notifications are immediate and coalesce a same-turn burst", as
 Deno.test("a notification during an older read is not lost", async () => {
   const dir = await Deno.makeTempDir({ prefix: "state-notify-race-" });
   const path = `${dir}/state.json`, tmp = `${path}.tmp`;
-  const original = largeState(), updated = { ...original, updatedAt: 2 };
+  const original = largeState();
+  const updated = { ...original, chatsRevision: 2, updatedAt: 2 };
   await Deno.writeTextFile(path, JSON.stringify(original));
   const feed = new StateFeed(path), frames: string[] = [];
   const read = Deno.readTextFile;
@@ -209,11 +210,46 @@ Deno.test("state feed polls external changes and seeds late pages", async () => 
     assertEquals(JSON.parse(late[0]).state, next);
     assertEquals(JSON.parse(late[0]).version, delta.version);
 
-    // A heartbeat still conveys its timestamp without resending the list.
-    const heartbeat = { ...next, updatedAt: 3 };
+    // A write that moves only diagnostics is not sent while the heartbeat
+    // is not due. A real change right after it goes out at once, as a delta
+    // from what the pages have, and carries the diagnostics with it.
+    const quiet = {
+      ...next,
+      updatedAt: next.updatedAt + 30_000,
+      timings: { "chats.refresh": { n: 1 } },
+      stateBytes: { last: 1 },
+    };
+    await write(quiet);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    assertEquals(first.length, 2);
+    assertEquals(legacy.length, 2);
+    const wanted = { ...quiet, wanted: { chat: "c9" } };
+    await write(wanted);
+    await until(() => first.length === 3 && legacy.length === 3);
+    const real = JSON.parse(first[2]);
+    assertEquals(real.web, "state-delta");
+    assertEquals(real.base, delta.version);
+    assertEquals(real.put, []);
+    assertEquals(decode(real).frame.state, wanted);
+    assertEquals(JSON.parse(legacy[2]), { web: "state", state: wanted });
+
+    // A failure count is shown, so it is sent even when only it changed.
+    const failing = { ...wanted, refresh: { at: 5, failures: 1 } };
+    await write(failing);
+    await until(() => first.length === 4);
+    assertEquals(decode(JSON.parse(first[3])).frame.state, failing);
+
+    // The heartbeat keeps the page's 180 s offline check fed: once the
+    // timestamp is 90 s past the last one sent, a diagnostics-only write is
+    // sent without resending the list.
+    const heartbeat = {
+      ...failing,
+      updatedAt: failing.updatedAt + 90_000,
+      refresh: { at: 6, failures: 1 },
+    };
     await write(heartbeat);
-    await until(() => first.length === 3);
-    const beat = JSON.parse(first[2]);
+    await until(() => first.length === 5);
+    const beat = JSON.parse(first[4]);
     assertEquals(beat.web, "state-delta");
     assertEquals(beat.remove, []);
     assertEquals(beat.put, []);
@@ -227,24 +263,24 @@ Deno.test("state feed polls external changes and seeds late pages", async () => 
       reordered.chats[0],
     ];
     await write(reordered);
-    await until(() => first.length === 4);
-    assertEquals(JSON.parse(first[3]).web, "state");
-    assertEquals(decode(JSON.parse(first[3])).frame.state, reordered);
-    const account = { ...reordered, me: { mid: "account-b" } };
-    await write(account);
-    await until(() => first.length === 5);
-    assertEquals(JSON.parse(first[4]).web, "state");
-    assertEquals(decode(JSON.parse(first[4])).frame.state, account);
-    const boot = { ...account, bootId: "boot-b" };
-    await write(boot);
     await until(() => first.length === 6);
     assertEquals(JSON.parse(first[5]).web, "state");
-    assertEquals(decode(JSON.parse(first[5])).frame.state, boot);
+    assertEquals(decode(JSON.parse(first[5])).frame.state, reordered);
+    const account = { ...reordered, me: { mid: "account-b" } };
+    await write(account);
+    await until(() => first.length === 7);
+    assertEquals(JSON.parse(first[6]).web, "state");
+    assertEquals(decode(JSON.parse(first[6])).frame.state, account);
+    const boot = { ...account, bootId: "boot-b" };
+    await write(boot);
+    await until(() => first.length === 8);
+    assertEquals(JSON.parse(first[7]).web, "state");
+    assertEquals(decode(JSON.parse(first[7])).frame.state, boot);
 
     // A rewrite with exactly the same bytes does not create a new version.
     await write(boot);
     await new Promise((resolve) => setTimeout(resolve, 650));
-    assertEquals(first.length, 6);
+    assertEquals(first.length, 8);
   } finally {
     feed.close();
     await Deno.remove(dir, { recursive: true });
@@ -538,4 +574,73 @@ Deno.test("snapshot deltas do not roll back a newer live chat push", () => {
   }).frame.state;
   model = applyChatState(model, delta);
   assertEquals(model.chats[0].name, "live");
+});
+
+Deno.test("online or a visible tab skips one backoff wait per outage", () => {
+  Socket.instances = [];
+  const model = createModel(), pending = new Map<number, () => void>();
+  const delays: number[] = [];
+  let timers = 0;
+  const network = new EventTarget();
+  const visibility = Object.assign(new EventTarget(), {
+    visibilityState: "visible",
+  });
+  const connection = createConnection({
+    model,
+    url: "ws://test",
+    WebSocketClass: Socket,
+    schedule: (callback: () => void, delay: number) => {
+      pending.set(++timers, callback);
+      delays.push(delay);
+      return timers;
+    },
+    cancel: (timer: number) => pending.delete(timer),
+    network,
+    visibility,
+  });
+  const state = { web: "state", generation: "g", version: 1, state: {} };
+  connection.start();
+  // Connected: the events do nothing.
+  Socket.instances[0].receive(state);
+  network.dispatchEvent(new Event("online"));
+  assertEquals(Socket.instances.length, 1);
+
+  // Dropped: online reconnects at once and cancels the pending retry. A
+  // second trigger while that socket connects opens no other socket.
+  Socket.instances[0].close();
+  assertEquals(pending.size, 1);
+  network.dispatchEvent(new Event("online"));
+  assertEquals(Socket.instances.length, 2);
+  assertEquals(pending.size, 0);
+  visibility.dispatchEvent(new Event("visibilitychange"));
+  network.dispatchEvent(new Event("online"));
+  assertEquals(Socket.instances.length, 2);
+
+  // That attempt fails: later events in the same outage wait for backoff.
+  Socket.instances[1].close();
+  assertEquals(pending.size, 1);
+  network.dispatchEvent(new Event("online"));
+  visibility.dispatchEvent(new Event("visibilitychange"));
+  assertEquals(Socket.instances.length, 2);
+  [...pending.values()][0]();
+  pending.clear();
+  assertEquals(Socket.instances.length, 3);
+
+  // A connection resets the allowance. A hidden tab does not reconnect
+  // early; becoming visible does.
+  Socket.instances[2].receive(state);
+  Socket.instances[2].close();
+  visibility.visibilityState = "hidden";
+  visibility.dispatchEvent(new Event("visibilitychange"));
+  network.dispatchEvent(new Event("online"));
+  assertEquals(Socket.instances.length, 3);
+  visibility.visibilityState = "visible";
+  visibility.dispatchEvent(new Event("visibilitychange"));
+  assertEquals(Socket.instances.length, 4);
+  assertEquals(delays, [1000, 2000, 1000]);
+
+  // After stop, the events do nothing.
+  connection.stop();
+  network.dispatchEvent(new Event("online"));
+  assertEquals(Socket.instances.length, 4);
 });

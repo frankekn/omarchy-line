@@ -288,6 +288,12 @@ external changes; intermediate writes can be skipped. A browser offers the
   list, or when the patch is not smaller. Timestamps, including the heartbeat,
   remain in `state`.
 
+A write that changes only `timings`, `stateBytes`, `updatedAt` or
+`refresh.at` is not sent until its `updatedAt` is 90 s past the last one sent.
+The page does not show those fields, and this still keeps its 180 s offline
+check fed. The next sent frame carries the latest values; any other change is
+sent at once.
+
 Without that subprotocol, the bridge sends only complete
 `{ "web": "state", "state": … }` snapshots for older open pages.
 

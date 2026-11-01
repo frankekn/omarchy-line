@@ -149,6 +149,24 @@ const strings = {
     "Drafts could not be saved and may be lost on reload.",
   ],
   genericError: ["操作失敗。", "The action failed."],
+  // Settings panel.
+  settings: ["設定", "Settings"],
+  textSize: ["字體大小", "Text size"],
+  theme: ["主題配色", "Theme"],
+  themeSystem: ["跟隨系統", "Match system"],
+  messageSound: ["新訊息提示音", "New message sound"],
+  settingsSaveFailed: [
+    "無法儲存設定；重新整理後會還原。",
+    "Settings could not be saved and will reset on reload.",
+  ],
+  // Quick switcher, next unread and the tab title.
+  switcher: ["切換聊天室", "Switch chat"],
+  switcherPlaceholder: ["輸入聊天室名稱", "Type a chat name"],
+  switcherResults: ["個結果", "results"],
+  unreadCount: ["未讀", "Unread"],
+  nextUnread: ["下一個未讀", "Next unread"],
+  titleSignin: ["需要登入", "Sign-in required"],
+  titleOffline: ["離線", "Offline"],
 };
 
 export function isEnglish(language = "") {

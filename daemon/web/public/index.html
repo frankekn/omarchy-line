@@ -6,6 +6,7 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="color-scheme" content="dark light">
     <meta name="theme-color" content="#101411">
+    <script src="/js/boot.js"></script>
     <title>enil</title>
     <link rel="icon"
       href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=">
@@ -35,8 +36,10 @@
     <link rel="modulepreload" href="/js/view-media.js">
     <link rel="modulepreload" href="/js/view-mentions.js">
     <link rel="modulepreload" href="/js/view-messages.js">
+    <link rel="modulepreload" href="/js/view-settings.js">
     <link rel="modulepreload" href="/js/view-stickers.js">
     <link rel="modulepreload" href="/js/view-upload.js">
+    <link rel="modulepreload" href="/js/view-switcher.js">
     <script type="module" src="/js/app.js"></script>
   </head>
   <body>
@@ -65,7 +68,7 @@
       <header class="app-bar">
         <div class="brand">enil</div>
         <div
-          class="bar-right"><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span><button id="web-signout" class="text-button" type="button" data-i18n="webSignout">離開網頁</button></div>
+          class="bar-right"><span id="connection" class="connection" role="status"><span class="status-dot"></span><span id="connection-text"></span></span><button id="settings-open" class="text-button settings-button" type="button" aria-haspopup="dialog" aria-controls="settings" data-i18n="settings">設定</button><button id="web-signout" class="text-button" type="button" data-i18n="webSignout">離開網頁</button></div>
       </header>
       <div id="notices" class="notices" aria-live="polite" hidden></div>
       <section id="line-login" class="line-login" hidden>
@@ -92,6 +95,13 @@
             </div>
             <label
               class="search-wrap"><span aria-hidden="true">⌕</span><span class="sr-only" data-i18n="search">搜尋聊天</span><input id="search" type="search" data-placeholder="search" placeholder="搜尋聊天" autocomplete="off" aria-keyshortcuts="/"></label>
+            <div class="nav-actions">
+              <button id="switcher-open" class="text-button" type="button"
+                data-i18n="switcher" aria-haspopup="dialog">切換聊天室</button>
+              <button id="next-unread" class="text-button" type="button"
+                data-i18n="nextUnread" aria-keyshortcuts="Alt+ArrowDown ]"
+                hidden>下一個未讀</button>
+            </div>
             <p id="list-warning" class="list-warning" hidden></p>
           </div>
           <div id="chat-list" class="chat-list" role="region" aria-label="聊天"
@@ -135,6 +145,37 @@
       </div>
       <div id="toast" class="toast" role="alert" hidden></div>
     </main>
+    <dialog id="settings" class="settings" aria-labelledby="settings-title">
+      <div class="settings-header">
+        <h2 id="settings-title" data-i18n="settings">設定</h2>
+        <button id="settings-close" class="icon-button" type="button"
+          data-i18n-title="close" aria-label="關閉">×</button>
+      </div>
+      <div class="settings-body">
+        <fieldset>
+          <legend data-i18n="textSize">字體大小</legend>
+          <div id="text-sizes" class="text-sizes"></div>
+        </fieldset>
+        <fieldset>
+          <legend data-i18n="theme">主題配色</legend>
+          <div id="themes" class="text-sizes themes"></div>
+        </fieldset>
+        <label class="settings-toggle"><input id="sound-toggle"
+            type="checkbox"><span data-i18n="messageSound">新訊息提示音</span></label>
+      </div>
+    </dialog>
+    <dialog id="switcher" class="switcher" aria-labelledby="switcher-title">
+      <h2 id="switcher-title" class="sr-only"
+        data-i18n="switcher">切換聊天室</h2>
+      <input id="switcher-input" type="text" role="combobox"
+        aria-labelledby="switcher-title" aria-expanded="true"
+        aria-controls="switcher-list" aria-autocomplete="list"
+        autocomplete="off" spellcheck="false"
+        data-placeholder="switcherPlaceholder" placeholder="輸入聊天室名稱">
+      <ul id="switcher-list" class="switcher-list" role="listbox"
+        aria-labelledby="switcher-title"></ul>
+      <p id="switcher-status" class="sr-only" role="status"></p>
+    </dialog>
     <dialog id="lightbox" class="lightbox">
       <div class="lightbox-toolbar">
         <div class="lightbox-navigation">

@@ -479,6 +479,20 @@ export async function shortcutFocus(h) {
     await page.evaluate(() => document.activeElement.id),
     "search",
   );
+  // The navigation buttons sit between the search box and the list, so the
+  // focus order follows the visual order.
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "switcher-open",
+  );
+  if (await page.locator("#next-unread").isVisible()) {
+    await page.keyboard.press("Tab");
+    assert.equal(
+      await page.evaluate(() => document.activeElement.id),
+      "next-unread",
+    );
+  }
   await page.keyboard.press("Tab");
   assert.equal(
     await page.evaluate(() => document.activeElement.id),

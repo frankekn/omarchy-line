@@ -286,8 +286,13 @@ async function runRefresh(c: Client, generation: number): Promise<boolean> {
     // One line per round so the pool's contribution is answerable from the
     // journal, and the same numbers land in state.json's rolling stats.
     timings.record("chats.decrypt", performance.now() - poolStarted);
+    // A miss that repeats every round is one of these two, never cached on
+    // purpose: a failed decrypt (retried) or a last message without an id.
+    const failed = built.filter((row) => row.decryptFailed).length;
+    const noId = misses.filter((miss) => !miss.cacheable).length;
     console.log(
-      `[chats] decrypt hits=${hits} miss=${misses.length} width=${DECRYPT_WIDTH}`,
+      `[chats] decrypt hits=${hits} miss=${misses.length} failed=${failed} ` +
+        `noid=${noId} width=${DECRYPT_WIDTH}`,
     );
     for (let i = 0; i < built.length; i++) {
       const { chat, decryptFailed } = built[i];

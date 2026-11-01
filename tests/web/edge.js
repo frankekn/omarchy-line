@@ -191,6 +191,35 @@ export async function edge(h) {
   );
   h.step("reconnect-backoff");
 
+  // `online` or a visible tab skips the first backoff wait, and several
+  // events at once open one socket.
+  const quick = await context.newPage();
+  const quickAttempts = [];
+  let firstRoute;
+  await quick.routeWebSocket("**/api/ws", (socket) => {
+    quickAttempts.push(Date.now());
+    firstRoute ??= socket;
+    socket.connectToServer();
+  });
+  await quick.goto(h.base);
+  await quick.locator("#connection.connected").waitFor();
+  const dropped = Date.now();
+  await firstRoute.close({ code: 4001, reason: "daemon offline" });
+  await quick.locator("#connection:not(.connected)").waitFor();
+  await quick.evaluate(() => {
+    dispatchEvent(new Event("online"));
+    dispatchEvent(new Event("online"));
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await quick.locator("#connection.connected").waitFor();
+  const recovered = Date.now() - dropped;
+  assert.ok(recovered < 800, `reconnect took ${recovered} ms`);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(quickAttempts.length, 2);
+  console.log(`  reconnect after online: ${recovered} ms`);
+  await quick.close();
+  h.step("reconnect-online-skips-backoff");
+
   for (let i = 0; i < 10; i++) {
     const response = await fetch(`${h.base}/?key=wrong-${i}`);
     assert.equal(response.status, 401);

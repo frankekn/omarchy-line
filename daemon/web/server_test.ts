@@ -587,7 +587,7 @@ Deno.test("page responses preload the private session on 200 and 304", async () 
   }
 });
 
-Deno.test("uncompressed assets do not vary by Accept-Encoding", async () => {
+Deno.test("assets are compressed per coding with their own tags", async () => {
   const { stateDir, web } = await fixture();
   try {
     for (const path of ["/", "/app.css", "/js/app.js"]) {
@@ -595,21 +595,86 @@ Deno.test("uncompressed assets do not vary by Accept-Encoding", async () => {
       const tag = plain.headers.get("etag");
       const body = await plain.text();
       assert(tag);
-      const response = await web.handle(get(path, {
-        headers: { "accept-encoding": "gzip, br" },
-      }));
-      assertEquals(response.status, 200);
-      assertEquals(response.headers.get("content-encoding"), null);
-      assertEquals(response.headers.get("vary"), null);
-      assertEquals(response.headers.get("etag"), tag);
-      assertEquals(await response.text(), body);
-      const cached = await web.handle(get(path, {
-        headers: { "accept-encoding": "gzip, br", "if-none-match": tag },
-      }));
-      assertEquals(cached.status, 304);
-      assertEquals(cached.headers.get("vary"), null);
-      assertEquals(cached.headers.get("content-encoding"), null);
+      assertEquals(plain.headers.get("content-encoding"), null);
+      assertEquals(plain.headers.get("vary"), "Accept-Encoding");
+      const tags = new Set([tag]);
+      for (
+        const [accept, coding, format] of [
+          ["gzip, br", "br", "brotli"],
+          ["gzip, deflate", "gzip", "gzip"],
+          ["br;q=0, gzip;q=0.5", "gzip", "gzip"],
+        ] as const
+      ) {
+        const response = await web.handle(get(path, {
+          headers: { "accept-encoding": accept },
+        }));
+        assertEquals(response.status, 200);
+        assertEquals(response.headers.get("content-encoding"), coding);
+        assertEquals(response.headers.get("vary"), "Accept-Encoding");
+        assertEquals(
+          response.headers.get("cache-control"),
+          plain.headers.get("cache-control"),
+        );
+        assertEquals(
+          response.headers.get("content-security-policy"),
+          plain.headers.get("content-security-policy"),
+        );
+        const coded = new Uint8Array(await response.arrayBuffer());
+        assertEquals(
+          Number(response.headers.get("content-length")),
+          coded.byteLength,
+        );
+        assert(coded.byteLength < new TextEncoder().encode(body).byteLength);
+        const decoded = await new Response(
+          new Blob([coded]).stream().pipeThrough(
+            new DecompressionStream(format),
+          ),
+        ).text();
+        assertEquals(decoded, body);
+        const codedTag = response.headers.get("etag");
+        assert(codedTag && codedTag !== tag);
+        tags.add(codedTag);
+        const cached = await web.handle(get(path, {
+          headers: { "accept-encoding": accept, "if-none-match": codedTag },
+        }));
+        assertEquals(cached.status, 304);
+        assertEquals(cached.headers.get("etag"), codedTag);
+        assertEquals(cached.headers.get("vary"), "Accept-Encoding");
+        // The plain tag does not validate the compressed copy.
+        const stale = await web.handle(get(path, {
+          headers: { "accept-encoding": accept, "if-none-match": tag },
+        }));
+        assertEquals(stale.status, 200);
+        await stale.body?.cancel();
+      }
+      assertEquals(tags.size, 3);
+      for (const accept of ["identity", "br;q=0, gzip;q=0", "*;q=0"]) {
+        const none = await web.handle(get(path, {
+          headers: { "accept-encoding": accept },
+        }));
+        assertEquals(none.headers.get("content-encoding"), null, accept);
+        assertEquals(none.headers.get("etag"), tag);
+        assertEquals(await none.text(), body);
+      }
     }
+  } finally {
+    web.close();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
+
+Deno.test("media from /api/file is never recompressed", async () => {
+  const { stateDir, web } = await fixture();
+  try {
+    const cookie = await signedInCookie(web);
+    await Deno.writeTextFile(`${stateDir}/media/test.txt`, "x".repeat(4096));
+    const media = await web.handle(get(
+      `/api/file?path=${encodeURIComponent(`${stateDir}/media/test.txt`)}`,
+      { headers: { cookie, "accept-encoding": "gzip, br" } },
+    ));
+    assertEquals(media.status, 200);
+    assertEquals(media.headers.get("content-encoding"), null);
+    assertEquals((await media.text()).length, 4096);
   } finally {
     web.close();
     await Deno.remove(stateDir, { recursive: true });
@@ -656,6 +721,19 @@ Deno.test("modulepreload lists the entrypoint's runtime import graph", async () 
   visited.delete(entry);
   const paths = [...visited].map((url) => `/js/${url.split("/").pop()}`);
   assertEquals(preloads.sort(), paths.sort());
+});
+
+Deno.test("boot script runs synchronously before the stylesheet", async () => {
+  const publicDir = new URL("./public/", import.meta.url);
+  const html = await Deno.readTextFile(new URL("index.html", publicDir));
+  const head = html.slice(0, html.indexOf("</head>"));
+  const boot = head.indexOf('<script src="/js/boot.js"></script>');
+  assert(boot > 0, "boot.js is a classic script in <head>");
+  assert(boot < head.indexOf('<link rel="stylesheet"'));
+  // A module or deferred boot script would run after the first paint.
+  assertEquals([...head.matchAll(/<script\b/g)].length, 2);
+  const source = await Deno.readTextFile(new URL("js/boot.js", publicDir));
+  assert(!/^\s*(?:import|export)\b/m.test(source), "boot.js is not a module");
 });
 
 Deno.test("a POST from another origin is refused", async () => {

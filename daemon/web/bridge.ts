@@ -24,6 +24,12 @@ import type { Uploads } from "./files.ts";
 const STATE_POLL_MS = 500;
 const MIN_DELTA_STATE_BYTES = 20 * 1024;
 const STATE_DELTA_PROTOCOL = "enil-state-delta-v1";
+/**
+ * A write that changes only diagnostics still goes out once this much newer
+ * than the last one sent, so the page's 180 s `updatedAt` check (the offline
+ * notice in view-login.js) keeps seeing a live daemon.
+ */
+const HEARTBEAT_MS = 90_000;
 /** A browser this far behind is dropped; it reconnects and catches up. */
 const MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
 const MAX_FRAME_BYTES = 1024 * 1024;
@@ -93,6 +99,34 @@ function chatRows(state: StateObject | null): ChatRow[] | null {
     rows.push(row as ChatRow);
   }
   return rows;
+}
+
+/**
+ * The state without the fields that move on every write but that the page
+ * does not show: timings, stateBytes, updatedAt and refresh.at. The page
+ * reads only refresh.failures, and `at` stands still while failures grow.
+ */
+function shown(state: StateObject): string {
+  const { timings: _t, stateBytes: _s, updatedAt: _u, ...rest } = state;
+  const refresh = object(rest.refresh);
+  if (refresh) {
+    const { at: _a, ...health } = refresh;
+    rest.refresh = health;
+  }
+  return JSON.stringify(rest);
+}
+
+/**
+ * Whether `next` differs from `previous` only in diagnostics, and the
+ * heartbeat is not yet due. Such a write is not sent to any page.
+ */
+export function diagnosticsOnly(previous: unknown, next: unknown): boolean {
+  const before = object(previous), after = object(next);
+  if (!before || !after) return false;
+  const sent = Number(before.updatedAt), now = Number(after.updatedAt);
+  if (!Number.isFinite(sent) || !Number.isFinite(now)) return false;
+  if (now - sent >= HEARTBEAT_MS || now < sent) return false;
+  return shown(before) === shown(after);
 }
 
 /** Produce a patch only when unchanged rows retain their relative order. */
@@ -266,7 +300,10 @@ export class StateFeed {
       return; // gone or mid-write: the next poll sees it
     }
     this.#fileKey = key;
-    if (text === this.#text) {
+    // A diagnostics-only write keeps the last sent text as the base: the
+    // next real change is a delta from what every page already has, and a
+    // new page gets that text, at most HEARTBEAT_MS old.
+    if (text === this.#text || diagnosticsOnly(this.#state, state)) {
       this.#sendInitial();
       return;
     }

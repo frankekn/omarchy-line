@@ -116,6 +116,24 @@ Esc also closes the mention picker from the message input. These shortcuts
 require the chat workspace and ignore Ctrl, Alt, Command and text composition.
 Use up/down, `j`/`k`, `/` and `r` without Shift.
 
+Ctrl+K (Command+K on a Mac) opens the chat switcher from anywhere in the
+workspace, including the message input. The "Switch chat" button above the
+list opens it too. Type part of a chat name: exact matches come first, then
+prefix, substring and in-order letter matches. Chats with unread messages and
+recent activity lead each group. Hidden chats are listed with a "Hidden" tag.
+Up/down select, Enter opens and Esc closes and returns focus.
+
+"Next unread" above the list appears when a visible chat has unread messages.
+It opens the next unread chat below the current one in list order and wraps
+to the top. Alt+Down does the same outside text fields, and `]` does it when
+focus is on the chat list or the messages. Opening a chat this way marks it
+read like a click.
+
+The tab title shows the unread total of visible chats, for example
+`(3) enil`, capped at `99+`. The favicon gets a dot while there is unread
+mail. The title adds "Offline" after the connection drops and "Sign-in
+required" when the web session needs a key.
+
 In the message input, Enter selects an open mention choice. Otherwise, Enter
 sends when the viewport is at least 701px wide and the primary pointer is
 fine; in other cases it adds a line. Shift+Enter adds a line. In the image
@@ -126,6 +144,32 @@ If a reconnect detects that the web cookie has expired, reconnecting stops
 and a notice offers a sign-in link. The page and composer stay in place so you
 can copy a draft before signing in. Drafts already saved in browser storage
 remain available after sign-in.
+
+After a dropped connection, the page retries after 1 s, and doubles the wait
+up to 15 s. When the network comes back or the tab becomes visible, it
+reconnects at once, one time per outage. The page's HTML, CSS and JavaScript
+are sent with Brotli or gzip when the browser accepts it. Media from
+`/api/file` is already compressed and is sent as is.
+
+### Settings
+
+**Settings** in the top bar opens a dialog with three options. Each browser
+keeps its own settings in local storage; the server does not store them.
+
+- **Text size** scales the whole page: 85%, 100%, 115%, 130% or 150%, where
+  100% is 14 px.
+- **Theme** is **Match system** by default, which uses the green light or dark
+  colors from the system setting. The other themes take their colors from
+  Omarchy themes: Catppuccin, Catppuccin Latte, Everforest, Flexoki Light,
+  Gruvbox, Kanagawa, Matte Black, Nord, Rosé Pine and Tokyo Night. Some text
+  colors are adjusted so that all text meets WCAG AA contrast.
+- **New message sound** is off by default. When it is on, the page plays a
+  short tone for a new message from someone else. It does not play for your
+  own messages, hidden chats, or the chat that you are viewing while the
+  window has focus. One chat plays at most one tone every 2 seconds.
+
+Changes apply immediately. Esc or the close button closes the dialog and
+returns focus to **Settings**.
 
 ## Known limitations
 

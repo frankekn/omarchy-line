@@ -153,6 +153,7 @@ export function createLoginView(ctx) {
       !webSessionExpired && status === "connected",
     );
     renderNotices();
+    ctx.renderTitle();
   }
   function renderLogin(state) {
     const login = state.login || { status: "idle" },
@@ -195,6 +196,7 @@ export function createLoginView(ctx) {
     webSessionExpired = false;
     $("signin-screen").hidden = true;
     $("app").hidden = false;
+    ctx.renderTitle();
     ctx.start();
   }
   async function beginSession() {
@@ -218,6 +220,7 @@ export function createLoginView(ctx) {
       $("signin-error").hidden = false;
     }
     $("signin-screen").hidden = false;
+    ctx.renderTitle();
   }
   async function checkRejectedSession(signal) {
     const response = await fetch("/api/session", { cache: "no-store", signal });

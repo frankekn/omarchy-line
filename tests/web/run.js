@@ -16,6 +16,8 @@ import { stateWireResync } from "./state-wire-resync.js";
 import { previewCache } from "./preview-cache.js";
 import { drafts } from "./drafts.js";
 import { messageWindow } from "./message-window.js";
+import { settings } from "./settings.js";
+import { navigation } from "./navigation.js";
 
 const suites = {
   main,
@@ -34,6 +36,8 @@ const suites = {
   "preview-cache": previewCache,
   drafts,
   "message-window": messageWindow,
+  settings,
+  navigation,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {
