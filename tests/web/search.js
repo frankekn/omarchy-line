@@ -125,10 +125,25 @@ async function stubSearch(h) {
   );
   // A hidden chat leaves the default search but stays searchable by scope.
   await h.request({ id: 1, cmd: "hide", chat: "ustub-alice" });
+  // The button carries the chat filter text over and searches at once. Enter
+  // on that unchanged query would open the hit, so wait for the results.
+  const before = tap.sent.length;
   await page.getByRole("button", { name: "搜尋訊息" }).click();
-  await input.fill("明天");
-  await input.press("Enter");
-  await until(async () => (await options.count()) === 1, "hidden skipped");
+  assert.equal(await input.inputValue(), "明天");
+  await until(
+    async () =>
+      (await page.locator("#message-search-status").textContent()) ===
+        "1 筆結果",
+    "hidden skipped",
+  );
+  const prefilled = tap.sent.slice(before).filter((frame) =>
+    frame.cmd === "search"
+  );
+  assert.deepEqual(
+    prefilled.map((frame) => ({ q: frame.q, chat: frame.chat })),
+    [{ q: "明天", chat: undefined }],
+  );
+  assert.equal(await options.count(), 1);
   assert.match(await options.nth(0).textContent(), /STUB 家庭群組/);
   await input.press("Escape");
   await h.request({ id: 2, cmd: "unhide", chat: "ustub-alice" });

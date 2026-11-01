@@ -95,7 +95,8 @@ try {
   await page.goto(base);
   await page.getByLabel("Web key").fill(key);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.locator("#connection.connected").waitFor();
+  // Without a LINE session the corner row shows the connection status.
+  await page.locator("#corner-connection.connected").waitFor();
   await page.evaluate(() => {
     const socket = new WebSocket(
       `ws://${location.host}/api/ws`,
