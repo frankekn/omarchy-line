@@ -1628,6 +1628,7 @@ Deno.test("the bridge forwards only the commands the page sends", async () => {
       "preview",
       "react",
       "reply",
+      "search",
       "send",
       "sendSticker",
       "stickers",

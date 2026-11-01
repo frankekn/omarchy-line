@@ -1371,6 +1371,75 @@ def history_count(value):
     return max(1, min(HISTORY_COUNT_MAX, int(n + 0.5)))
 
 
+# daemon modules/search.ts: the same refusals, limits and hit shape, over the
+# fixture's messages instead of the JSONL store.
+SEARCH_QUERY_MAX = 100
+SEARCH_LIMIT_DEFAULT = 30
+SEARCH_LIMIT_MAX = 100
+SNIPPET_MAX = 120
+SNIPPET_LEAD = 40
+
+
+def search_snippet(text, start, end):
+    """snippetOf(): about 120 characters around the hit, newlines flat."""
+    lo, hi = 0, len(text)
+    if len(text) > SNIPPET_MAX:
+        lo = max(0, start - SNIPPET_LEAD)
+        hi = max(min(len(text), lo + SNIPPET_MAX), end)
+        lo = max(0, min(lo, hi - SNIPPET_MAX))
+    head = "…" if lo > 0 else ""
+    tail = "…" if hi < len(text) else ""
+    body = re.sub(r"[\r\n\t]", " ", text[lo:hi])
+    # The panel counts UTF-16 code units, like the daemon's offsets.
+    snippet = head + body + tail
+    a = len(head) + start - lo
+    b = len(head) + end - lo
+    return snippet, [utf16_len(snippet[:a]), utf16_len(snippet[:b])]
+
+
+def search_messages(req):
+    q = req.get("q")
+    if not isinstance(q, str) or not q.strip():
+        return {"ok": False, "error": "沒有搜尋文字"}
+    q = q.strip()
+    if len(q) > SEARCH_QUERY_MAX:
+        return {"ok": False, "error": "搜尋文字太長"}
+    chat = req.get("chat")
+    chat = "" if chat is None else str(chat)
+    if chat and not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", chat):
+        return {"ok": False, "error": "不支援的聊天室"}
+    limit = req.get("limit")
+    if isinstance(limit, (int, float)) and not isinstance(limit, bool):
+        limit = max(1, min(SEARCH_LIMIT_MAX, int(limit + 0.5)))
+    else:
+        limit = SEARCH_LIMIT_DEFAULT
+    before = req.get("before") or 0
+    if isinstance(before, str) and re.fullmatch(r"\d{1,16}", before):
+        before = int(before)
+    if isinstance(before, bool) or not isinstance(before, int) or before < 0:
+        return {"ok": False, "error": "before 不對"}
+    needle = q.lower()
+    hits = []
+    with lock:
+        mids = [chat] if chat else [m for m in messages if m not in hidden]
+        for mid in mids:
+            for m in messages.get(mid, []):
+                text = m.get("text") or ""
+                if m.get("unsent") or m.get("contentType") != "NONE":
+                    continue
+                at = text.lower().find(needle)
+                if at < 0 or (before and not m["time"] < before):
+                    continue
+                snippet, match = search_snippet(text, at, at + len(needle))
+                hits.append({"chat": mid, "id": m["id"], "time": m["time"],
+                             "from": m["from"], "fromName": m["fromName"],
+                             "snippet": snippet, "match": match})
+    hits.sort(key=lambda h: (h["time"], h["id"]), reverse=True)
+    return {"ok": True, "data": {"results": hits[:limit], "partial": False,
+                                 "more": len(hits) > limit,
+                                 "scanned": len(mids)}}
+
+
 def handle(req):
     global session_generation
     cmd = req.get("cmd")
@@ -1536,6 +1605,9 @@ def handle(req):
             n = len(state["chats"])
         return {"ok": True, "data": {
             "chats": n, "link": "up", "at": int(time.time() * 1000)}}
+
+    if cmd == "search":
+        return search_messages(req)
 
     if cmd == "history":
         mid = req.get("chat")

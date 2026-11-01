@@ -1858,6 +1858,54 @@ class ChatPrefsTest(unittest.TestCase):
         finally:
             s.close()
 
+
+class SearchTest(unittest.TestCase):
+    """`search`: the daemon's store scan, answered from the fixture."""
+
+    def setUp(self):
+        self.s = Stub("--fixture", "default")
+        self.addCleanup(self.s.close)
+
+    def test_hits_are_newest_first_with_a_marked_snippet(self):
+        res = self.s.call(cmd="search", q="deploy")
+        self.assertTrue(res["ok"], res)
+        # Only text messages: the FLEX altText and quoted lines do not count.
+        self.assertEqual([], res["data"]["results"])
+        res = self.s.call(cmd="search", q="明天")
+        hits = res["data"]["results"]
+        self.assertEqual(["cstub-family-m8", "ustub-alice-m1"],
+                         [h["id"] for h in hits])
+        for h in hits:
+            # UTF-16 offsets: the family hit has an emoji in front of it.
+            units = h["snippet"].encode("utf-16-le")
+            a, b = h["match"]
+            self.assertEqual("明天", units[a * 2:b * 2].decode("utf-16-le"))
+        self.assertEqual({"chat", "id", "time", "from", "fromName", "snippet",
+                          "match"}, set(hits[0]))
+
+    def test_unsent_hidden_and_chat_scope(self):
+        # The recalled message's text is LINE's own notice; never a hit.
+        res = self.s.call(cmd="search", q="收回")
+        self.assertEqual([], res["data"]["results"])
+        self.s.call(cmd="hide", chat="ustub-alice")
+        res = self.s.call(cmd="search", q="明天")
+        self.assertEqual(["cstub-family-m8"],
+                         [h["id"] for h in res["data"]["results"]])
+        res = self.s.call(cmd="search", q="明天", chat="ustub-alice")
+        self.assertEqual(["ustub-alice-m1"],
+                         [h["id"] for h in res["data"]["results"]])
+
+    def test_refusals_match_the_daemon(self):
+        for req, error in (
+                ({}, "沒有搜尋文字"),
+                ({"q": "  "}, "沒有搜尋文字"),
+                ({"q": "x" * 101}, "搜尋文字太長"),
+                ({"q": "x", "chat": "../x"}, "不支援的聊天室"),
+                ({"q": "x", "before": -1}, "before 不對")):
+            res = self.s.call(cmd="search", **req)
+            self.assertEqual(error, res.get("error"), req)
+
+
 class AvatarTest(unittest.TestCase):
     """avatarPath / fromAvatar: the picture fields the panel draws rows from."""
 

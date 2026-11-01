@@ -66,6 +66,7 @@ const ALLOWED_CMDS = new Set([
   "preview",
   "react",
   "reply",
+  "search",
   "send",
   "sendFile",
   "sendSticker",
