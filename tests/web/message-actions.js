@@ -282,4 +282,25 @@ export async function messageActions(h) {
     0,
   );
   h.step("forward-text");
+
+  // At 320 px and 200% text, the actions wrap instead of widening the row.
+  await page.setViewportSize({ width: 320, height: 640 });
+  await page.evaluate(() => document.documentElement.style.fontSize = "200%");
+  for (const row of [textRow, known, place]) {
+    await row.scrollIntoViewIfNeeded();
+    const fits = await row.evaluate((node) => {
+      const list = document.getElementById("messages");
+      const bounds = list.getBoundingClientRect();
+      return list.scrollWidth <= list.clientWidth &&
+        [...node.querySelectorAll("button, a, audio, .message-meta")].every(
+          (child) => {
+            const rect = child.getBoundingClientRect();
+            return rect.left >= bounds.left - 1 &&
+              rect.right <= bounds.right + 1;
+          },
+        );
+    });
+    assert.equal(fits, true);
+  }
+  h.step("narrow-large-text");
 }
