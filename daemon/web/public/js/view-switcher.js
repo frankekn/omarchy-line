@@ -233,6 +233,13 @@ export function createSwitcherView(ctx) {
     event.preventDefault();
     close();
   });
+  // WebKit can leave focus on the dialog itself and then skip the cancel
+  // event for a repeated Escape, which left the switcher open.
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.isComposing) return;
+    event.preventDefault();
+    close();
+  });
   dialog.addEventListener("click", (event) => {
     if (event.target === dialog) close();
   });
