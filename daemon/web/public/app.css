@@ -1436,8 +1436,7 @@ textarea::placeholder {
   border: 0;
   min-width: 0;
 }
-.settings legend,
-.settings-label {
+.settings legend {
   display: block;
   margin-bottom: 8px;
   color: var(--muted);
@@ -1476,17 +1475,6 @@ textarea::placeholder {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.settings select {
-  width: 100%;
-  min-height: 44px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--panel2);
-  color: var(--text);
-  font: inherit;
-}
-.settings select:focus-visible,
 .settings-toggle input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;

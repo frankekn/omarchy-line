@@ -103,18 +103,22 @@ async function keyboardAndSound(h) {
       page.evaluate(() => document.documentElement.dataset.textSize === "115"),
     "text size 115",
   );
+  // The theme radios start at "system"; arrow keys choose a theme.
   await page.keyboard.press("Tab");
-  assert.equal(
-    await page.evaluate(() => document.activeElement?.id),
-    "theme-select",
+  assert.deepEqual(
+    await page.evaluate(() => [
+      document.activeElement?.name,
+      document.activeElement?.value,
+    ]),
+    ["theme", "system"],
   );
-  // Native select popups differ by engine; set the value on the focused
-  // control, which fires the same change event as a keyboard choice.
-  await page.locator("#theme-select").selectOption("nord");
+  for (let i = 0; i < 8; i++) await page.keyboard.press("ArrowDown");
   assert.equal(
     await page.evaluate(() => document.documentElement.dataset.theme),
     "nord",
   );
+  // The page creates no <select>: WebKit reports a CSP violation for one.
+  assert.equal(await page.locator("select").count(), 0);
   await page.keyboard.press("Tab");
   assert.equal(
     await page.evaluate(() => document.activeElement?.id),

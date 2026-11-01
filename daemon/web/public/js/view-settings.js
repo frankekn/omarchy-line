@@ -64,34 +64,47 @@ export function createSettingsView(ctx) {
     beep();
   }
 
-  const sizes = $("text-sizes");
-  for (const size of store.sizes) {
+  function radio(group, name, value, text, checked, change) {
     const input = el("input");
     input.type = "radio";
-    input.name = "text-size";
-    input.value = String(size);
-    input.checked = size === settings.textSize;
-    input.addEventListener("change", () => {
-      settings = { ...settings, textSize: size };
-      save();
-    });
+    input.name = name;
+    input.value = value;
+    input.checked = checked;
+    input.addEventListener("change", change);
     const label = el("label");
-    label.append(input, `${size}%`);
-    sizes.append(label);
+    label.append(input, text);
+    group.append(label);
   }
-  const select = $("theme-select");
-  select.append(el("option", "", t("themeSystem")));
-  select.lastChild.value = "system";
-  for (const id of store.themes) {
-    const option = el("option", "", THEME_NAMES[id] || id);
-    option.value = id;
-    select.append(option);
+  const sizes = $("text-sizes");
+  for (const size of store.sizes) {
+    radio(
+      sizes,
+      "text-size",
+      String(size),
+      `${size}%`,
+      size === settings.textSize,
+      () => {
+        settings = { ...settings, textSize: size };
+        save();
+      },
+    );
   }
-  select.value = settings.theme;
-  select.addEventListener("change", () => {
-    settings = { ...settings, theme: select.value };
-    save();
-  });
+  // Radios, not a <select>: WebKit reports a style-src-attr CSP violation
+  // whenever a <select> element is created.
+  const themes = $("themes");
+  for (const id of ["system", ...store.themes]) {
+    radio(
+      themes,
+      "theme",
+      id,
+      id === "system" ? t("themeSystem") : THEME_NAMES[id] || id,
+      id === settings.theme,
+      () => {
+        settings = { ...settings, theme: id };
+        save();
+      },
+    );
+  }
   const sound = $("sound-toggle");
   sound.checked = settings.sound;
   sound.addEventListener("change", () => {
