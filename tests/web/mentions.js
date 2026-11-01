@@ -56,6 +56,7 @@ export async function mentions(h) {
   await page.getByLabel("搜尋聊天").fill("");
   await page.getByRole("button", { name: /STUB 家庭群組/ }).waitFor();
   h.step("hide-search-unhide");
+  await page.getByRole("button", { name: "設定" }).click();
   await page.getByRole("button", { name: "登出 LINE" }).click();
   await page.getByRole("button", { name: "登入 LINE" }).click();
   await page.getByAltText("LINE login QR code").waitFor({ timeout: 10000 });

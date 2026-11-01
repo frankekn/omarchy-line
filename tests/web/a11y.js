@@ -300,14 +300,14 @@ export async function a11y(h) {
     h.step(`touch-and-contrast-${width}-${colorScheme}`);
   }
   for (
-    const { locale, chats, conversation, signIn, hint, logout, account } of [
+    const { locale, chats, conversation, signIn, hint, settings, account } of [
       {
         locale: "en-US",
         chats: "Chats",
         conversation: "Conversation",
         signIn: "Sign in",
         hint: "The key is in the daemon's log or its ENIL_WEB_KEY setting.",
-        logout: "Sign out of LINE",
+        settings: "Settings",
         account: "A very long account display name for the sidebar",
       },
       {
@@ -316,7 +316,7 @@ export async function a11y(h) {
         conversation: "聊天室",
         signIn: "登入",
         hint: "Key 在 daemon 的 log 或 ENIL_WEB_KEY 設定中。",
-        logout: "登出 LINE",
+        settings: "設定",
         account: "很長很長的帳號顯示名稱用來檢查側欄空間",
       },
     ]
@@ -349,18 +349,18 @@ export async function a11y(h) {
     await page.getByRole("region", { name: chats, exact: true }).waitFor();
     await page.getByRole("button", { name: /STUB 家庭群組/ }).waitFor();
     await page.getByText(account, { exact: true }).waitFor();
-    const logoutButton = page.getByRole("button", {
-      name: logout,
+    const settingsButton = page.getByRole("button", {
+      name: settings,
       exact: true,
     });
-    assert.equal(await logoutButton.textContent(), logout);
-    const logoutBox = await logoutButton.boundingBox();
+    const settingsBox = await settingsButton.boundingBox();
     const accountBox = await page.locator("#account-name").boundingBox();
-    assert.ok(logoutBox && accountBox);
-    assert.ok(logoutBox.width >= 44 && logoutBox.height >= 44);
-    assert.ok(logoutBox.x >= 0 && logoutBox.x + logoutBox.width <= 320);
+    assert.ok(settingsBox && accountBox);
+    assert.ok(settingsBox.width >= 44 && settingsBox.height >= 44);
+    assert.ok(settingsBox.x >= 0 && settingsBox.x + settingsBox.width <= 320);
     assert.ok(
-      accountBox.width > 0 && accountBox.x + accountBox.width <= logoutBox.x,
+      accountBox.width > 0 &&
+        accountBox.x + accountBox.width <= settingsBox.x,
     );
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth),

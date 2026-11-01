@@ -82,6 +82,8 @@ export function createStatusView(ctx) {
     );
   }
   // Rendered when the dialog opens; it does not poll while open.
-  $("settings-open").addEventListener("click", render);
+  for (const id of ["settings-open", "corner-settings"]) {
+    $(id).addEventListener("click", render);
+  }
   return {};
 }

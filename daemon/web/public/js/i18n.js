@@ -28,7 +28,7 @@ const strings = {
     "無法登入，請檢查連線。",
     "Sign-in failed. Check your connection.",
   ],
-  webSignout: ["離開網頁", "Sign out"],
+  webSignout: ["離開網頁", "Leave web page"],
   connected: ["已連線", "Connected"],
   connecting: ["連線中", "Connecting"],
   reconnecting: ["連線中斷，準備重連", "Disconnected, reconnecting"],
@@ -62,7 +62,6 @@ const strings = {
   confirmLogout: ["確定要登出 LINE？", "Sign out of LINE?"],
   chats: ["聊天", "Chats"],
   search: ["搜尋聊天", "Search chats"],
-  lineAccount: ["LINE 帳號", "LINE account"],
   emptyTitle: ["選擇一個聊天室", "Choose a conversation"],
   emptyDescription: [
     "從左側選擇對話，繼續聊下去。",
@@ -232,6 +231,16 @@ const strings = {
     "The message could not be found. It may be unsent or too old.",
   ],
   searchJumping: ["正在找這則訊息…", "Finding the message…"],
+  // Account actions at the bottom of the settings dialog.
+  account: ["帳號", "Account"],
+  webSignoutNote: [
+    "只登出這個瀏覽器，LINE 保持登入。",
+    "Signs out this browser only. LINE stays signed in.",
+  ],
+  lineLogoutNote: [
+    "讓 daemon 登出 LINE。面板和所有瀏覽器都要重新掃描 QR code 才能使用。",
+    "Signs the daemon out of LINE. The panel and every browser need a new QR code sign-in.",
+  ],
 };
 
 export function isEnglish(language = "") {

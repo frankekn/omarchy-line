@@ -310,6 +310,7 @@ await runSuite("boot-rtt", async (h) => {
     lifeSessions >= 2 &&
       lifeSessions <= (h.browserName === "chromium" ? 2 : 4),
   );
+  await lifePage.locator("#settings-open").click();
   await lifePage.locator("#web-signout").click();
   await lifePage.locator("#signin-screen").waitFor({ state: "visible" });
   assert.equal(await lifePage.locator("#app").isHidden(), true);

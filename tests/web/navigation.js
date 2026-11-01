@@ -14,7 +14,7 @@ export async function navigation(h) {
   const page = await context.newPage();
   await page.goto(h.base, { waitUntil: "domcontentloaded" });
   await until(
-    async () => (await page.title()) === "enil · 需要登入",
+    async () => (await page.title()) === "Line Web · 需要登入",
     "signed-out title",
   );
   h.step("signed-out-title");
@@ -24,12 +24,12 @@ export async function navigation(h) {
       document.querySelector('link[rel="icon"]').getAttribute("href")
     );
   // Fixture unread: family 3, work 1, lunch 2.
-  await until(async () => (await page.title()) === "(6) enil", "title (6)");
+  await until(async () => (await page.title()) === "(6) Line Web", "title (6)");
   assert.match(await icon(), /^data:image\/svg\+xml,/);
   await h.request({ id: 1, cmd: "hide", chat: "rstub-lunch" });
-  await until(async () => (await page.title()) === "(4) enil", "hidden");
+  await until(async () => (await page.title()) === "(4) Line Web", "hidden");
   await h.request({ id: 2, cmd: "poke", chat: CHAT, text: "nav poke" });
-  await until(async () => (await page.title()) === "(5) enil", "poke");
+  await until(async () => (await page.title()) === "(5) Line Web", "poke");
   h.step("unread-title-and-favicon");
 
   // The switcher: Ctrl+K from the search box, ranking, keys and ARIA.
@@ -122,7 +122,7 @@ export async function navigation(h) {
   await next.click();
   await page.locator("#active-name", { hasText: "STUB 工作 / Deploy" })
     .waitFor();
-  await until(async () => (await page.title()) === "enil", "all read");
+  await until(async () => (await page.title()) === "Line Web", "all read");
   assert.equal(await next.isHidden(), true);
   assert.match(await icon(), /^data:image\/png/);
   await h.request({ id: 3, cmd: "poke", chat: CHAT, text: "again" });

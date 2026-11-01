@@ -342,7 +342,7 @@ export async function shortcutScope(h) {
     tap.sent.filter((frame) => frame.cmd === "sync").length;
   for (
     const selector of [
-      "#web-signout",
+      "#settings-open",
       "#sync",
       ".message-actions button",
       'article[data-message-id="scope-image"] img',
@@ -424,7 +424,7 @@ export async function shortcutFocus(h) {
     await page.evaluate(() => document.activeElement.id),
     "chat-list",
   );
-  await page.locator(".brand").click();
+  await page.locator(".section-heading h1").click();
   assert.equal(
     await page.evaluate(() => document.activeElement.tagName),
     "BODY",
@@ -593,13 +593,15 @@ export async function shortcutFocus(h) {
   await otherPage.getByLabel("Web key").fill(KEY);
   await otherPage.getByRole("button", { name: /^(登入|Sign in)$/ }).click();
   await otherPage.locator("#app:not([hidden])").waitFor();
-  await otherPage.locator("#web-signout").focus();
+  // Before the first state only the corner settings button shows. It hands
+  // focus to the sidebar settings button when the workspace appears.
+  await otherPage.locator("#corner-settings").focus();
   await until(() => heldState, "delayed initial state");
   heldTap.socket.send(JSON.stringify(heldState));
   await otherPage.locator("#chat-list .chat-row").first().waitFor();
   assert.equal(
     await otherPage.evaluate(() => document.activeElement.id),
-    "web-signout",
+    "settings-open",
   );
   await preserved.close();
   h.step("character-shortcuts-require-focused-components");

@@ -145,21 +145,34 @@ export function createLoginView(ctx) {
     renderNotices();
   }
   function connectionStatus(status) {
-    $("connection-text").textContent = webSessionExpired
+    const text = webSessionExpired
       ? ctx.english ? "Sign-in required" : "需要重新登入"
       : t(status);
-    $("connection").classList.toggle(
-      "connected",
-      !webSessionExpired && status === "connected",
-    );
+    // The sidebar shows the status when signed in to LINE; the corner shows
+    // it before the first state and on the LINE sign-in screen.
+    for (const id of ["connection", "corner-connection"]) {
+      $(`${id}-text`).textContent = text;
+      $(id).classList.toggle(
+        "connected",
+        !webSessionExpired && status === "connected",
+      );
+    }
     renderNotices();
     ctx.renderTitle();
   }
   function renderLogin(state) {
     const login = state.login || { status: "idle" },
       loggedIn = login.status === "ok";
-    if ($("workspace").hidden === loggedIn) $("workspace").hidden = !loggedIn;
+    if ($("workspace").hidden === loggedIn) {
+      // The settings button moves between the corner and the sidebar; keep
+      // keyboard focus on it.
+      const from = $(loggedIn ? "corner-settings" : "settings-open");
+      const keep = document.activeElement === from;
+      $("workspace").hidden = !loggedIn;
+      if (keep) $(loggedIn ? "settings-open" : "corner-settings").focus();
+    }
     if ($("line-login").hidden !== loggedIn) $("line-login").hidden = loggedIn;
+    $("line-logout-row").hidden = !loggedIn;
     if (loggedIn) return;
     const text = login.status === "qr"
       ? t("lineQr")
@@ -276,7 +289,9 @@ export function createLoginView(ctx) {
     () => ctx.command("login").catch(displayError),
   );
   $("line-logout").addEventListener("click", () => {
-    if (confirm(t("confirmLogout"))) ctx.command("logout").catch(displayError);
+    if (!confirm(t("confirmLogout"))) return;
+    ctx.closeSettings();
+    ctx.command("logout").catch(displayError);
   });
   $("sync").addEventListener("click", syncNow);
   return {

@@ -109,7 +109,7 @@ export function createSwitcherView(ctx) {
       }
     }
     const count = total ? `(${total > 99 ? "99+" : total}) ` : "";
-    const title = `${count}enil${state ? ` · ${t(state)}` : ""}`;
+    const title = `${count}Line Web${state ? ` · ${t(state)}` : ""}`;
     shownTitle = title;
     if (document.title !== title) document.title = title;
   }

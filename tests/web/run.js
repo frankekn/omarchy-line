@@ -23,6 +23,7 @@ import { eventsCatchup } from "./events-catchup.js";
 import { daemonStatus } from "./daemon-status.js";
 import { messageActions } from "./message-actions.js";
 import { search } from "./search.js";
+import { chrome } from "./chrome.js";
 
 const suites = {
   main,
@@ -48,6 +49,7 @@ const suites = {
   "daemon-status": daemonStatus,
   "message-actions": messageActions,
   search,
+  chrome,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

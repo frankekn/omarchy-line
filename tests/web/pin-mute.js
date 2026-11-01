@@ -80,12 +80,12 @@ async function desktop(h) {
     (await h.state()).chats.find((chat) => chat.mid === mid);
 
   // Fixture unread: family 3, work 1, lunch 2.
-  await until(async () => (await page.title()) === "(6) enil", "title (6)");
+  await until(async () => (await page.title()) === "(6) Line Web", "title (6)");
 
   // Muting keeps the row and its count, dims the badge, and leaves the
   // unread group and the tab title.
   await h.request({ id: 1, cmd: "mute", chat: "cstub-family" });
-  await until(async () => (await page.title()) === "(3) enil", "title (3)");
+  await until(async () => (await page.title()) === "(3) Line Web", "title (3)");
   const family = row("cstub-family");
   await family.locator(".badge.quiet", { hasText: "3" }).waitFor();
   await family.locator(".row-mark-icon.muted").waitFor();
@@ -147,7 +147,7 @@ async function desktop(h) {
       "STUB 家庭群組",
     );
   }
-  await until(async () => (await page.title()) === "enil", "all read");
+  await until(async () => (await page.title()) === "Line Web", "all read");
   await next.waitFor({ state: "hidden" });
   assert.equal(Number(await family.locator(".badge").textContent()), 3);
   h.step("next unread skips a muted chat");

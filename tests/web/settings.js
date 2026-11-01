@@ -294,7 +294,7 @@ async function narrow(h) {
       [
         document.scrollingElement,
         ...document.querySelectorAll(
-          ".app-bar, .sidebar, .chat-header, .composer, .settings",
+          ".sidebar, .sidebar-bottom, .chat-header, .composer, .settings",
         ),
       ].flatMap((node) =>
         node && node.getClientRects().length &&
