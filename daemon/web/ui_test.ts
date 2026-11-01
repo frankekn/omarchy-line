@@ -1632,3 +1632,50 @@ Deno.test("registry rejects collisions and unknown reads and freezes context", (
   );
   assertThrows(() => registry.provide("late", { extra: 1 }), TypeError);
 });
+
+Deno.test("incremental events frames move the watermark forward only", () => {
+  const model = createModel();
+  const loads: string[] = [];
+  model.active = "c";
+  model.connected = true;
+  const state = createStateController({
+    model,
+    isViewingChat: () => false,
+    loadHistory: (chat: string) => loads.push(chat),
+    reconcilePending: () => {},
+    renderMessages: () => {},
+  });
+  const read = (seq: number) => ({ seq, kind: "read", chat: "other" });
+  // A first page gets no events, only the ring's last seq.
+  state.onFrame({
+    web: "events",
+    events: { bootId: "boot-a", events: [], seq: 40 },
+  });
+  assertEquals([model.boot, model.seq, model.eventsSeen], ["boot-a", 40, true]);
+  // Old pushes below the watermark are ignored; new ones apply.
+  state.onFrame({ boot: "boot-a", event: read(39) });
+  assertEquals(model.seq, 40);
+  state.onFrame({ boot: "boot-a", event: read(41) });
+  assertEquals(model.seq, 41);
+  // Reconnect: only the events after 41, and no gap.
+  state.onFrame({
+    web: "events",
+    events: { bootId: "boot-a", events: [read(42), read(43)], seq: 43 },
+  });
+  assertEquals(model.seq, 43);
+  assertEquals(loads, []);
+  // A file that lags a live push does not move the watermark back.
+  state.onFrame({
+    web: "events",
+    events: { bootId: "boot-a", events: [], seq: 42 },
+  });
+  assertEquals(model.seq, 43);
+  // A daemon restart starts seqs again at 1 under a new boot: the whole
+  // ring applies, and the open chat reloads.
+  state.onFrame({
+    web: "events",
+    events: { bootId: "boot-b", events: [read(1), read(2)], seq: 2 },
+  });
+  assertEquals([model.boot, model.seq], ["boot-b", 2]);
+  assertEquals(loads, ["c"]);
+});

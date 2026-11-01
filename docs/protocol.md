@@ -325,6 +325,29 @@ outstanding commands close the connection. This reply-matching `id` is
 separate from the send's `requestId` below. The bridge refuses clipboard
 commands and accepts `sendFile` only for an upload owned by the web server.
 
+### Incremental event catch-up
+
+The page names its event position in a second offered subprotocol. The
+bridge reads it but never selects it, so the `/api/ws` URL does not change:
+
+- `enil-events-v1.tail`: the page has seen no events yet (first connection).
+  The events frame has an empty `events` list. A page loads history when it
+  opens a chat, so it needs only the watermark, not the 200-entry ring.
+- `enil-events-v1.<bootId>.<seq>`: the page's last applied event. If
+  `bootId` matches `events.json`, the frame has only the entries with a
+  larger `seq`. A gap that the ring dropped shows as a first `seq` above
+  `seq + 1`, and the page reloads the open chat as before. A page ahead of the
+  file (a pushed event that the coalesced write has not flushed) gets no
+  entries and keeps its watermark; `seq` never goes back inside one boot.
+  A different `bootId` means the daemon restarted and its `seq` began again
+  at 1: the frame has the whole ring.
+
+With a position, the frame is
+`{ "web": "events", "events": { "bootId": …, "updatedAt": …, "events": [ … ],
+"seq": N } }`. `seq` is the largest `seq` in the file (0 when the ring is
+empty). The page raises its watermark to it and never lowers it. A page that
+offers no position, or a malformed one, gets the file verbatim as before.
+
 ## Push frames
 
 While a panel holds the socket, the daemon also writes two kinds of **push

@@ -82,6 +82,10 @@ export function createStateController(ctx) {
       ctx.loadHistory(model.active, ctx.isViewingChat());
     }
     for (const event of events) consumeEvent(event, boot);
+    // An incremental frame carries the ring's last seq. A first page gets
+    // no events, only this watermark; a page ahead of the file keeps its own.
+    const last = Number(payload.seq);
+    if (Number.isSafeInteger(last) && last > model.seq) model.seq = last;
     model.eventsSeen = true;
   }
   function reconcilePending(chat, rows) {

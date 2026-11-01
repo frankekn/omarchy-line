@@ -19,6 +19,7 @@ import { messageWindow } from "./message-window.js";
 import { settings } from "./settings.js";
 import { navigation } from "./navigation.js";
 import { pinMute } from "./pin-mute.js";
+import { eventsCatchup } from "./events-catchup.js";
 
 const suites = {
   main,
@@ -40,6 +41,7 @@ const suites = {
   settings,
   navigation,
   "pin-mute": pinMute,
+  "events-catchup": eventsCatchup,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

@@ -3,12 +3,15 @@
  * connection on the daemon's unix socket, so the page gets exactly what a
  * panel gets (the same replies, the same push frames, the same ordering), plus
  * the two files a panel would watch: state.json whenever it changes, and
- * events.json once per connection to catch up.
+ * events.json once per connection to catch up: the whole ring for a page
+ * that names no position, otherwise only what that page has not seen.
  *
  * Frames to the browser: daemon lines verbatim, and
  *   {"web":"state",...,"state":<state.json>} on connect and full updates
  *   {"web":"state-delta",...}                 for smaller large-state updates
  *   {"web":"events","events":<events.json>} on connect, when the file exists
+ *     (a page that offers an enil-events-v1 subprotocol gets only the part
+ *     after its position, plus the ring's last `seq`: see eventsFrame)
  * Close code 4001 means the daemon is not there; the page reconnects.
  *
  * What the bridge refuses: any command the page does not send, the
@@ -24,6 +27,13 @@ import type { Uploads } from "./files.ts";
 const STATE_POLL_MS = 500;
 const MIN_DELTA_STATE_BYTES = 20 * 1024;
 const STATE_DELTA_PROTOCOL = "enil-state-delta-v1";
+/**
+ * The page's event position rides in an extra offered subprotocol, so the
+ * /api/ws URL stays the same: `enil-events-v1.tail` for a page that has seen
+ * no event yet, `enil-events-v1.<bootId>.<seq>` for one that has. The server
+ * never selects it; it only reads it.
+ */
+const EVENTS_CURSOR_PREFIX = "enil-events-v1.";
 /**
  * A write that changes only diagnostics still goes out once this much newer
  * than the last one sent, so the page's 180 s `updatedAt` check (the offline
@@ -339,13 +349,62 @@ export class StateFeed {
   }
 }
 
-function isJson(text: string): boolean {
-  try {
-    JSON.parse(text);
-    return true;
-  } catch {
-    return false;
+/** Where a page's event ring stands: `tail` has seen no event yet. */
+export type EventsCursor = "tail" | { boot: string; seq: number };
+
+/** The cursor from offered subprotocols; null keeps the legacy full ring. */
+export function eventsCursor(header: string | null): EventsCursor | null {
+  for (const offered of (header ?? "").split(",")) {
+    const protocol = offered.trim();
+    if (!protocol.startsWith(EVENTS_CURSOR_PREFIX)) continue;
+    const value = protocol.slice(EVENTS_CURSOR_PREFIX.length);
+    if (value === "tail") return "tail";
+    const match = /^([A-Za-z0-9_-]{1,128})\.(0|[1-9]\d{0,14})$/.exec(value);
+    if (match) return { boot: match[1], seq: Number(match[2]) };
   }
+  return null;
+}
+
+/**
+ * The events frame for one connection, or null when events.json is not
+ * JSON. Without a cursor it is the file verbatim (pages that predate the
+ * cursor). With one, `events.seq` is the ring's last seq, and:
+ * - `tail`: no events. A first page loads history when it opens a chat, so
+ *   it needs only the watermark, not 200 old events.
+ * - same boot: only events after the page's seq. A page ahead of the file
+ *   (a live push that the 250 ms coalesced write has not flushed) gets none
+ *   and keeps its own watermark.
+ * - another boot (the daemon restarted, and its seqs started again at 1):
+ *   the whole ring, as before.
+ */
+export function eventsFrame(
+  text: string,
+  cursor: EventsCursor | null,
+): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!cursor) return `{"web":"events","events":${text}}`;
+  const file = object(parsed);
+  const all = Array.isArray(file?.events) ? file.events : [];
+  let last = 0;
+  for (const event of all) {
+    const seq = Number(object(event)?.seq);
+    if (Number.isFinite(seq) && seq > last) last = seq;
+  }
+  const bootId = typeof file?.bootId === "string" ? file.bootId : "";
+  let events: unknown[] = all;
+  if (cursor === "tail") events = [];
+  else if (bootId && cursor.boot === bootId) {
+    events = all.filter((event) => Number(object(event)?.seq) > cursor.seq);
+  }
+  return JSON.stringify({
+    web: "events",
+    events: { ...file, bootId, events, seq: last },
+  });
 }
 
 export interface BridgeDeps {
@@ -358,8 +417,10 @@ export interface BridgeDeps {
 
 /** Upgrade `req` and bridge it; the caller has already checked who it is. */
 export function bridge(req: Request, deps: BridgeDeps): Response {
-  const delta = (req.headers.get("sec-websocket-protocol") ?? "").split(",")
+  const offered = req.headers.get("sec-websocket-protocol");
+  const delta = (offered ?? "").split(",")
     .some((protocol) => protocol.trim() === STATE_DELTA_PROTOCOL);
+  const cursor = eventsCursor(offered);
   const { socket: ws, response } = Deno.upgradeWebSocket(req, {
     idleTimeout: 60,
     ...(delta ? { protocol: STATE_DELTA_PROTOCOL } : {}),
@@ -494,8 +555,11 @@ export function bridge(req: Request, deps: BridgeDeps): Response {
       return;
     }
     await deps.feed.add(send, delta);
-    const events = await Deno.readTextFile(deps.eventsPath).catch(() => "");
-    if (isJson(events)) send(`{"web":"events","events":${events}}`);
+    const events = eventsFrame(
+      await Deno.readTextFile(deps.eventsPath).catch(() => ""),
+      cursor,
+    );
+    if (events) send(events);
     ready();
     try {
       await fromDaemon(conn);

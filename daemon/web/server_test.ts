@@ -1627,3 +1627,92 @@ Deno.test("the bridge forwards only the commands the page sends", async () => {
     await Deno.remove(stateDir, { recursive: true });
   }
 });
+
+type EventsWire = {
+  web: string;
+  events: { bootId: string; seq: number; events: { seq: number }[] };
+};
+
+Deno.test("the bridge sends only the events after the page's position", async () => {
+  const { stateDir, web, server, addr } = await served();
+  const daemon = Deno.listen({ transport: "unix", path: `${stateDir}/sock` });
+  const conns: Deno.Conn[] = [];
+  (async () => {
+    for await (const conn of daemon) conns.push(conn);
+  })().catch(() => {});
+  const ring = (bootId: string, seqs: number[]) =>
+    JSON.stringify({
+      bootId,
+      updatedAt: 1,
+      events: seqs.map((seq) => ({ seq, at: seq, kind: "read", chat: "c" })),
+    });
+  try {
+    const cookie = await signedInCookie(web, addr);
+    const port = server.addr.port;
+    const eventsFrame = async (protocols?: string[]) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ws`, {
+        headers: { cookie, origin: `http://127.0.0.1:${port}` },
+        ...(protocols ? { protocols } : {}),
+      });
+      try {
+        return await new Promise<{ raw: string; frame: EventsWire }>(
+          (resolve, reject) => {
+            ws.onmessage = (ev) => {
+              const frame = JSON.parse(ev.data);
+              if (frame.web === "events") resolve({ raw: ev.data, frame });
+            };
+            ws.onclose = () => reject(new Error("closed before events"));
+          },
+        );
+      } finally {
+        ws.onclose = null;
+        ws.close();
+      }
+    };
+    const seqs = (frame: EventsWire) =>
+      frame.events.events.map((event) => event.seq);
+    const file = ring("boot-a", [1, 2, 3]);
+    await Deno.writeTextFile(`${stateDir}/events.json`, file);
+
+    // A page that names no position gets the file verbatim, as before.
+    const legacy = await eventsFrame();
+    assertEquals(legacy.raw, `{"web":"events","events":${file}}`);
+
+    // A first page gets only the watermark.
+    const tail = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.tail",
+    ]);
+    assertEquals(seqs(tail.frame), []);
+    assertEquals(tail.frame.events.seq, 3);
+    assertEquals(tail.frame.events.bootId, "boot-a");
+
+    // A reconnecting page gets only what it has not seen.
+    const resumed = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.boot-a.2",
+    ]);
+    assertEquals(seqs(resumed.frame), [3]);
+    assert(resumed.raw.length < legacy.raw.length);
+
+    // The daemon restarted: its seqs began again at 1 under a new boot, so
+    // the old position means nothing and the whole ring is sent.
+    await Deno.writeTextFile(`${stateDir}/events.json`, ring("boot-b", [1, 2]));
+    const restarted = await eventsFrame([
+      "enil-state-delta-v1",
+      "enil-events-v1.boot-a.3",
+    ]);
+    assertEquals(seqs(restarted.frame), [1, 2]);
+    assertEquals(restarted.frame.events.bootId, "boot-b");
+  } finally {
+    for (const conn of conns) {
+      try {
+        conn.close();
+      } catch { /* closed by the bridge */ }
+    }
+    web.close();
+    daemon.close();
+    await server.shutdown();
+    await Deno.remove(stateDir, { recursive: true });
+  }
+});
