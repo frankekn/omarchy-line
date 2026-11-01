@@ -189,6 +189,10 @@ export function createSwitcherView(ctx) {
     renderResults();
     dialog.showModal();
     input.focus();
+    // WebKit can move focus to the dialog after a click opens it.
+    requestAnimationFrame(() => {
+      if (dialog.open && document.activeElement === dialog) input.focus();
+    });
   }
   function close(focusBack = true) {
     if (!dialog.open) return;
@@ -230,6 +234,13 @@ export function createSwitcherView(ctx) {
     if (option) choose([...list.children].indexOf(option));
   });
   dialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    close();
+  });
+  // WebKit can leave focus on the dialog itself and then skip the cancel
+  // event for a repeated Escape, which left the switcher open.
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || event.isComposing) return;
     event.preventDefault();
     close();
   });

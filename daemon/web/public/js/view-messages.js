@@ -1,6 +1,6 @@
 // Message list DOM, actions and scroll anchoring. Uses protocol and DOM
 // helpers.
-import { $, el, formatTime, richText } from "./dom.js";
+import { $, el, formatTime, icon, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
@@ -289,7 +289,8 @@ export function createMessagesView(ctx) {
           });
           picker.append(button);
         }
-        const undo = el("button", "", "×");
+        const undo = el("button");
+        undo.append(icon("close"));
         undo.type = "button";
         undo.title = t("undoReaction");
         undo.setAttribute("aria-label", t("undoReaction"));

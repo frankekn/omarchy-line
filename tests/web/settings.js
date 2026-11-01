@@ -249,8 +249,17 @@ async function contrast(h) {
       await page.evaluate((theme) => {
         globalThis.enilSettings.apply({ theme, textSize: 100, sound: false });
       }, theme);
-      for (const open of [false, true]) {
-        if (open) await page.locator("#settings-open").click();
+      // Settings, and the quick switcher with its accent-filled choice.
+      for (const open of [null, "#settings-open", "#switcher-open"]) {
+        if (open) await page.locator(open).click();
+        if (open === "#switcher-open") {
+          await page.locator("#switcher-list [aria-selected=true]").waitFor();
+          // Typing must reach the filter, however the switcher opened.
+          await page.waitForFunction(() =>
+            document.activeElement?.id === "switcher-input"
+          );
+          await page.keyboard.press("ArrowDown");
+        }
         const violations = await page.evaluate(async () => {
           const scan = await globalThis.axe.run(document, {
             runOnly: { type: "rule", values: ["color-contrast"] },
@@ -265,9 +274,13 @@ async function contrast(h) {
         assert.deepEqual(
           violations,
           [],
-          `${theme} ${colorScheme}${open ? " settings" : ""}`,
+          `${theme} ${colorScheme} ${open ?? ""}`,
         );
-        if (open) await page.keyboard.press("Escape");
+        if (open) {
+          await page.keyboard.press("Escape");
+          const dialog = open === "#switcher-open" ? "#switcher" : "#settings";
+          await page.locator(dialog).waitFor({ state: "hidden" });
+        }
       }
       h.step(
         `axe contrast ${theme}${theme === "system" ? ` ${colorScheme}` : ""}`,

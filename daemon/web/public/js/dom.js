@@ -7,6 +7,17 @@ export function el(tag, className, text) {
   if (text !== undefined) node.textContent = String(text);
   return node;
 }
+/** A stroke icon from the sprite in index.html. */
+export function icon(name) {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(ns, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.append(use);
+  return svg;
+}
 export const fileUrl = (path, download = false, name = "") =>
   `/api/file?path=${encodeURIComponent(String(path))}${
     download ? "&download=1" : ""
