@@ -127,6 +127,26 @@ and a notice offers a sign-in link. The page and composer stay in place so you
 can copy a draft before signing in. Drafts already saved in browser storage
 remain available after sign-in.
 
+### Settings
+
+**Settings** in the top bar opens a dialog with three options. Each browser
+keeps its own settings in local storage; the server does not store them.
+
+- **Text size** scales the whole page: 85%, 100%, 115%, 130% or 150%, where
+  100% is 14 px.
+- **Theme** is **Match system** by default, which uses the green light or dark
+  colors from the system setting. The other themes take their colors from
+  Omarchy themes: Catppuccin, Catppuccin Latte, Everforest, Flexoki Light,
+  Gruvbox, Kanagawa, Matte Black, Nord, Rosé Pine and Tokyo Night. Some text
+  colors are adjusted so that all text meets WCAG AA contrast.
+- **New message sound** is off by default. When it is on, the page plays a
+  short tone for a new message from someone else. It does not play for your
+  own messages, hidden chats, or the chat that you are viewing while the
+  window has focus. One chat plays at most one tone every 2 seconds.
+
+Changes apply immediately. Esc or the close button closes the dialog and
+returns focus to **Settings**.
+
 ## Known limitations
 
 - The page reaches the daemon only through the exact address in
