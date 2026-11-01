@@ -254,6 +254,10 @@ async function contrast(h) {
         if (open) await page.locator(open).click();
         if (open === "#switcher-open") {
           await page.locator("#switcher-list [aria-selected=true]").waitFor();
+          // Typing must reach the filter, however the switcher opened.
+          await page.waitForFunction(() =>
+            document.activeElement?.id === "switcher-input"
+          );
           await page.keyboard.press("ArrowDown");
         }
         const violations = await page.evaluate(async () => {
