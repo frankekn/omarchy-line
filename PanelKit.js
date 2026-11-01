@@ -582,6 +582,7 @@ function loginErrorDetail(loginInfo, tr) {
   if (reason === "token_expired") return tr("login.tokenExpired")
   if (reason === "network") return tr("login.network")
   if (reason === "restricted") return tr("login.restricted")
+  if (reason === "qr_expired") return tr("login.qrExpired")
   return loginInfo ? String(loginInfo.error || "") : ""
 }
 

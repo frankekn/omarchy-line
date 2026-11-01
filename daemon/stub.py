@@ -1443,6 +1443,8 @@ def search_messages(req):
 def handle(req):
     global session_generation
     cmd = req.get("cmd")
+    if cmd == "ping":
+        return {"ok": True}
     if cmd == "login":
         with lock:
             # Same gate as the daemon: startLogin() claims it in its first

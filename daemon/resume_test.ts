@@ -20,7 +20,14 @@ Deno.test("failed session setup retires its candidate through logout", async () 
   );
   assertEquals(
     source.match(/logoutClaimed\(terminal, terminal, candidate\);/g)?.length,
-    2,
+    1,
+    "resume retires its candidate according to token validity",
+  );
+  assertEquals(
+    source.match(/logoutClaimed\(candidate !== null, terminal, candidate\);/g)
+      ?.length,
+    1,
+    "QR login revokes a known candidate independently of the commit boundary",
   );
   assert(!source.includes("function abandonFailedClient("));
   assertEquals(

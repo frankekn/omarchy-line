@@ -42,7 +42,8 @@
     "qrPng": "…/qr-<ts>.png",          // 只有 status=qr
     "pin": "…",                        // 只有 status=pin
     "error": "…",                      // 只有 status=error，給人看的訊息
-    "reason": "…",                     // 選用，status=error 時的分類
+    "reason": "…",                     // 選用，status=error 時的分類：
+    // network|token_expired|restricted|qr_expired|unknown
     // 選用；logout|resume|manual，這次狀態屬於哪一種嘗試
     "attempt": "logout",
     "settled": true                     // 選用；true 代表登入／登出收尾已完成
@@ -227,9 +228,15 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `unpin` | `chat` | 無 |
 | `mute` | `chat` | 無（不發桌面通知，記在 `muted.json`） |
 | `unmute` | `chat` | 無 |
+| `ping` | 無 | 無（只查本機事件迴圈是否回應，不向 LINE 發請求） |
 | `login` | 無 | 無 |
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
+
+`ping` 不需要 LINE session，不做網路呼叫，直接回 `{ok:true}`。恢復流程也接受舊
+daemon 對未知指令的拒絕，只要是這個請求的對應回覆。它檢查本機是否回應，不代表
+LINE 連線正常。`login.reason: "qr_expired"` 只代表 QR/PIN 輪詢額度已耗盡；掃碼後
+載入 profile 等一般請求逾時仍是 `network`。
 
 web server 會檢查請求的 `Host` 是否符合 `ENIL_WEB_ADDR`，不符時回 421。比較前會將
 URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
@@ -310,7 +317,7 @@ URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
 不出去或對端讀太慢時 daemon 直接關掉這條連線，面板重連後靠 `events.json` 和
 `state.json` 補齊。
 
-未登入時除了 `login`、`logout`、`hide`、`unhide`、`discardClipboardImage` 以外都回
+未登入時除了 `ping`、`login`、`logout`、`hide`、`unhide`、`discardClipboardImage` 以外都回
 `{ok:false, error:"尚未登入"}`；認不得的 cmd 回 `unknown cmd: <cmd>`。
 `hide`／`unhide` 在門檻之前：它只寫我們自己的檔案、不碰 LINE，沒有理由因為 session
 還沒接上就拒絕。兩個都是**冪等**的（已經隱藏的再隱藏一次照樣 `{ok:true}`，只是不寫
