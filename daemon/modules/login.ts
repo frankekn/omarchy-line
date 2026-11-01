@@ -104,6 +104,7 @@ import {
   errorLine,
   errorText,
   NET_DOWN_TEXT,
+  qrLoginReason,
   RESTRICTED_TEXT,
   TOKEN_EXPIRED_TEXT,
 } from "./text.ts";
@@ -200,9 +201,10 @@ async function startLogin(): Promise<boolean> {
   // The boolean is what handle() needs: a refusal used to be silent, so a
   // click landing during a resume retry left the panel with nothing to show.
   if (!beginLogin("manual")) return false;
-  const storage = await sessionStorage();
   let candidate: Client | null = null;
+  let committed = false;
   try {
+    const storage = await (await sessionStorage()).stageLogin();
     await setLogin("starting", { attempt: "manual" });
     const c = await loginWithQR({
       async onReceiveQRUrl(url: string) {
@@ -222,21 +224,26 @@ async function startLogin(): Promise<boolean> {
       },
     }, { device: DEVICE, storage, fetch: guardedFetch });
     candidate = c;
+    await storage.commit(c.authToken);
+    committed = true;
     await onLoggedIn(c);
   } catch (e) {
-    // Setup may fail after onLoggedIn populated the account and its caches.
-    // Only a partially established replacement owns credentials to revoke.
-    // A QR failure before loginWithQR returns must leave the previous stored
-    // session and its drafts available for another attempt.
-    const terminal = candidate !== null;
-    await logoutClaimed(terminal, terminal, candidate);
+    // Before commit, candidate cleanup only touches its in-memory storage.
+    // No candidate means readiness failed before the wrapper returned one.
+    const terminal = committed;
+    try {
+      await logoutClaimed(candidate !== null, terminal, candidate);
+    } catch (cleanupError) {
+      console.error("[login] cleanup failed:", errorLine(cleanupError));
+      releaseStateWrites();
+    }
     // `error` stays the raw text for backward compat; `reason` is what the
     // panel turns into advice. The teardown is transient, not settled: the
-    // stored credentials this attempt never tested survive it, so the next
-    // boot still resumes the previous account and its durable local state.
+    // previous credentials survive any pre-commit failure, so the next boot
+    // can still resume that account and its durable local state.
     await setLogin("error", {
       error: errorText(e),
-      reason: classifyLoginError(e),
+      reason: qrLoginReason(e),
       attempt: "manual",
       settled: terminal,
     });

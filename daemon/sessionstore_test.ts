@@ -8,6 +8,54 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import { SessionStore } from "./sessionstore.ts";
 
+Deno.test("staged QR credentials do not inherit old access or refresh tokens", async () => {
+  await withDir(async (dir) => {
+    const path = `${dir}/storage.json`;
+    const before = JSON.stringify({
+      ".auth": "synthetic-old-access",
+      refreshToken: "synthetic-old-refresh",
+      expire: 10,
+      e2eeKeys: { keyId: 1 },
+    });
+    await Deno.writeTextFile(path, before);
+    const store = new SessionStore(path);
+    const staged = await store.stageLogin();
+    assertEquals(await staged.get(".auth"), undefined);
+    assertEquals(await staged.get("refreshToken"), undefined);
+    assertEquals(await staged.get("expire"), undefined);
+    assertEquals(await staged.get("e2eeKeys"), { keyId: 1 });
+    assertEquals(await Deno.readTextFile(path), before);
+    await staged.commit("synthetic-new-access");
+    assertEquals(await store.getAll(), {
+      ".auth": "synthetic-new-access",
+      e2eeKeys: { keyId: 1 },
+    });
+  });
+});
+
+Deno.test("writes queued during staged commit survive through the same live storage", async () => {
+  await withDir(async (dir) => {
+    const store = new SessionStore(`${dir}/storage.json`);
+    const staged = await store.stageLogin();
+    await staged.set("refreshToken", "synthetic-new-refresh");
+    await staged.set("expire", 20);
+    const commit = staged.commit("synthetic-new-access");
+    const access = staged.set(".auth", "synthetic-rotated-access");
+    const refresh = staged.set("refreshToken", "synthetic-rotated-refresh");
+    const expire = staged.set("expire", 30);
+    await Promise.all([commit, access, refresh, expire]);
+    assertEquals(await store.getAll(), {
+      ".auth": "synthetic-rotated-access",
+      refreshToken: "synthetic-rotated-refresh",
+      expire: 30,
+    });
+    await store.set("future", "synthetic-later-write");
+    await staged.commit("synthetic-stale-access");
+    assertEquals(await staged.get(".auth"), "synthetic-rotated-access");
+    assertEquals(await staged.get("future"), "synthetic-later-write");
+  });
+});
+
 async function withDir(body: (dir: string) => Promise<void>): Promise<void> {
   const dir = await Deno.makeTempDir({ prefix: "enil-sessionstore-test-" });
   try {

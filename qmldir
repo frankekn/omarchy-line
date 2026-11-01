@@ -1,1 +1,2 @@
 singleton DraftWriter 1.0 DraftWriter.qml
+singleton DaemonSupervisor 1.0 DaemonSupervisor.qml
