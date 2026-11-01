@@ -272,7 +272,11 @@ async function contrast(h) {
           [],
           `${theme} ${colorScheme} ${open ?? ""}`,
         );
-        if (open) await page.keyboard.press("Escape");
+        if (open) {
+          await page.keyboard.press("Escape");
+          const dialog = open === "#switcher-open" ? "#switcher" : "#settings";
+          await page.locator(dialog).waitFor({ state: "hidden" });
+        }
       }
       h.step(
         `axe contrast ${theme}${theme === "system" ? ` ${colorScheme}` : ""}`,
