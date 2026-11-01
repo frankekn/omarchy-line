@@ -145,6 +145,12 @@ and a notice offers a sign-in link. The page and composer stay in place so you
 can copy a draft before signing in. Drafts already saved in browser storage
 remain available after sign-in.
 
+After a dropped connection, the page retries after 1 s, and doubles the wait
+up to 15 s. When the network comes back or the tab becomes visible, it
+reconnects at once, one time per outage. The page's HTML, CSS and JavaScript
+are sent with Brotli or gzip when the browser accepts it. Media from
+`/api/file` is already compressed and is sent as is.
+
 ### Settings
 
 **Settings** in the top bar opens a dialog with three options. Each browser

@@ -21,6 +21,9 @@ import { makeStateDecoder } from "./state-wire.js";
  * @param {() => void} [options.onExpired]
  * @param {() => string} [options.offlineMessage]
  * @param {() => string} [options.errorMessage]
+ * @param {EventTarget} [options.network] fires `online`: the window
+ * @param {EventTarget & {visibilityState?: string}} [options.visibility]
+ *   fires `visibilitychange`: the document
  */
 export function createConnection(
   {
@@ -36,8 +39,24 @@ export function createConnection(
     onExpired = () => {},
     offlineMessage = () => "Disconnected",
     errorMessage = () => "Request failed",
+    network = globalThis.window,
+    visibility = globalThis.document,
   },
 ) {
+  // The network coming back or the tab becoming visible skips the backoff
+  // wait once per outage. Later attempts in the same outage use the backoff,
+  // so repeated events cannot cause a reconnect storm.
+  let wokeEarly = false;
+  function wake() {
+    if (!model.signedIn || model.connected || wokeEarly) return;
+    if (visibility && visibility.visibilityState === "hidden") return;
+    // Only a pending retry is skipped: a socket that is still connecting is
+    // left alone, so two events in a row open one socket.
+    if (model.socket && model.socket.readyState < 2) return;
+    if (model.retryTimer == null) return;
+    wokeEarly = true;
+    connect();
+  }
   function command(cmd, args = {}) {
     return new Promise((resolve, reject) => {
       if (
@@ -73,6 +92,7 @@ export function createConnection(
   function connect(quiet = false) {
     if (!model.signedIn) return;
     cancel(model.retryTimer);
+    model.retryTimer = null;
     if (!quiet) onStatus(model.everConnected ? "reconnecting" : "connecting");
     const socket = new WebSocketClass(url, "enil-state-delta-v1");
     const decodeState = makeStateDecoder();
@@ -115,6 +135,7 @@ export function createConnection(
         model.connected = true;
         model.everConnected = true;
         model.retryDelay = 1000;
+        wokeEarly = false;
         onStatus("connected");
       }
       if (typeof frame.id === "number" && model.requests.has(frame.id)) {
@@ -142,15 +163,28 @@ export function createConnection(
       }
     });
   }
+  function listen(on) {
+    if (on) {
+      network?.addEventListener("online", wake);
+      visibility?.addEventListener("visibilitychange", wake);
+    } else {
+      network?.removeEventListener("online", wake);
+      visibility?.removeEventListener("visibilitychange", wake);
+    }
+  }
   function stop() {
     model.signedIn = false;
+    listen(false);
     cancelSessionCheck();
     cancel(model.retryTimer);
+    model.retryTimer = null;
     model.socket?.close();
   }
   function start() {
     cancelSessionCheck();
     model.signedIn = true;
+    wokeEarly = false;
+    listen(true);
     connect();
   }
   let sessionCheck;
