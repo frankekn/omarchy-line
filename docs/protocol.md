@@ -27,6 +27,8 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
 | `media/public-images/` | sticker and FLEX image cache (public CDN URLs, same sweep as `media/`) |
 | `avatars.json` | which mid's which avatar version was already handled, so a restart doesn't refetch (daemon-only) |
 | `hidden.json` | hidden-chat mids, `{"mids":[…]}` (atomic write, daemon-only, cap 1000) |
+| `pinned.json` | pinned-chat mids, same shape and rules as `hidden.json` |
+| `muted.json` | muted-chat mids, same shape and rules as `hidden.json` |
 | `panel-stickers.json` | recent stickers, per account (written by the **plugin**, atomic; the daemon doesn't read it) |
 | `qr-<ts>.png` | login QR; a fresh filename each time (QML `Image` won't reload a same-named file) |
 
@@ -56,7 +58,9 @@ Both sides live in `~/.local/state/enil/` (or `$XDG_STATE_HOME/enil`):
       // optional, absent means no avatar set
       "avatarPath": "…/media/avatars/<sha1>.jpg",
       // optional, only on hidden chats
-      "hidden": true }
+      "hidden": true,
+      // optional, only on pinned / muted chats
+      "pinned": true, "muted": true }
   ],
   // bumps only when chats/chatList change; heartbeats don't
   "chatsRevision": 12,
@@ -163,6 +167,13 @@ search, but doesn't draw them normally. The daemon stamps the key at
 state-write time from `hidden.json`. The chat-summary cache itself doesn't
 carry it, otherwise a stale cached answer would keep hiding state wrong.
 
+`pinned` and `muted` follow the same rules, from `pinned.json` and
+`muted.json`: present only when true, stamped at state-write time and on
+single-row pushes. They are row keys, not a list of ids at the top level,
+because a web `state-delta` frame repeats every top-level field on each
+update but carries only the rows that changed. A muted chat gets no desktop
+notification; its row and `unread` are unchanged.
+
 ## `wanted`: the chat opened from a notification
 
 On a desktop-notification click, the daemon writes one `wanted` entry before
@@ -255,6 +266,10 @@ Socket commands (one JSON line per request, replies
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | none |
 | `hide` | `chat` | none (removes the row from the list, recorded in `hidden.json`) |
 | `unhide` | `chat` | none |
+| `pin` | `chat` | none (sorts the row first on the web page, recorded in `pinned.json`) |
+| `unpin` | `chat` | none |
+| `mute` | `chat` | none (no desktop notification, recorded in `muted.json`) |
+| `unmute` | `chat` | none |
 | `login` | none | none |
 | `logout` | none | none |
 | `sync` | none | `{ chats, link, at }` |
@@ -340,6 +355,11 @@ only touch our own file and never LINE, so a missing session is no reason to
 refuse. Both are **idempotent** (hiding an already-hidden chat still returns
 `{ok:true}`, just without a write), and an empty `chat` answers
 `{ok:false, error:"沒有指定是哪一間聊天室"}`.
+
+`pin`, `unpin`, `mute` and `unmute` follow the same rules as `hide`/`unhide`:
+they also work while logged out, are idempotent, refuse an empty `chat` with
+the same error, and refuse an id that is not a chat id with
+`{ok:false, error:"不支援的聊天室"}`.
 
 `history` may answer from a non-empty local cache page, including one shorter
 than `count`; that length does not prove that older messages do not exist.

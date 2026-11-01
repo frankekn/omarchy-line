@@ -25,6 +25,8 @@
 | `media/public-images/` | 貼圖與 FLEX 圖片快取（公開 CDN 網址，掃法跟 `media/` 同一套） |
 | `avatars.json` | 哪個 mid 的哪一版大頭貼已經處理過，重開不用重抓（daemon 專用） |
 | `hidden.json` | 被隱藏的聊天室 mid，`{"mids":[…]}`（原子寫入，daemon 專用，上限 1000） |
+| `pinned.json` | 釘選的聊天室 mid，格式和規則同 `hidden.json` |
+| `muted.json` | 靜音的聊天室 mid，格式和規則同 `hidden.json` |
 | `panel-stickers.json` | 最近用過的貼圖，照帳號分（**外掛**寫的，原子寫入；daemon 不讀） |
 | `qr-<ts>.png` | 登入 QR；每次產生都換檔名（同名檔 QML `Image` 不會重載） |
 
@@ -50,7 +52,9 @@
       "lastText": "…", "lastTime": 1735000000000, "lastFrom": "u…",
       "avatarPath": "…/media/avatars/<sha1>.jpg",    // 選用，沒有就是沒設大頭貼
       // 選用，只有被隱藏的那幾間才有
-      "hidden": true }
+      "hidden": true,
+      // 選用，只有釘選／靜音的那幾間才有
+      "pinned": true, "muted": true }
   ],
   "chatsRevision": 12,                 // chats／chatList 有變才遞增；心跳不動
   // 選用；false 代表伺服器還有下一頁
@@ -129,6 +133,11 @@ durable 草稿；可重試的暫態失敗（`network`／未分類，或還沒建
 （不是 `false`），舊的面板照樣畫得出來。被隱藏的聊天**仍然留在 `chats` 裡**，因為面板
 要靠它做搜尋，只是平常不畫。daemon 在每次寫 state 的當下才蓋上這個鍵，來源是
 `hidden.json`；聊天摘要本身的快取不帶它，不然隱藏之後那份快取會一直說著舊答案。
+
+`pinned` 和 `muted` 規則相同，來源是 `pinned.json` 和 `muted.json`：只在為 true 時
+出現，在寫 state 和推送單一列時蓋上。它們放在列上，而不是在最上層放一份 id 清單，
+因為網頁的 `state-delta` 每次都會重送所有最上層欄位，但只帶有變動的列。靜音的聊天室
+不發桌面通知，列本身和 `unread` 都不變。
 
 ## `wanted`：從通知點進來的聊天室
 
@@ -210,6 +219,10 @@ socket 指令（請求一行 JSON，回應一行 `{ok, data?, error?}`）：
 | `sendSticker` | `chat`, `packageId`, `stickerId`, `version?`, `requestId?` | 無 |
 | `hide` | `chat` | 無（把那一間從清單上拿掉，記在 `hidden.json`） |
 | `unhide` | `chat` | 無 |
+| `pin` | `chat` | 無（網頁上把這一列排到最前面，記在 `pinned.json`） |
+| `unpin` | `chat` | 無 |
+| `mute` | `chat` | 無（不發桌面通知，記在 `muted.json`） |
+| `unmute` | `chat` | 無 |
 | `login` | 無 | 無 |
 | `logout` | 無 | 無 |
 | `sync` | 無 | `{ chats, link, at }` |
@@ -277,6 +290,10 @@ URL 主機格式正規化，包括 IPv4-mapped IPv6 位址。登入請求帶有
 `hide`／`unhide` 在門檻之前：它只寫我們自己的檔案、不碰 LINE，沒有理由因為 session
 還沒接上就拒絕。兩個都是**冪等**的（已經隱藏的再隱藏一次照樣 `{ok:true}`，只是不寫
 檔），`chat` 是空的則回 `{ok:false, error:"沒有指定是哪一間聊天室"}`。
+
+`pin`、`unpin`、`mute`、`unmute` 的規則和 `hide`／`unhide` 相同：未登入也能用、
+冪等、`chat` 是空的回同一個錯誤，不是聊天室 id 的則回
+`{ok:false, error:"不支援的聊天室"}`。
 
 `history` 可以直接回傳非空的本機快取頁，即使筆數少於 `count`；短頁不能證明沒有更舊訊息。
 首頁的快取會由 daemon 在背景重新驗證。

@@ -25,8 +25,9 @@ first unread message when you open a chat.
 ## Notifications
 
 The daemon sends a desktop notification only while the panel is closed. An
-open panel already shows the message. Your own messages and hidden chats never
-notify. A chat gets at most one notification every two seconds, because an
+open panel already shows the message. Your own messages, hidden chats and
+chats muted on the web page (see [web.md](web.md#pinned-and-muted-chats))
+never notify. A chat gets at most one notification every two seconds, because an
 album or a long text split into parts arrives as a burst of messages.
 
 A notification has these parts:

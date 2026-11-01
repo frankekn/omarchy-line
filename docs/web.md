@@ -171,6 +171,25 @@ keeps its own settings in local storage; the server does not store them.
 Changes apply immediately. Esc or the close button closes the dialog and
 returns focus to **Settings**.
 
+### Pinned and muted chats
+
+**Pin** and **Mute** in the chat header turn each preference on or off for the
+open chat. The daemon keeps them in `pinned.json` and `muted.json` in its
+state directory, so every device that opens the page sees the same pinned and
+muted chats.
+
+- Pinned chats stay at the top of the list, sorted among themselves by recent
+  activity, with a small pin mark. The quick switcher puts them first in each
+  match group, and "Next unread" follows the same order.
+- A muted chat stays in the list. Its unread count shows in a dimmer badge
+  next to a muted-bell mark, and the chat does not move to the unread group.
+  It plays no new message sound, does not count in the tab title, and "Next
+  unread" skips it. The daemon also sends no desktop notification for it.
+- Screen readers hear "Pinned" or "Muted" as part of the chat row name.
+
+The panel (QML plugin) does not show pinned or muted chats yet. A muted chat
+still gets no desktop notification when you use only the panel.
+
 ## Known limitations
 
 - The page reaches the daemon only through the exact address in
