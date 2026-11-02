@@ -687,10 +687,28 @@ textarea::placeholder {
 .message-state.failed {
   color: var(--danger);
 }
+.message-column:has(.message-actions) {
+  position: relative;
+  margin-inline-end: 48px;
+  max-width: min(calc(100% - 48px), 640px);
+  min-height: 44px;
+}
+.own .message-column:has(.message-actions) {
+  margin-inline-end: 0;
+  margin-inline-start: 48px;
+}
 .message-actions {
+  position: absolute;
+  inset-inline-start: calc(100% + 4px);
+  top: 0;
   display: flex;
-  align-items: center;
-  gap: 1px;
+}
+.own .message-actions {
+  inset-inline-start: auto;
+  inset-inline-end: calc(100% + 4px);
+}
+.message-actions .message-action {
+  display: none;
 }
 .message-actions button,
 .reaction-pill {
@@ -705,8 +723,8 @@ textarea::placeholder {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 44px;
+  height: 44px;
   padding: 4px;
   border-radius: 6px;
 }
@@ -723,25 +741,38 @@ textarea::placeholder {
 .chat-time {
   font-variant-numeric: tabular-nums;
 }
-@media (hover:hover) and (pointer:fine) {
-  .message-actions {
-    opacity: 0;
-    transition: opacity 120ms ease-out;
-  }
-  .message-row:hover .message-actions,
-  .message-row:focus-within .message-actions {
-    opacity: 1;
-  }
+.message-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 4px;
+  min-width: 168px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 25%);
 }
-@media (any-pointer:coarse) {
-  .message-actions {
-    opacity: 1;
-  }
+.message-menu-item {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
 }
-@media (prefers-reduced-motion:reduce) {
-  .message-actions {
-    transition: none;
-  }
+.message-menu-item:hover,
+.message-menu-item:focus-visible {
+  background: var(--hover);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .reaction-picker {
   scroll-margin-block: 8px;
@@ -1818,7 +1849,7 @@ textarea::placeholder {
   font-weight: 600;
 }
 /* Message actions, voice and location. */
-/* More actions per message: wrap them on a narrow screen. */
+/* Keep exact time, delivery state and retry directly available. */
 .message-meta {
   flex-wrap: wrap;
   row-gap: 0;

@@ -115,6 +115,7 @@ const strings = {
   zoomIn: ["放大", "Zoom in"],
   zoomOut: ["縮小", "Zoom out"],
   noStickers: ["沒有可用的貼圖。", "No stickers available."],
+  messageActions: ["訊息動作", "Message actions"],
   reply: ["回覆", "Reply"],
   jumpToOrigin: ["跳到原訊息", "Jump to original message"],
   missingOrigin: [

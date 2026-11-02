@@ -121,7 +121,8 @@ export async function drafts(h) {
   const incoming = page.locator("article.message-row").filter({
     hasText: "晚上回來吃飯嗎？",
   });
-  await incoming.getByRole("button", { name: "Reply", exact: true }).press(
+  await incoming.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "Reply", exact: true }).press(
     "Enter",
   );
   await page.locator("#reply-target").waitFor();

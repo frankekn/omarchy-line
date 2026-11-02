@@ -59,7 +59,7 @@ export async function main(h) {
   });
   await sentRow.getByRole("link", { name: "http://example.com/path" })
     .waitFor();
-  await sentRow.getByRole("button", { name: "收回" }).waitFor();
+  await sentRow.getByRole("button", { name: "訊息動作" }).waitFor();
   const sent = tap.sent.find((frame) =>
     frame.cmd === "send" &&
     frame.text?.startsWith("桌面測試文字")
@@ -83,10 +83,12 @@ export async function main(h) {
   const incoming = page.locator("article.message-row").filter({
     hasText: "即時測試：新訊息",
   });
-  await incoming.getByRole("button", { name: "表情" }).click();
+  await incoming.getByRole("button", { name: "訊息動作" }).click();
+  await page.getByRole("menuitem", { name: "表情", exact: true }).click();
   await incoming.getByRole("button", { name: "喜愛", exact: true }).click();
   await incoming.getByRole("button", { name: "喜愛 1", exact: true }).waitFor();
-  await incoming.getByRole("button", { name: "回覆" }).click();
+  await incoming.getByRole("button", { name: "訊息動作" }).click();
+  await page.getByRole("menuitem", { name: "回覆", exact: true }).click();
   await input.fill("測試回覆");
   await page.getByRole("button", { name: "送出", exact: true }).click();
   await page.locator("article.message-row").filter({ hasText: "測試回覆" })
@@ -120,10 +122,11 @@ export async function main(h) {
     ),
   });
   await page.locator("article.message-row").filter({ hasText: "ui-test.png" })
-    .getByRole("button", { name: "收回" }).waitFor();
+    .getByRole("button", { name: "訊息動作" }).waitFor();
   assert.ok(tap.sent.some((frame) => frame.cmd === "sendFile"));
   h.step("file-upload");
-  await sentRow.getByRole("button", { name: "收回" }).click();
+  await sentRow.getByRole("button", { name: "訊息動作" }).click();
+  await page.getByRole("menuitem", { name: "收回", exact: true }).click();
   await page.getByText("已收回訊息").last().waitFor();
   assert.ok(
     h.dialogs.some((d) => d.type === "confirm" && d.message.includes("收回")),
@@ -169,7 +172,7 @@ export async function main(h) {
   assert.equal(tap.sent.filter((frame) => frame.text === blocked).length, 1);
   blocked = "";
   await ambiguous.getByRole("button", { name: "重送" }).click();
-  await ambiguous.getByRole("button", { name: "收回" }).waitFor();
+  await ambiguous.getByRole("button", { name: "訊息動作" }).waitFor();
   assert.ok(
     h.dialogs.some((d) => d.type === "confirm" && d.message.includes("重送")),
   );

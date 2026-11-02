@@ -125,7 +125,8 @@ export async function messageActions(h) {
       );
     });
   });
-  await textRow.getByRole("button", { name: "Copy" }).click();
+  await textRow.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy", exact: true }).click();
   await page.locator("#toast:not([hidden])").filter({ hasText: "Copied" })
     .waitFor();
   assert.deepEqual(await page.evaluate(() => globalThis.copiedText), [text]);
@@ -136,8 +137,9 @@ export async function messageActions(h) {
   await page.evaluate(() => {
     document.execCommand = () => false;
   });
-  const copyButton = textRow.getByRole("button", { name: "Copy" });
+  const copyButton = textRow.getByRole("button", { name: "Message actions" });
   await copyButton.click();
+  await page.getByRole("menuitem", { name: "Copy", exact: true }).click();
   const copyDialog = page.locator("dialog.copy-dialog[open]");
   await copyDialog.waitFor();
   const area = copyDialog.locator("textarea");
@@ -175,6 +177,7 @@ export async function messageActions(h) {
     });
   });
   await copyButton.click();
+  await page.getByRole("menuitem", { name: "Copy", exact: true }).click();
   await until(
     () => page.evaluate(() => globalThis.clipboardWrites.length === 1),
     "clipboard write",
@@ -188,7 +191,8 @@ export async function messageActions(h) {
   const imageRow = log.locator('article[data-message-id="cstub-family-m3"]');
   await imageRow.scrollIntoViewIfNeeded();
   const download = page.waitForEvent("download");
-  await imageRow.getByRole("button", { name: "Save" }).click();
+  await imageRow.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "Save", exact: true }).click();
   const saved = await download;
   assert.equal(saved.suggestedFilename(), "line-image-cstub-family-m3.png");
   const savedUrl = new URL(saved.url());
@@ -198,7 +202,7 @@ export async function messageActions(h) {
     savedUrl.searchParams.get("name"),
     "line-image-cstub-family-m3",
   );
-  assert.equal(await textRow.getByRole("button", { name: "Save" }).count(), 0);
+  assert.equal(await textRow.locator('[data-action="save"]').count(), 0);
   h.step("save-image-named");
 
   // Voice: the known length shows at once, the other after its metadata.
@@ -227,7 +231,7 @@ export async function messageActions(h) {
     tap.sent.some((m) => m.cmd === "download" && m.messageId === "voice-known"),
   );
   assert.equal(
-    await unknown.getByRole("button", { name: "Save" }).count(),
+    await unknown.locator('[data-action="save"]').count(),
     1,
   );
   h.step("voice-playback-length");
@@ -256,7 +260,8 @@ export async function messageActions(h) {
 
   // Forward: pick a chat, confirm, and the same text goes out with send.
   const dialogsBefore = h.dialogs.length;
-  await textRow.getByRole("button", { name: "Forward" }).click();
+  await textRow.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "Forward", exact: true }).click();
   const picker = page.locator("dialog.forward-dialog[open]");
   await picker.waitFor();
   await picker.getByRole("combobox").fill("alice");
@@ -278,12 +283,34 @@ export async function messageActions(h) {
   }).waitFor();
   assert.equal(await page.locator("dialog.forward-dialog[open]").count(), 0);
   assert.equal(
-    await place.getByRole("button", { name: "Forward" }).count(),
+    await place.locator('[data-action="forward"]').count(),
     0,
   );
   h.step("forward-text");
 
-  // At 320 px and 200% text, the actions wrap instead of widening the row.
+  // Menu keyboard semantics, native dismissal and bounds at a narrow edge.
+  const more = textRow.getByRole("button", { name: "Message actions" });
+  await more.focus();
+  await more.press("ArrowDown");
+  const menu = page.getByRole("menu", { name: "Message actions" });
+  assert.equal(await menu.locator(":focus").textContent(), "Reply");
+  await page.keyboard.press("End");
+  assert.equal(await menu.locator(":focus").textContent(), "Forward");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("ArrowDown");
+  assert.equal(await menu.locator(":focus").textContent(), "React");
+  await page.keyboard.press("Escape");
+  assert.equal(await more.evaluate((n) => document.activeElement === n), true);
+  await more.click();
+  await page.locator("#messages").dispatchEvent("scroll");
+  assert.equal(await menu.isVisible(), false);
+  assert.equal(await more.evaluate((n) => document.activeElement === n), true);
+  await more.click();
+  await page.mouse.click(2, 2);
+  assert.equal(await menu.isVisible(), false);
+  h.step("menu-keyboard-dismiss-scroll");
+
+  // At 320 px and 200% text, the trigger has its own gutter.
   await page.setViewportSize({ width: 320, height: 640 });
   await page.evaluate(() => document.documentElement.style.fontSize = "200%");
   for (const row of [textRow, known, place]) {
@@ -294,6 +321,7 @@ export async function messageActions(h) {
       return list.scrollWidth <= list.clientWidth &&
         [...node.querySelectorAll("button, a, audio, .message-meta")].every(
           (child) => {
+            if (!child.getClientRects().length) return true;
             const rect = child.getBoundingClientRect();
             return rect.left >= bounds.left - 1 &&
               rect.right <= bounds.right + 1;
@@ -301,6 +329,19 @@ export async function messageActions(h) {
         );
     });
     assert.equal(fits, true);
+    const triggerBounds = await row.locator(".message-more").boundingBox();
+    const bubbleBounds = await row.locator(".bubble").boundingBox();
+    assert.ok(triggerBounds.width >= 44 && triggerBounds.height >= 44);
+    assert.ok(
+      triggerBounds.x >= bubbleBounds.x + bubbleBounds.width ||
+        triggerBounds.x + triggerBounds.width <= bubbleBounds.x,
+    );
   }
+  await more.click();
+  const menuBounds = await menu.boundingBox();
+  assert.ok(menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= 320);
+  assert.ok(menuBounds.y >= 0 && menuBounds.y + menuBounds.height <= 640);
+  assert.equal(await page.locator(".message-menu").count(), 1);
+  await page.keyboard.press("Escape");
   h.step("narrow-large-text");
 }

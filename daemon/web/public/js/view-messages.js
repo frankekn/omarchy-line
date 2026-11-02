@@ -4,10 +4,14 @@ import { $, el, formatTime, icon, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 import { continuesMessageRun } from "./message-grouping.js";
+import { createMessageMenu } from "./view-message-menu.js";
 const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
+  const actionMenu = createMessageMenu(t);
+  const actionFocus = (button) =>
+    button.closest(".message-actions")?.querySelector(".message-more");
   const rowMessages = new WeakMap();
   const selectionVisibility = new Map();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
@@ -68,12 +72,12 @@ export function createMessagesView(ctx) {
   function closeOpenReactions() {
     for (const picker of $("messages").querySelectorAll(".reaction-picker")) {
       const trigger = picker.parentElement.querySelector(
-        ".message-actions button[aria-expanded]",
+        ".message-action[data-action='reaction']",
       );
       trigger?.setAttribute("aria-expanded", "false");
       trigger?.removeAttribute("aria-controls");
       if (picker.contains(document.activeElement)) {
-        trigger?.focus({ preventScroll: true });
+        actionFocus(trigger)?.focus({ preventScroll: true });
       }
       picker.remove();
     }
@@ -99,6 +103,7 @@ export function createMessagesView(ctx) {
   function messageAction(label, symbol) {
     const button = el("button", "message-action");
     button.type = "button";
+    button.dataset.action = label;
     button.title = t(label);
     button.append(icon(symbol), el("span", "sr-only", t(label)));
     return button;
@@ -106,7 +111,10 @@ export function createMessagesView(ctx) {
   function appendMessageActions(actions, chat, message, text) {
     if (text) {
       const copy = messageAction("copy", "copy");
-      copy.addEventListener("click", () => void ctx.copyText(text));
+      copy.addEventListener(
+        "click",
+        () => void ctx.copyText(copy.closest(".message-actions").dataset.text),
+      );
       actions.append(copy);
     }
     if (
@@ -124,7 +132,14 @@ export function createMessagesView(ctx) {
       text && message.contentType === "NONE" && !message.decryptFailed
     ) {
       const forward = messageAction("forward", "forward");
-      forward.addEventListener("click", () => ctx.forwardText(text, forward));
+      forward.addEventListener(
+        "click",
+        () =>
+          ctx.forwardText(
+            forward.closest(".message-actions").dataset.text,
+            actionFocus(forward),
+          ),
+      );
       actions.append(forward);
     }
   }
@@ -273,6 +288,7 @@ export function createMessagesView(ctx) {
       !["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType)
     ) {
       const actions = el("span", "message-actions");
+      actions.dataset.text = system ? "" : body;
       const reply = messageAction("reply", "reply");
       reply.addEventListener("click", () => {
         const current = rowMessages.get(reply.closest(".message-row"));
@@ -287,7 +303,7 @@ export function createMessagesView(ctx) {
         ctx.closeReactionPicker(String(message.id));
         react.setAttribute("aria-expanded", "false");
         react.removeAttribute("aria-controls");
-        react.focus({ preventScroll: true });
+        actionFocus(react)?.focus({ preventScroll: true });
         picker?.remove();
       };
       react.addEventListener("click", () => {
@@ -351,6 +367,22 @@ export function createMessagesView(ctx) {
         });
         actions.append(unsend);
       }
+      const more = el("button", "message-more");
+      more.type = "button";
+      more.title = t("messageActions");
+      more.setAttribute("aria-label", t("messageActions"));
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-expanded", "false");
+      more.setAttribute("aria-controls", "message-action-menu");
+      more.append(icon("more"));
+      more.addEventListener("click", () => actionMenu.open(more));
+      more.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          actionMenu.open(more);
+        }
+      });
+      actions.append(more);
       meta.append(actions);
     }
     column.append(meta);
@@ -428,6 +460,7 @@ export function createMessagesView(ctx) {
       );
     const picker = oldColumn.querySelector(":scope > .reaction-picker");
     if (!keepActions) {
+      actionMenu.closeRow(oldRow);
       ctx.closeReactionPicker(id);
       picker?.remove();
     }
@@ -458,6 +491,7 @@ export function createMessagesView(ctx) {
     const text = updateBubblePart(".message-text", keepText, media);
     updateBubblePart(".quote", keepQuote, text || media);
     if (keepActions) {
+      oldActions.dataset.text = newActions.dataset.text;
       for (const child of [...oldMeta.children]) {
         if (child !== oldActions) child.remove();
       }
@@ -554,6 +588,7 @@ export function createMessagesView(ctx) {
       if (row?.dataset.messageId) protectedIds.add(row.dataset.messageId);
     }
     protect(rowOf(document.activeElement));
+    protect(actionMenu.row);
     for (const video of list.getElementsByTagName("video")) {
       if (!video.paused && !video.ended) protect(rowOf(video));
     }
@@ -611,6 +646,7 @@ export function createMessagesView(ctx) {
   }
   function removeRecord(key) {
     const record = records.get(key);
+    actionMenu.closeRow(record.node);
     if (record.message) {
       ctx.unobservePreviews(record.node);
       ctx.closeReactionPicker(String(record.message.id || ""));
@@ -821,6 +857,7 @@ export function createMessagesView(ctx) {
     const chatChanged = renderedChat !== model.active ||
       renderedAccount !== model.account;
     if (chatChanged) {
+      actionMenu.close(false);
       suppressPaging = false;
       clearTimeout(pagingTimer);
       endProgrammaticScroll();

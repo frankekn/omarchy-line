@@ -63,7 +63,10 @@ async function reactDuringEmptyPage(h) {
   });
   await until(() => release, "held empty older page");
   const row = page.locator('article[data-message-id="100"]');
-  const react = row.getByRole("button", { name: "React", exact: true });
+  const react = row.getByRole("button", {
+    name: "Message actions",
+    exact: true,
+  });
   await react.scrollIntoViewIfNeeded();
   const before = await react.boundingBox();
   await page.mouse.move(
@@ -78,13 +81,16 @@ async function reactDuringEmptyPage(h) {
   await page.evaluate(() => new Promise(requestAnimationFrame));
   const after = await react.boundingBox();
   await page.mouse.up();
+  await page.getByRole("menuitem", { name: "React", exact: true }).click();
   assert.ok(Math.abs(after.y - before.y) <= 1, "React moves during the press");
   await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await react.tap();
+  await page.getByRole("menuitem", { name: "React", exact: true }).tap();
   await row.getByRole("button", { name: "Like", exact: true }).waitFor({
     state: "hidden",
   });
   await react.tap();
+  await page.getByRole("menuitem", { name: "React", exact: true }).tap();
   await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await context.close();
   h.step("empty older page keeps React stable during pointer and touch input");
@@ -2228,7 +2234,7 @@ export async function messageWindow(h) {
 
   await fixture();
   await page.locator(
-    'article[data-message-id="10000000"] .message-actions button',
+    'article[data-message-id="10000000"] .message-more',
   ).first()
     .evaluate((node) => node.focus({ preventScroll: true }));
   await atBottom();

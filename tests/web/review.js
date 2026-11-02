@@ -504,6 +504,12 @@ async function membersFailure(h) {
   h.step("members-failure-mention-picker");
 }
 
+async function chooseMessageAction(page, row, name) {
+  await row.getByRole("button", { name: "Message actions", exact: true })
+    .click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
 async function reactionPickerAfterUpdates(h) {
   const initial = await h.state();
   const message = {
@@ -543,11 +549,11 @@ async function reactionPickerAfterUpdates(h) {
       await image.evaluate((node, old) => node === old, originalImage),
       true,
     );
-    const react = imageRow.getByRole("button", { name: "React", exact: true });
+    const react = imageRow.locator('[data-action="reaction"]');
     const picker = imageRow.locator(".reaction-picker");
-    await react.click();
+    await chooseMessageAction(page, imageRow, "React");
     await picker.waitFor({ state: "visible", timeout: 3000 });
-    await react.click();
+    await chooseMessageAction(page, imageRow, "React");
     assert.equal(await picker.count(), 0);
   };
   push({ kind: "edit", message: { ...message, text: "Edited caption" } });
@@ -564,8 +570,8 @@ async function reactionPickerAfterUpdates(h) {
   await imageRow.getByText(/Read/).waitFor();
   await checkPicker();
 
-  await imageRow.getByRole("button", { name: "Reply", exact: true }).click();
-  await imageRow.getByRole("button", { name: "React", exact: true }).click();
+  await chooseMessageAction(page, imageRow, "Reply");
+  await chooseMessageAction(page, imageRow, "React");
   await image.click();
   await page.locator("#lightbox[open]").waitFor();
   await page.keyboard.press("Escape");
@@ -621,8 +627,19 @@ async function reactionPickerDuringUpdates(h) {
   await page.getByRole("button", { name: family }).click();
   const messageRow = page.locator('article[data-message-id="reaction-update"]');
   await messageRow.getByText("First caption").waitFor();
-  const react = messageRow.getByRole("button", { name: "React", exact: true });
+  const react = messageRow.locator('[data-action="reaction"]');
+  const more = messageRow.getByRole("button", {
+    name: "Message actions",
+    exact: true,
+  });
   const originalReact = await react.elementHandle();
+  const originalCopy = await messageRow.locator('[data-action="copy"]')
+    .elementHandle();
+  await page.evaluate(() => {
+    document.addEventListener("copy", (event) => {
+      globalThis.lastMessageCopy = event.target.value;
+    });
+  });
   const originalRow = await messageRow.elementHandle();
   let seq = Math.max(0, ...(state.events || []).map((event) => event.seq)) + 1;
   const push = (event) =>
@@ -632,7 +649,9 @@ async function reactionPickerDuringUpdates(h) {
     }));
 
   assert.equal(await react.getAttribute("aria-expanded"), "false");
-  await react.focus();
+  await more.focus();
+  await more.press("Enter");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   const nice = messageRow.getByRole("button", { name: "Like", exact: true });
   await nice.waitFor();
@@ -665,12 +684,12 @@ async function reactionPickerDuringUpdates(h) {
   assert.equal(await originalReact.evaluate((node) => node.isConnected), true);
   await page.keyboard.press("Enter");
   assert.equal(
-    await react.evaluate((node) => node === document.activeElement),
+    await more.evaluate((node) => node === document.activeElement),
     true,
   );
   assert.equal(await react.getAttribute("aria-expanded"), "false");
   assert.equal(await react.getAttribute("aria-controls"), null);
-  await react.press("Enter");
+  await chooseMessageAction(page, messageRow, "React");
   const pickerBounds = await messageRow.locator(".reaction-picker")
     .boundingBox();
   const logBounds = await page.locator("#messages").boundingBox();
@@ -686,7 +705,7 @@ async function reactionPickerDuringUpdates(h) {
   await messageRow.getByRole("button", { name: "Remove reaction", exact: true })
     .press("Enter");
   assert.equal(
-    await react.evaluate((node) => node === document.activeElement),
+    await more.evaluate((node) => node === document.activeElement),
     true,
   );
   assert.equal(await react.getAttribute("aria-expanded"), "false");
@@ -699,7 +718,9 @@ async function reactionPickerDuringUpdates(h) {
     "reaction after an edit",
   );
 
-  const box = await react.boundingBox();
+  await more.click();
+  const box = await page.getByRole("menuitem", { name: "React", exact: true })
+    .boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   push({ kind: "edit", message: { ...message, text: "Later caption" } });
@@ -722,17 +743,32 @@ async function reactionPickerDuringUpdates(h) {
   assert.equal(await originalRow.evaluate((node) => node.isConnected), true);
   assert.equal(await nice.isVisible(), true);
 
-  await react.tap();
-  await messageRow.getByRole("button", { name: "Reply", exact: true }).tap();
+  await chooseMessageAction(page, messageRow, "React");
+  await chooseMessageAction(page, messageRow, "Reply");
   assert.match(
     await page.locator("#reply-label").textContent(),
     /Later caption/,
   );
-  await react.tap();
+  assert.equal(await originalCopy.evaluate((node) => node.isConnected), true);
+  await chooseMessageAction(page, messageRow, "Copy");
+  assert.equal(
+    await page.evaluate(() => globalThis.lastMessageCopy),
+    "Later caption",
+  );
+  await chooseMessageAction(page, messageRow, "React");
   await nice.waitFor();
+  await more.click();
+  await page.keyboard.press("Escape");
+  assert.equal(await nice.isVisible(), true, "menu Escape preserves reactions");
+  assert.equal(
+    await more.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await more.click();
   push({ kind: "unsend", messageId: message.id });
   await messageRow.getByText("Message unsent").waitFor();
   assert.equal(await messageRow.locator(".reaction-picker").count(), 0);
+  assert.equal(await page.getByRole("menu").isVisible(), false);
   assert.equal(
     await messageRow.getByRole("button", { name: "React" }).count(),
     0,
@@ -750,7 +786,7 @@ async function reactionPickerDuringUpdates(h) {
     message: { ...transition, contentType: "NONE", text: "Latest text" },
   });
   await transitionRow.getByText("Latest text").waitFor();
-  await transitionRow.getByRole("button", { name: "Reply", exact: true }).tap();
+  await chooseMessageAction(page, transitionRow, "Reply");
   assert.match(await page.locator("#reply-label").textContent(), /Latest text/);
   await context.close();
   h.step("reaction controls survive edits until the message is unsent");
