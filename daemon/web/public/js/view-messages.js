@@ -161,7 +161,8 @@ export function createMessagesView(ctx) {
         "article",
         `message-row${own ? " own" : ""}${message.unsent ? " unsent" : ""}`,
       ),
-      column = el("div", "message-column");
+      column = el("div", "message-column"),
+      footer = el("div", "message-footer");
     rowMessages.set(row, message);
     row.dataset.messageId = String(message.id || "");
     if (
@@ -257,7 +258,7 @@ export function createMessagesView(ctx) {
         );
         reactions.append(button);
       }
-      column.append(reactions);
+      footer.append(reactions);
     }
     const meta = el("div", "message-meta");
     if (
@@ -390,7 +391,9 @@ export function createMessagesView(ctx) {
       more.append(icon("more"));
       more.addEventListener("click", () => actionMenu.open(more));
       more.addEventListener("keydown", (event) => {
-        if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+        if (
+          event.isComposing || event.ctrlKey || event.metaKey || event.altKey
+        ) {
           return;
         }
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -401,7 +404,8 @@ export function createMessagesView(ctx) {
       actions.append(more);
       meta.append(actions);
     }
-    column.append(meta);
+    footer.append(meta);
+    column.append(footer);
     row.append(column);
     return row;
   }
@@ -465,8 +469,10 @@ export function createMessagesView(ctx) {
     const newColumn = newRow.firstElementChild;
     const oldBubble = oldColumn.querySelector(":scope > .bubble");
     const newBubble = newColumn.querySelector(":scope > .bubble");
-    const oldMeta = oldColumn.querySelector(":scope > .message-meta");
-    const newMeta = newColumn.querySelector(":scope > .message-meta");
+    const oldFooter = oldColumn.querySelector(":scope > .message-footer");
+    const newFooter = newColumn.querySelector(":scope > .message-footer");
+    const oldMeta = oldFooter.querySelector(":scope > .message-meta");
+    const newMeta = newFooter.querySelector(":scope > .message-meta");
     const oldActions = oldMeta.querySelector(":scope > .message-actions");
     const newActions = newMeta.querySelector(":scope > .message-actions");
     const keepActions = oldActions && newActions &&
@@ -522,30 +528,27 @@ export function createMessagesView(ctx) {
     } else {
       oldMeta.replaceWith(newMeta);
     }
-    const oldReactions = oldColumn.querySelector(":scope > .reactions");
-    const newReactions = newColumn.querySelector(":scope > .reactions");
-    let reactions = null;
+    const oldReactions = oldFooter.querySelector(":scope > .reactions");
+    const newReactions = newFooter.querySelector(":scope > .reactions");
     if (oldReactions && newReactions) {
       updateReactions(oldReactions, newReactions);
-      reactions = oldReactions;
     } else if (oldReactions) oldReactions.remove();
     else if (newReactions) {
-      reactions = newReactions;
-      oldColumn.insertBefore(reactions, keepActions ? oldMeta : newMeta);
+      oldFooter.insertBefore(newReactions, keepActions ? oldMeta : newMeta);
     }
     for (const child of [...oldColumn.children]) {
       if (
-        child !== oldBubble && child !== (keepActions ? oldMeta : newMeta) &&
-        child !== reactions && (!keepActions || child !== picker)
+        child !== oldBubble && child !== oldFooter &&
+        (!keepActions || child !== picker)
       ) child.remove();
     }
     for (const child of [...newColumn.children]) {
-      if (child === newBubble || child === newMeta || child === newReactions) {
+      if (child === newBubble || child === newFooter) {
         continue;
       }
       if (child.classList.contains("sender")) {
         oldColumn.insertBefore(child, oldBubble);
-      } else oldColumn.insertBefore(child, keepActions ? oldMeta : newMeta);
+      } else oldColumn.insertBefore(child, oldFooter);
     }
   }
   function selectionIncludes(row, selection) {
@@ -809,9 +812,21 @@ export function createMessagesView(ctx) {
       removeEmptyDay();
       order = order.filter((key) => !removedKeys.has(key));
       renderedRows = renderedRows.filter((row) => !removed.has(row));
-      renderedDesired = renderedDesired.filter((item) =>
-        !removedKeys.has(item.key)
-      );
+      let previous = null;
+      renderedDesired = renderedDesired.filter((item) => {
+        if (removedKeys.has(item.key)) return false;
+        if (item.type === "message") {
+          const continuation = continuesMessageRun(previous, item);
+          if (item.continuation !== continuation) {
+            item.continuation = continuation;
+            const record = records.get(item.key);
+            record.continuation = continuation;
+            record.node.classList.toggle("continuation", continuation);
+          }
+        }
+        previous = item;
+        return true;
+      });
       if (!records.has("control:older")) {
         const node = el("button", "text-button", t("older"));
         node.type = "button";

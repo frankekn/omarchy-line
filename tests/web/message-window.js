@@ -1241,6 +1241,21 @@ async function conversationGrouping(h) {
       },
     });
     checks.appendOnly = grouped(802);
+    await new Promise((resolve, reject) => {
+      let frames = 120;
+      function trimmed() {
+        if (model.messages.length === 500) return resolve();
+        if (!--frames) return reject(new Error("grouped trim did not settle"));
+        requestAnimationFrame(trimmed);
+      }
+      requestAnimationFrame(trimmed);
+    });
+    const head = list.querySelector(".message-row");
+    checks.trimmedHead = !head.classList.contains("continuation") &&
+      getComputedStyle(head.querySelector(".sender")).clipPath === "none";
+    checks.trimmedNext = head.nextElementSibling.classList.contains(
+      "continuation",
+    );
     return checks;
   });
   for (const [name, passed] of Object.entries(result)) assert.ok(passed, name);
@@ -1413,6 +1428,8 @@ export async function messageWindow(h) {
         scrollTop: list.scrollTop,
         scrollHeight: list.scrollHeight,
         clientHeight: list.clientHeight,
+        active: document.activeElement?.outerHTML.slice(0, 300),
+        selected: getSelection()?.toString().slice(0, 80),
         bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
         noOlder: model.noOlder,
       };
@@ -1436,6 +1453,9 @@ export async function messageWindow(h) {
       "  bottom diagnostic",
       JSON.stringify({
         bottom: state.bottom,
+        count: state.ids.length,
+        active: state.active,
+        selected: state.selected,
         scrollTop: state.scrollTop,
         scrollHeight: state.scrollHeight,
         clientHeight: state.clientHeight,
@@ -1648,7 +1668,9 @@ export async function messageWindow(h) {
     } else if (i === 500) {
       await deliver([row(i)]);
       const older = page.getByRole("button", { name: "Load older messages" });
-      assert.equal((await current()).noOlder, false);
+      const trimState = await current();
+      if (trimState.noOlder) await reportBottom(trimState);
+      assert.equal(trimState.noOlder, false);
       assert.equal(await older.isVisible(), true);
       assert.equal(await older.isEnabled(), true);
       await deliver(Array.from({ length: 24 }, (_, j) => row(i + j + 1)));

@@ -606,6 +606,25 @@ textarea::placeholder {
 .message-row.continuation {
   margin-top: -5px;
 }
+.message-row.unsent .message-column {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+}
+.message-row.unsent.own .message-column {
+  justify-content: flex-end;
+}
+.message-row.unsent .sender {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: calc(12rem / 14);
+  font-weight: 400;
+}
+.message-row.unsent .message-footer {
+  flex-basis: 100%;
+}
 .message-row.unsent .bubble {
   padding: 2px 0;
   background: transparent;
@@ -677,6 +696,19 @@ textarea::placeholder {
 }
 .quote-target .bubble {
   outline: 2px solid var(--accent);
+}
+.message-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 8px;
+}
+.own .message-footer {
+  justify-content: flex-end;
+}
+.message-footer > .reactions,
+.message-footer:has(> .reactions) > .message-meta {
+  margin-top: 4px;
 }
 .message-meta {
   display: flex;

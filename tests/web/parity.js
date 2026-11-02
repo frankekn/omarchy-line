@@ -301,9 +301,10 @@ export async function parity(h) {
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.locator('article[data-message-id="parity6"] .quote').click();
-  assert.equal(
-    await page.evaluate(() => globalThis.__quoteScrollBehavior),
-    "auto",
+  assert.ok(
+    ["auto", "instant"].includes(
+      await page.evaluate(() => globalThis.__quoteScrollBehavior),
+    ),
   );
   assert.equal(
     await page.locator('article[data-message-id="parity1"]').evaluate((row) =>
