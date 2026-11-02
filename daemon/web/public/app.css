@@ -586,8 +586,10 @@ textarea::placeholder {
   gap: 9px;
   align-items: end;
 }
-/* Measure the incoming tail before scrolling to it. */
-.message-row:last-child {
+/* Measure incoming messages and explicit jump targets before scrolling.
+   WebKit can otherwise skip a jump to an unrendered row. */
+.message-row:last-child,
+.message-row.quote-target {
   content-visibility: visible;
 }
 .message-row.own {

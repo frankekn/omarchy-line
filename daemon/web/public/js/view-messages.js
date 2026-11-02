@@ -17,7 +17,7 @@ export function createMessagesView(ctx) {
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   let programmaticScroll = false, programmaticMoved = false;
   let programmaticTop = 0, programmaticTimer = 0;
-  let quoteJumpTarget = "", quoteJumpGeneration = 0;
+  let quoteJumpTarget = "";
   let followAfterProgrammatic = false;
   let touchPhase = "idle", touchTimer = 0;
   let touchPaging = false;
@@ -53,16 +53,15 @@ export function createMessagesView(ctx) {
       ctx.toast(t("missingOrigin"));
       return;
     }
-    quoteJumpGeneration++;
     interruptFollowing();
     beginProgrammaticScroll(String(id));
     // A quote jump can pass the paging threshold without the reader scrolling.
     suspendPaging(1000);
+    target.classList.add("quote-target");
     alignQuoteTarget(target);
     if (list.scrollHeight <= list.clientHeight) {
       endProgrammaticScroll();
     }
-    target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
   }
   function closeOpenReactions() {
@@ -1076,13 +1075,9 @@ export function createMessagesView(ctx) {
         }
       } else {
         const chat = renderedChat, account = renderedAccount;
-        const jumpGeneration = quoteJumpGeneration;
         let expectedTop = list.scrollTop, frames = 3;
         const settleAnchor = () => {
-          // An older page's pending correction must not cancel a newer
-          // quote or search jump's native smooth scroll.
           if (
-            jumpGeneration !== quoteJumpGeneration ||
             chat !== renderedChat || account !== renderedAccount ||
             !anchor.isConnected || Math.abs(list.scrollTop - expectedTop) > 2
           ) return;
