@@ -179,10 +179,11 @@ export function createMessagesView(ctx) {
     return body;
   }
   function openMessageMenu(trigger) {
-    const sameOwner = actionMenu.row === trigger.closest(".message-row");
-    const resume = sameOwner
-      ? menuWasFollowing
-      : !actionMenu.row && isFollowing(list);
+    const owner = actionMenu.row;
+    const resume = owner ? menuWasFollowing : isFollowing(list);
+    if (owner && owner !== trigger.closest(".message-row")) {
+      actionMenu.close(false, false);
+    }
     endProgrammaticScroll();
     cancelTouchSettling();
     interruptFollowing();

@@ -414,6 +414,7 @@ export async function messageActions(h) {
   await atBottom();
   await arrive("menu-after-reply");
   await atBottom();
+  h.step("Reply closes the menu and subsequent messages keep following");
   for (const dismissal of ["escape", "outside"]) {
     await page.locator(".message-more").last().click();
     await arrive(`menu-paused-${dismissal}`);
@@ -429,6 +430,16 @@ export async function messageActions(h) {
     await atBottom();
     assert.equal(await jump.isVisible(), false);
   }
+  await page.locator(".message-more").last().click();
+  await arrive("menu-before-switch");
+  const otherMore = page.locator(".message-more").nth(-5);
+  await otherMore.click();
+  assert.equal(await menu.isVisible(), true);
+  assert.equal(await otherMore.getAttribute("aria-expanded"), "true");
+  await page.keyboard.press("Escape");
+  await atBottom();
+  await arrive("menu-after-switch");
+  await atBottom();
   await page.locator(".message-more").last().click();
   await arrive("menu-before-scroll");
   await page.locator("#messages").evaluate((list) => {

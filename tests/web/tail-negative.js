@@ -9,10 +9,13 @@ app = app.replace(
   "  model = createModel();\nglobalThis.__followModel = model;",
 ).replace("ctx = finish();", "ctx = finish();\nglobalThis.__followCtx = ctx;");
 const view = await Deno.readTextFile(new URL("view-messages.js", root));
-const start = view.indexOf("    if (order.at(-1) !== keys.at(-1)) {");
-const end = view.indexOf("    // A top trim followed by an append", start);
-assert.ok(start > 0 && end > start);
-const withoutFix = view.slice(0, start) + view.slice(end);
+const marker = "    if (order.at(-1) !== keys.at(-1)) {";
+assert.equal(view.split(marker).length, 2);
+// Keep navigation setup intact; disable retention for the tail experiment.
+const withoutFix = view.replace(
+  marker,
+  "    if (model.messages.length < 199 && order.at(-1) !== keys.at(-1)) {",
+);
 await runSuite("tail-negative-control", async (h) => {
   let control, reproduced = false;
   try {
