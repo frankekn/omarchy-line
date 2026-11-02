@@ -105,11 +105,10 @@ export async function readingNavigation(h, exposeFollowContext) {
   await page.evaluate(() => {
     const model = globalThis.__followModel, ctx = globalThis.__followCtx;
     model.messages = Array.from(
-      { length: 200 },
+      { length: 199 },
       (_, i) => globalThis.__readingMessage(i),
     );
     model.messages[150].text = "Long quote ".repeat(40);
-    model.messages[199].text = "Long tail ".repeat(40);
     model.noOlder = true;
     ctx.renderMessages("preserve");
     const list = document.getElementById("messages");
@@ -128,17 +127,33 @@ export async function readingNavigation(h, exposeFollowContext) {
       })
     );
   await settle();
-  const measure = () =>
-    page.evaluate(() => ({
+  // Both deliveries occur before a paint can remember the first tail's size.
+  const { before, after } = await page.evaluate(() => {
+    const model = globalThis.__followModel, ctx = globalThis.__followCtx;
+    const deliver = (message) =>
+      ctx.onFrame({
+        boot: model.boot,
+        event: {
+          seq: model.seq + 1,
+          kind: "message",
+          chat: model.active,
+          message,
+        },
+      });
+    const measure = () => ({
       height: document.querySelector('[data-message-id="900199"]')
         .getBoundingClientRect().height,
       scrollHeight: document.getElementById("messages").scrollHeight,
-    }));
-  const before = await measure();
+    });
+    deliver({
+      ...globalThis.__readingMessage(199),
+      text: "Long tail ".repeat(40),
+    });
+    const before = measure();
+    deliver(globalThis.__readingMessage(200));
+    return { before, after: measure() };
+  });
   assert.ok(before.height > 150);
-  await receive(200);
-  await settle();
-  const after = await measure();
   assert.ok(
     Math.abs(after.height - before.height) <= 1,
     JSON.stringify({ before, after }),

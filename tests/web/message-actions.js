@@ -379,7 +379,82 @@ export async function messageActions(h) {
   await page.locator("#reply-target").waitFor();
   assert.match(await page.locator("#reply-label").textContent(), /Taipei 101/);
   await page.locator("#cancel-reply").click();
-  h.step("incoming-message-keeps-menu-and-original-action-stable");
+  const jump = page.getByRole("button", {
+    name: "Jump to latest",
+    exact: true,
+  });
+  const atBottom = () =>
+    page.waitForFunction(() => {
+      const list = document.getElementById("messages");
+      return list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
+    });
+  const arrive = async (id) => {
+    tap.socket.send(JSON.stringify({
+      boot: state.bootId,
+      event: {
+        seq: ++injectedSeq,
+        at: Date.now(),
+        kind: "message",
+        chat: CHAT,
+        message: {
+          id,
+          chat: CHAT,
+          from: "ustub-mom",
+          fromName: "STUB 媽",
+          time: Date.now() + 11000 + injectedSeq,
+          text: "Another incoming message",
+          contentType: "NONE",
+        },
+      },
+    }));
+    await page.locator(`[data-message-id="${id}"]`).waitFor({
+      state: "attached",
+    });
+  };
+  await atBottom();
+  await arrive("menu-after-reply");
+  await atBottom();
+  for (const dismissal of ["escape", "outside"]) {
+    await page.locator(".message-more").last().click();
+    await arrive(`menu-paused-${dismissal}`);
+    assert.equal(await menu.isVisible(), true);
+    const distance = await page.locator("#messages").evaluate((list) =>
+      list.scrollHeight - list.scrollTop - list.clientHeight
+    );
+    assert.ok(distance > 2 && distance < 120, String(distance));
+    if (dismissal === "escape") await page.keyboard.press("Escape");
+    else await page.mouse.click(2, 2);
+    await atBottom();
+    await arrive(`menu-live-${dismissal}`);
+    await atBottom();
+    assert.equal(await jump.isVisible(), false);
+  }
+  await page.locator(".message-more").last().click();
+  await arrive("menu-before-scroll");
+  await page.locator("#messages").evaluate((list) => {
+    list.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -150, bubbles: true }),
+    );
+    list.scrollTop -= 150;
+    list.dispatchEvent(new Event("scroll"));
+  });
+  assert.equal(await menu.isVisible(), false);
+  const readingTop = await page.locator("#messages").evaluate((list) =>
+    list.scrollTop
+  );
+  await arrive("menu-reading");
+  assert.ok(
+    Math.abs(
+      await page.locator("#messages").evaluate((list) => list.scrollTop) -
+        readingTop,
+    ) <= 1,
+  );
+  assert.equal(await jump.isVisible(), true);
+  await jump.click();
+  await atBottom();
+  h.step(
+    "menu close resumes live following; explicit scrolling preserves history",
+  );
 
   // At 320 px and 200% text, the trigger has its own gutter.
   await page.setViewportSize({ width: 320, height: 640 });
@@ -436,4 +511,58 @@ export async function messageActions(h) {
     true,
   );
   h.step("removed-actions-close-menu-and-preserve-focus");
+
+  const flex = {
+    id: "flex-private",
+    chat: CHAT,
+    from: "ustub-mom",
+    fromName: "STUB 媽",
+    time: Date.now() + 20000,
+    contentType: "FLEX",
+    text: "",
+    altText: "Private FLEX content",
+  };
+  const deliver = (event) =>
+    tap.socket.send(JSON.stringify({
+      boot: state.bootId,
+      event: { ...event, seq: ++injectedSeq, at: Date.now(), chat: CHAT },
+    }));
+  deliver({ kind: "message", message: flex });
+  const flexRow = page.locator('[data-message-id="flex-private"]');
+  await flexRow.locator(".message-text").filter({ hasText: flex.altText })
+    .waitFor();
+  await flexRow.locator(".message-more").click();
+  await page.getByRole("menuitem", { name: "Copy", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.clipboardWrites.at(-1)),
+    flex.altText,
+  );
+  deliver({ kind: "unsend", messageId: flex.id });
+  await flexRow.getByText("Message unsent", { exact: true }).waitFor();
+  assert.equal((await flexRow.textContent()).includes(flex.altText), false);
+  deliver({
+    kind: "message",
+    message: {
+      ...flex,
+      id: "flex-unreadable",
+      time: flex.time + 1,
+      decryptFailed: true,
+    },
+  });
+  const unreadable = page.locator('[data-message-id="flex-unreadable"]');
+  await unreadable.getByText("Unable to decrypt this message", { exact: true })
+    .waitFor();
+  await unreadable.locator(".message-more").click();
+  assert.equal(
+    await page.getByRole("menuitem", { name: "Copy", exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await page.getByRole("menuitem", { name: "Forward", exact: true }).count(),
+    0,
+  );
+  await page.keyboard.press("Escape");
+  h.step(
+    "FLEX copy uses displayed text and unsent or unreadable content stays masked",
+  );
 }

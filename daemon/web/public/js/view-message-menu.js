@@ -1,7 +1,7 @@
 // One native top-layer menu; original action buttons and handlers stay in rows.
 import { el } from "./dom.js";
 
-export function makeMessageMenu(t) {
+export function makeMessageMenu(t, onClose = () => {}) {
   const menu = el("div", "message-menu");
   menu.id = "message-action-menu";
   menu.setAttribute("popover", "auto");
@@ -9,13 +9,14 @@ export function makeMessageMenu(t) {
   menu.setAttribute("aria-label", t("messageActions"));
   document.body.append(menu);
   let owner = null, anchorPosition = null;
-  function close(restore = true) {
+  function close(restore = true, resume = true) {
     if (!owner) return;
     const trigger = owner;
     owner = null;
     trigger.setAttribute("aria-expanded", "false");
     if (menu.matches(":popover-open")) menu.hidePopover();
     if (restore && trigger.isConnected) trigger.focus({ preventScroll: true });
+    onClose(resume);
   }
   function open(trigger) {
     if (owner === trigger) return close();
@@ -100,6 +101,7 @@ export function makeMessageMenu(t) {
     owner = null;
     trigger.setAttribute("aria-expanded", "false");
     if (restore && trigger.isConnected) trigger.focus({ preventScroll: true });
+    onClose(true);
   });
   document.addEventListener("scroll", (event) => {
     if (owner && event.target.contains?.(owner)) {
@@ -108,7 +110,7 @@ export function makeMessageMenu(t) {
       if (
         Math.abs(anchor.top - anchorPosition.top) > 1 ||
         Math.abs(anchor.left - anchorPosition.left) > 1
-      ) close(menu.contains(document.activeElement));
+      ) close(menu.contains(document.activeElement), false);
     }
   }, true);
   globalThis.addEventListener("resize", () => close());

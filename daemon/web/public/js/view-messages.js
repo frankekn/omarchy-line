@@ -9,7 +9,7 @@ const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
-  const actionMenu = makeMessageMenu(t);
+  const actionMenu = makeMessageMenu(t, resumeMenuFollowing);
   const actionFocus = (button) =>
     button?.closest(".message-actions")?.querySelector(".message-more");
   const rowMessages = new WeakMap();
@@ -17,7 +17,7 @@ export function createMessagesView(ctx) {
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let renderedRows = [], renderedDesired = [], renderedToday = "";
   let renderedUnread = "";
-  let followedTop = null;
+  let followedTop = null, menuWasFollowing = false;
   let followFrame = 0, trimFrame = 0, quoteFrame = 0;
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   let programmaticScroll = false, programmaticMoved = false;
@@ -155,11 +155,55 @@ export function createMessagesView(ctx) {
   }
   function actionText(button) {
     const current = rowMessages.get(button.closest(".message-row"));
-    return String(
-      current?.contentType === "FLEX" && current.altText
-        ? current.altText
-        : current?.text || "",
-    );
+    return current ? messageBody(current) : "";
+  }
+  function messageBody(message) {
+    if (message.unsent) return t("unsent");
+    if (message.decryptFailed) return t("decryptFailed");
+    const body = message.contentType === "FLEX" && message.altText
+      ? String(message.altText)
+      : String(message.text || "");
+    // LINE repeats a place's title as the message text.
+    if (
+      message.contentType === "LOCATION" && message.location &&
+      body.trim() === String(message.location.title || "")
+    ) return "";
+    if (
+      ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) &&
+      (!body || body.toUpperCase() === message.contentType)
+    ) {
+      return t(
+        message.contentType === "CHATEVENT" ? "systemEvent" : "postEvent",
+      );
+    }
+    return body;
+  }
+  function openMessageMenu(trigger) {
+    const sameOwner = actionMenu.row === trigger.closest(".message-row");
+    const resume = sameOwner
+      ? menuWasFollowing
+      : !actionMenu.row && isFollowing(list);
+    endProgrammaticScroll();
+    cancelTouchSettling();
+    interruptFollowing();
+    menuWasFollowing = resume;
+    actionMenu.open(trigger);
+    updateNavigation();
+  }
+  function resumeMenuFollowing(allowed) {
+    const resume = allowed && menuWasFollowing;
+    menuWasFollowing = false;
+    if (!resume) return;
+    followBottom(list);
+    const focus = document.activeElement;
+    if (list.contains(focus)) {
+      const rect = focus.getBoundingClientRect(),
+        area = list.getBoundingClientRect();
+      if (rect.top < area.top || rect.bottom > area.bottom) {
+        list.focus({ preventScroll: true });
+      }
+    }
+    updateNavigation();
   }
   // enil:message-actions-end
   function messageNode(message, includeMedia = true) {
@@ -190,27 +234,10 @@ export function createMessagesView(ctx) {
       button.addEventListener("click", () => scrollToMessage(quote.id));
       bubble.append(button);
     }
-    let body = message.unsent
-      ? t("unsent")
-      : message.decryptFailed
-      ? t("decryptFailed")
-      : String(message.text || "");
-    if (message.contentType === "FLEX" && message.altText) {
-      body = String(message.altText);
-    }
+    const body = messageBody(message);
     const place = message.contentType === "LOCATION" && !message.unsent
       ? message.location
       : null;
-    // LINE repeats a place's title as the message text.
-    if (place && body.trim() === String(place.title || "")) body = "";
-    if (
-      ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) &&
-      (!body || body.toUpperCase() === message.contentType)
-    ) {
-      body = message.contentType === "CHATEVENT"
-        ? t("systemEvent")
-        : t("postEvent");
-    }
     if (body) {
       const content = el("div", "message-text");
       content.append(richText(body, message.mentions));
@@ -399,8 +426,7 @@ export function createMessagesView(ctx) {
       more.setAttribute("popovertarget", "message-action-menu");
       more.addEventListener("click", (event) => {
         event.preventDefault();
-        interruptFollowing();
-        actionMenu.open(more);
+        openMessageMenu(more);
       });
       more.addEventListener("keydown", (event) => {
         if (
@@ -410,8 +436,7 @@ export function createMessagesView(ctx) {
         }
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
-          interruptFollowing();
-          actionMenu.open(more);
+          openMessageMenu(more);
         }
       });
       actions.append(more);
@@ -696,6 +721,7 @@ export function createMessagesView(ctx) {
     node.style.visibility = available ? "" : "hidden";
   }
   function interruptFollowing() {
+    menuWasFollowing = false;
     followedTop = null;
     if (followFrame) cancelAnimationFrame(followFrame);
     if (trimFrame) cancelAnimationFrame(trimFrame);
@@ -879,6 +905,7 @@ export function createMessagesView(ctx) {
     keepSelectedTailVisible($("messages"));
     if (model.noOlder) ctx.refreshOlderAvailability();
     if (mode === "bottom") {
+      menuWasFollowing = false;
       actionMenu.close(false);
       endProgrammaticScroll();
     }
@@ -911,6 +938,7 @@ export function createMessagesView(ctx) {
     const chatChanged = renderedChat !== model.active ||
       renderedAccount !== model.account;
     if (chatChanged) {
+      menuWasFollowing = false;
       actionMenu.close(false);
       suppressPaging = false;
       clearTimeout(pagingTimer);
