@@ -390,6 +390,9 @@ export function createMessagesView(ctx) {
       more.append(icon("more"));
       more.addEventListener("click", () => actionMenu.open(more));
       more.addEventListener("keydown", (event) => {
+        if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+          return;
+        }
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           actionMenu.open(more);

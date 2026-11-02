@@ -66,6 +66,9 @@ export function makeMessageMenu(t) {
     }
   }, true);
   menu.addEventListener("keydown", (event) => {
+    if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
+      return;
+    }
     const items = [...menu.children];
     const index = items.indexOf(document.activeElement);
     let next;
