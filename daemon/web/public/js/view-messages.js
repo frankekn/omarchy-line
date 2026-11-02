@@ -160,6 +160,14 @@ export function createMessagesView(ctx) {
   function messageBody(message) {
     if (message.unsent) return t("unsent");
     if (message.decryptFailed) return t("decryptFailed");
+    if (
+      message.contentType === "CHATEVENT" &&
+      message.chatEvent?.kind === "announcement"
+    ) {
+      return `${message.chatEvent.actor || t("eventMember")}${
+        t("announcementSet")
+      }`;
+    }
     const body = message.contentType === "FLEX" && message.altText
       ? String(message.altText)
       : String(message.text || "");
@@ -210,16 +218,21 @@ export function createMessagesView(ctx) {
   function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
+      eventNotice = message.contentType === "CHATEVENT" &&
+        !message.unsent && !message.decryptFailed,
       row = el(
         "article",
-        `message-row${own ? " own" : ""}${message.unsent ? " unsent" : ""}`,
+        `message-row${own ? " own" : ""}${message.unsent ? " unsent" : ""}${
+          eventNotice ? " event-notice" : ""
+        }`,
       ),
       column = el("div", "message-column"),
       footer = el("div", "message-footer");
     rowMessages.set(row, message);
     row.dataset.messageId = String(message.id || "");
     if (
-      !own && (chat.startsWith("c") || chat.startsWith("r")) && message.fromName
+      !own && !(eventNotice && message.chatEvent) &&
+      (chat.startsWith("c") || chat.startsWith("r")) && message.fromName
     ) column.append(el("div", "sender", message.fromName));
     const system = message.unsent || message.decryptFailed ||
       ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType);
@@ -298,7 +311,8 @@ export function createMessagesView(ctx) {
     }
     const meta = el("div", "message-meta");
     if (
-      own && message.readBy?.count > 0 && !message.pending && !message.unsent
+      own && !eventNotice && message.readBy?.count > 0 && !message.pending &&
+      !message.unsent
     ) {
       meta.append(
         el(

@@ -636,6 +636,7 @@ Messages returned by `history` (absent fields are omitted, never `null`):
 | `text` | string | always; undecryptable E2EE is "" |
 | `time` | number | always, ms |
 | `contentType` | string | always; `NONE`/`IMAGE`/`VIDEO`/`STICKER`/`FLEX`… |
+| `chatEvent` | object | optional decoded event: `{kind: "announcement", actor: string}`; `actor` is a display name, or empty when unavailable. Currently decodes `CHATEVENT` / `C_MA` with one valid member argument; `text` contains a Chinese fallback for clients without event localization. |
 | `decryptFailed` | boolean | always; `true` when E2EE couldn't be decrypted |
 | `hasMedia` | boolean | always; unsent messages are always `false` |
 | `unsent` | boolean | always; `true` on messages the other side unsent, `text` is "已收回訊息" |

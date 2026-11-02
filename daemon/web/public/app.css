@@ -631,6 +631,28 @@ textarea::placeholder {
   font-size: calc(12rem / 14);
   font-style: normal;
 }
+/* Chat events read as a compact notice, rather than a spoken message. */
+.message-row.event-notice .message-column {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 8px;
+  max-width: 100%;
+}
+.message-row.event-notice .sender {
+  margin: 0;
+  font-weight: 400;
+}
+.message-row.event-notice .bubble {
+  min-width: 0;
+  padding: 2px 0;
+  background: transparent;
+  font-size: calc(12rem / 14);
+  font-style: normal;
+}
+.message-row.event-notice .message-meta {
+  margin-top: 0;
+}
 /* Retain each message's author for assistive technology. */
 .message-row.continuation .sender {
   position: absolute;

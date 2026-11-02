@@ -53,6 +53,11 @@ interface PluginMessage {
   fileName?: string;
   fileSize?: number;
   mentions?: PluginMention[];
+  chatEvent?: {
+    kind: "announcement";
+    /** Empty when the member name could not be resolved. */
+    actor: string;
+  };
   replyTo?: PluginReplyTo;
   reactions?: PluginReaction[];
   readBy?: PluginReadBy;

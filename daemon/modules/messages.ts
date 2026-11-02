@@ -128,6 +128,24 @@ async function toPluginMessage(
     out.decryptFailed = true;
   }
 
+  if (
+    contentType === "CHATEVENT" && !out.unsent && !out.decryptFailed &&
+    (!out.text || out.text.toUpperCase() === "CHATEVENT") &&
+    meta.LOC_KEY === "C_MA" && typeof meta.LOC_ARGS === "string" &&
+    meta.LOC_ARGS.length === 33 && /^u[0-9a-f]{32}$/.test(meta.LOC_ARGS) &&
+    owner && sessionIsCurrent(owner, generation)
+  ) {
+    const name = await resolveName(meta.LOC_ARGS, owner, generation);
+    if (sessionIsCurrent(owner, generation)) {
+      const actor = name.length <= 200 && name.trim() &&
+          !/[ucr][0-9a-f]{32}/i.test(name) && !/\p{Cc}/u.test(name)
+        ? name.trim()
+        : "";
+      out.chatEvent = { kind: "announcement", actor };
+      out.text = `${actor || "成員"}設定了公告`;
+    }
+  }
+
   // After the recall and decrypt-failure branches above, not before: the
   // offsets index the text the panel is going to render, and those two
   // branches are what decide what that text is.
