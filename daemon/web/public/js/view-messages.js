@@ -57,11 +57,11 @@ export function createMessagesView(ctx) {
     beginProgrammaticScroll(String(id));
     // A quote jump can pass the paging threshold without the reader scrolling.
     suspendPaging(1000);
+    target.classList.add("quote-target");
     alignQuoteTarget(target);
     if (list.scrollHeight <= list.clientHeight) {
       endProgrammaticScroll();
     }
-    target.classList.add("quote-target");
     setTimeout(() => target.classList.remove("quote-target"), 2000);
   }
   function closeOpenReactions() {

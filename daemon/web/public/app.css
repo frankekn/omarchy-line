@@ -318,13 +318,13 @@ a:focus-visible {
   background: var(--panel);
 }
 .sidebar-top {
-  padding: 18px 20px 14px;
+  padding: 12px 14px 8px;
 }
 .section-heading {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
 }
 .section-heading h1 {
   font-size: calc(20rem / 14);
@@ -359,7 +359,7 @@ a:focus-visible {
   border: 0;
   outline: 0;
   color: var(--text);
-  padding: 11px 0;
+  padding: 8px 0;
   font-size: calc(12rem / 14);
 }
 input::placeholder,
@@ -377,7 +377,7 @@ textarea::placeholder {
   min-height: 0;
   overflow: auto;
   contain: layout paint;
-  padding: 0 10px;
+  padding: 0 6px;
 }
 .chat-row {
   width: 100%;
@@ -385,9 +385,9 @@ textarea::placeholder {
   content-visibility: auto;
   contain-intrinsic-size: auto 44px;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   text-align: left;
-  padding: 12px 10px;
+  padding: 7px 8px;
   border: 0;
   border-radius: 6px;
   background: transparent;
@@ -427,7 +427,7 @@ textarea::placeholder {
   justify-content: space-between;
 }
 .row-top {
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 .row-name {
   font-weight: 700;
@@ -467,7 +467,7 @@ textarea::placeholder {
 }
 .sidebar-bottom {
   border-top: 1px solid var(--line);
-  padding: 8px 8px 8px 20px;
+  padding: 6px 8px 6px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -505,6 +505,7 @@ textarea::placeholder {
   font-size: calc(11rem / 14);
 }
 .conversation {
+  --conversation-gutter: max(16px, calc((100% - 960px) / 2));
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -541,11 +542,11 @@ textarea::placeholder {
   flex-direction: column;
 }
 .chat-header {
-  min-height: 76px;
+  min-height: 56px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 26px;
+  gap: 10px;
+  padding: 6px 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
   flex: none;
@@ -564,7 +565,7 @@ textarea::placeholder {
 .chat-heading span {
   display: block;
   font-size: calc(11rem / 14);
-  margin-top: 5px;
+  margin-top: 2px;
 }
 .back {
   display: none;
@@ -574,40 +575,42 @@ textarea::placeholder {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: 26px max(28px,calc((100% - 780px)/2));
+  padding: 12px var(--conversation-gutter);
   scrollbar-color: var(--line) transparent;
 }
 .message-row {
   content-visibility: auto;
   contain-intrinsic-size: auto 100px;
   display: flex;
-  margin: 0 0 18px;
+  margin: 0 0 8px;
   gap: 9px;
   align-items: end;
 }
-/* Measure the incoming tail before scrolling to it. */
-.message-row:last-child {
+/* Measure incoming messages and explicit jump targets before scrolling.
+   WebKit can otherwise skip a jump to an unrendered row. */
+.message-row:last-child,
+.message-row.quote-target {
   content-visibility: visible;
 }
 .message-row.own {
   justify-content: flex-end;
 }
 .message-column {
-  max-width: min(78%,560px);
+  max-width: min(78%,640px);
   min-width: 0;
 }
 .sender {
   color: var(--muted);
   font-size: calc(11rem / 14);
-  margin: 0 0 6px 3px;
+  margin: 0 0 3px 2px;
 }
 .bubble {
   position: relative;
   background: var(--bubble);
   border-radius: 6px 6px 6px 2px;
-  padding: 11px 14px;
+  padding: 6px 10px;
   overflow-wrap: anywhere;
-  line-height: 1.55;
+  line-height: 1.45;
 }
 .own .bubble {
   background: var(--own);
@@ -648,8 +651,8 @@ textarea::placeholder {
 .message-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 5px;
+  gap: 6px;
+  margin-top: 2px;
   padding: 0 2px;
   color: var(--muted);
   font-size: calc(11rem / 14);
@@ -770,7 +773,7 @@ textarea::placeholder {
   text-align: center;
   color: var(--muted);
   font-size: calc(11rem / 14);
-  margin: 20px 0;
+  margin: 12px 0;
 }
 .loading-message {
   text-align: center;
@@ -780,7 +783,7 @@ textarea::placeholder {
 }
 .drop-overlay {
   position: absolute;
-  inset: 76px 20px 125px;
+  inset: 58px 16px 96px;
   z-index: 4;
   display: grid;
   place-items: center;
@@ -792,18 +795,18 @@ textarea::placeholder {
 }
 .composer-area {
   flex: none;
-  padding: 14px max(28px,calc((100% - 780px)/2)) 14px;
+  padding: 8px var(--conversation-gutter);
   background: var(--bg);
   position: relative;
 }
 .composer {
   display: flex;
   align-items: end;
-  gap: 9px;
+  gap: 6px;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 8px;
+  padding: 5px;
 }
 .composer:focus-within {
   border-color: var(--accent);
@@ -820,7 +823,7 @@ textarea::placeholder {
   color: var(--text);
   border: 0;
   outline: 0;
-  padding: 9px 0;
+  padding: 6px 0;
   line-height: 1.4;
 }
 .search-wrap input:focus-visible {
@@ -839,7 +842,7 @@ textarea::placeholder {
   color: var(--accent-ink);
 }
 .composer-hint {
-  margin: 8px 4px 0;
+  margin: 4px 4px 0;
   text-align: right;
   color: var(--muted);
   font-size: calc(11rem / 14);
@@ -863,7 +866,7 @@ textarea::placeholder {
 .mention-picker {
   position: absolute;
   bottom: 100%;
-  left: max(28px, calc((100% - 780px) / 2));
+  left: var(--conversation-gutter);
   width: min(320px, calc(100% - 40px));
   max-height: 220px;
   overflow: auto;
@@ -903,7 +906,7 @@ textarea::placeholder {
 }
 .sticker-picker {
   position: absolute;
-  right: max(28px,calc((100% - 780px)/2));
+  right: var(--conversation-gutter);
   bottom: 100%;
   width: min(380px,calc(100% - 40px));
   height: 340px;
@@ -1121,12 +1124,13 @@ textarea::placeholder {
     border-right: 0;
   }
   .sidebar-top {
-    padding: 22px 16px 12px;
+    padding: 12px 16px 8px;
   }
   .sidebar-bottom {
     padding: 8px 8px max(8px, env(safe-area-inset-bottom)) 16px;
   }
   .conversation {
+    --conversation-gutter: 12px;
     display: none;
     width: 100%;
   }
@@ -1137,7 +1141,7 @@ textarea::placeholder {
     display: block;
   }
   .chat-header {
-    min-height: 62px;
+    min-height: 56px;
     padding: 0 12px;
     gap: 9px;
   }
@@ -1150,13 +1154,14 @@ textarea::placeholder {
     display: grid;
   }
   .messages {
-    padding: 20px 14px;
+    padding: 12px;
   }
   .message-column {
     max-width: 85%;
   }
   .composer-area {
-    padding: 10px 12px max(10px,env(safe-area-inset-bottom));
+    padding: 6px var(--conversation-gutter)
+      max(8px,env(safe-area-inset-bottom));
   }
   .composer textarea {
     font-size: max(16px, 1rem);
@@ -1165,10 +1170,7 @@ textarea::placeholder {
     display: none;
   }
   .drop-overlay {
-    inset: 65px 12px 90px;
-  }
-  .sticker-picker {
-    right: 12px;
+    inset: 58px 10px 80px;
   }
   .auth-card {
     padding: 30px;
