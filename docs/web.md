@@ -211,10 +211,11 @@ its own header. On the LINE sign-in screen the button and the status sit in
 the bottom-left corner. Each browser keeps its own settings in local storage;
 the server does not store them.
 
-- **Interface text** scales controls, the chat list, sender names and message
+- **Interface text** scales controls, chat names, sender names and message
   times. Choose 85%, 100%, 115%, 130% or 150%, where 100% is 14 px.
 - **Message text** independently scales message bubbles and the message input,
-  with the same five sizes and a 14 px default. Quotes scale with the messages.
+  with the same five sizes and a 14 px default. Sidebar message previews and
+  quotes scale with the messages.
   On phones, the input stays at least 16 px to prevent zoom when you focus it.
 - **Theme** is **Match system** by default, which uses the green light or dark
   colors from the system setting. The other themes take their colors from

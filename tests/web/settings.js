@@ -292,6 +292,9 @@ async function independentSizes(h) {
         sender: ".sender",
         time: ".message-footer time",
         sidebar: "#sync",
+        chatName: ".row-name",
+        chatPreview: ".row-preview",
+        chatTime: ".row-time",
       };
       return Object.fromEntries(
         Object.entries(selectors).map(([name, selector]) => [
@@ -314,8 +317,11 @@ async function independentSizes(h) {
       defaults.text,
       defaults.composer,
       defaults.quote,
+      defaults.chatName,
+      defaults.chatPreview,
+      defaults.chatTime,
     ],
-    ["14px", "14px", "14px", "14px", "11px"],
+    ["14px", "14px", "14px", "14px", "11px", "14px", "11px", "11px"],
   );
   await page.locator("#settings-open").click();
   assert.equal(
@@ -340,8 +346,14 @@ async function independentSizes(h) {
   const smallUI = await sizes();
   assert.equal(smallUI.root, "11.9px");
   assert.deepEqual(
-    [smallUI.bubble, smallUI.text, smallUI.composer, smallUI.quote],
-    ["14px", "14px", "14px", "11px"],
+    [
+      smallUI.bubble,
+      smallUI.text,
+      smallUI.composer,
+      smallUI.quote,
+      smallUI.chatPreview,
+    ],
+    ["14px", "14px", "14px", "11px", "11px"],
     "interface size leaves message text unchanged",
   );
   await page.locator('#message-text-sizes input[value="150"]').check();
@@ -352,10 +364,13 @@ async function independentSizes(h) {
       largeMessages.text,
       largeMessages.composer,
       largeMessages.quote,
+      largeMessages.chatPreview,
     ],
-    ["21px", "21px", "21px", "16.5px"],
+    ["21px", "21px", "21px", "16.5px", "16.5px"],
   );
-  for (const name of ["root", "sender", "time", "sidebar"]) {
+  for (
+    const name of ["root", "sender", "time", "sidebar", "chatName", "chatTime"]
+  ) {
     assert.equal(
       largeMessages[name],
       smallUI[name],
@@ -372,8 +387,20 @@ async function independentSizes(h) {
       smallMessages.text,
       smallMessages.composer,
       smallMessages.quote,
+      smallMessages.chatName,
+      smallMessages.chatPreview,
+      smallMessages.chatTime,
     ],
-    ["21px", "11.9px", "11.9px", "11.9px", "9.35px"],
+    [
+      "21px",
+      "11.9px",
+      "11.9px",
+      "11.9px",
+      "9.35px",
+      "21px",
+      "9.35px",
+      "16.5px",
+    ],
   );
   h.step("interface and message sizes independently control their text");
   await context.close();
@@ -513,10 +540,11 @@ async function narrow(h) {
   );
   h.step("legacy text size preserves both saved sizes at 320 px");
   for (
-    const [textSize, messageTextSize, bubbleSize, composerSize] of [
-      [85, 150, "21px", "21px"],
-      [150, 85, "11.9px", "16px"],
-    ]
+    const [textSize, messageTextSize, bubbleSize, composerSize, previewSize]
+      of [
+        [85, 150, "21px", "21px", "16.5px"],
+        [150, 85, "11.9px", "16px", "9.35px"],
+      ]
   ) {
     await page.locator(`#text-sizes input[value="${textSize}"]`).check();
     await page.locator(`#message-text-sizes input[value="${messageTextSize}"]`)
@@ -542,8 +570,9 @@ async function narrow(h) {
       await page.evaluate(() => [
         getComputedStyle(document.querySelector(".bubble")).fontSize,
         getComputedStyle(document.querySelector("#message-input")).fontSize,
+        getComputedStyle(document.querySelector(".row-preview")).fontSize,
       ]).then((sizes) => sizes.map(roundedFontSize)),
-      [bubbleSize, composerSize],
+      [bubbleSize, composerSize, previewSize],
     );
     assert.deepEqual(
       await overflow(),
