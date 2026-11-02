@@ -66,10 +66,13 @@ export function createMessagesView(ctx) {
   }
   function closeOpenReactions() {
     for (const picker of $("messages").querySelectorAll(".reaction-picker")) {
+      const trigger = picker.parentElement.querySelector(
+        ".message-actions button[aria-expanded]",
+      );
+      trigger?.setAttribute("aria-expanded", "false");
+      trigger?.removeAttribute("aria-controls");
       if (picker.contains(document.activeElement)) {
-        picker.parentElement.querySelector(
-          ".message-actions button:nth-child(2)",
-        )?.focus();
+        trigger?.focus({ preventScroll: true });
       }
       picker.remove();
     }
@@ -200,6 +203,11 @@ export function createMessagesView(ctx) {
           );
         button.type = "button";
         button.dataset.reactionType = type;
+        button.setAttribute("aria-pressed", String(Boolean(reaction.mine)));
+        button.setAttribute(
+          "aria-label",
+          `${t(`reaction${type}`)} ${Number(reaction.count || 0)}`,
+        );
         button.title = reaction.mine ? t("undoReaction") : t("reaction");
         button.addEventListener(
           "click",
@@ -265,23 +273,36 @@ export function createMessagesView(ctx) {
       actions.append(reply);
       const react = el("button", "", t("reaction"));
       react.type = "button";
+      react.id = `reaction-trigger-${message.id}`;
+      react.setAttribute("aria-expanded", "false");
+      const closePicker = (picker) => {
+        ctx.closeReactionPicker(String(message.id));
+        react.setAttribute("aria-expanded", "false");
+        react.removeAttribute("aria-controls");
+        react.focus({ preventScroll: true });
+        picker?.remove();
+      };
       react.addEventListener("click", () => {
         const currentColumn = react.closest(".message-column");
         if (!currentColumn) return;
         const id = String(message.id);
         if (!ctx.toggleReactionPicker(id)) {
-          currentColumn.querySelector(".reaction-picker")?.remove();
+          closePicker(currentColumn.querySelector(".reaction-picker"));
           return;
         }
         const picker = el("div", "reaction-picker");
+        picker.id = `reaction-picker-${message.id}`;
+        picker.setAttribute("role", "group");
+        picker.setAttribute("aria-labelledby", react.id);
+        react.setAttribute("aria-expanded", "true");
+        react.setAttribute("aria-controls", picker.id);
         for (const [type, emoji] of Object.entries(reactionTypes)) {
           const button = el("button", "", emoji);
           button.type = "button";
-          button.title = type;
-          button.setAttribute("aria-label", type);
+          button.title = t(`reaction${type}`);
+          button.setAttribute("aria-label", t(`reaction${type}`));
           button.addEventListener("click", () => {
-            ctx.closeReactionPicker(id);
-            picker.remove();
+            closePicker(picker);
             command("react", { chat, messageId: String(message.id), type })
               .catch(
                 displayError,
@@ -295,8 +316,7 @@ export function createMessagesView(ctx) {
         undo.title = t("undoReaction");
         undo.setAttribute("aria-label", t("undoReaction"));
         undo.addEventListener("click", () => {
-          ctx.closeReactionPicker(id);
-          picker.remove();
+          closePicker(picker);
           command("react", {
             chat,
             messageId: String(message.id),
@@ -306,6 +326,7 @@ export function createMessagesView(ctx) {
         });
         picker.append(undo);
         currentColumn.append(picker);
+        picker.firstElementChild.focus({ preventScroll: true });
       });
       actions.append(react);
       appendMessageActions(actions, chat, message, system ? "" : body);
@@ -345,6 +366,12 @@ export function createMessagesView(ctx) {
         button.textContent = next.textContent;
       }
       if (button.title !== next.title) button.title = next.title;
+      for (const attribute of ["aria-pressed", "aria-label"]) {
+        const value = next.getAttribute(attribute);
+        if (button.getAttribute(attribute) !== value) {
+          button.setAttribute(attribute, value);
+        }
+      }
       return button;
     });
     const focused = oldButtons.includes(document.activeElement)

@@ -84,8 +84,8 @@ export async function main(h) {
     hasText: "即時測試：新訊息",
   });
   await incoming.getByRole("button", { name: "表情" }).click();
-  await incoming.getByRole("button", { name: "LOVE" }).click();
-  await incoming.getByRole("button", { name: /❤️ 1/ }).waitFor();
+  await incoming.getByRole("button", { name: "喜愛", exact: true }).click();
+  await incoming.getByRole("button", { name: "喜愛 1", exact: true }).waitFor();
   await incoming.getByRole("button", { name: "回覆" }).click();
   await input.fill("測試回覆");
   await page.getByRole("button", { name: "送出", exact: true }).click();

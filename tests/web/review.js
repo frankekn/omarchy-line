@@ -631,10 +631,28 @@ async function reactionPickerDuringUpdates(h) {
       event: { seq: seq++, chat: CHAT, ...event },
     }));
 
-  await react.tap();
-  const nice = messageRow.getByRole("button", { name: "NICE", exact: true });
+  assert.equal(await react.getAttribute("aria-expanded"), "false");
+  await react.focus();
+  await page.keyboard.press("Enter");
+  const nice = messageRow.getByRole("button", { name: "Like", exact: true });
   await nice.waitFor();
-  await nice.focus();
+  assert.equal(
+    await nice.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  assert.equal(await react.getAttribute("aria-expanded"), "true");
+  const group = messageRow.getByRole("group", { name: "React", exact: true });
+  assert.equal(
+    await react.getAttribute("aria-controls"),
+    await group.getAttribute("id"),
+  );
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await messageRow.getByRole("button", { name: "Love", exact: true })
+      .evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.keyboard.press("Shift+Tab");
   const originalPicker = await messageRow.locator(".reaction-picker")
     .elementHandle();
   push({ kind: "edit", message: { ...message, text: "Other caption" } });
@@ -645,7 +663,21 @@ async function reactionPickerDuringUpdates(h) {
     true,
   );
   assert.equal(await originalReact.evaluate((node) => node.isConnected), true);
-  await nice.click();
+  await page.keyboard.press("Enter");
+  assert.equal(
+    await react.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  assert.equal(await react.getAttribute("aria-expanded"), "false");
+  assert.equal(await react.getAttribute("aria-controls"), null);
+  await react.press("Enter");
+  await messageRow.getByRole("button", { name: "Remove reaction", exact: true })
+    .press("Enter");
+  assert.equal(
+    await react.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  assert.equal(await react.getAttribute("aria-expanded"), "false");
   await until(
     () =>
       tap.sent.some((frame) =>
@@ -814,6 +846,8 @@ async function messageInteractionsDuringUpdates(h) {
   await nice.focus();
   updateReactions([reactions[1], { ...reactions[0], count: 4, mine: true }]);
   await nice.filter({ hasText: "👍 4" }).waitFor();
+  assert.equal(await nice.getAttribute("aria-pressed"), "true");
+  assert.equal(await nice.getAttribute("aria-label"), "Like 4");
   assert.equal(
     await nice.evaluate((node, old) => node === old, originalNice),
     true,
@@ -834,6 +868,8 @@ async function messageInteractionsDuringUpdates(h) {
   );
   updateReactions([{ ...reactions[0], count: 5 }, reactions[1]]);
   await nice.filter({ hasText: "👍 5" }).waitFor();
+  assert.equal(await nice.getAttribute("aria-pressed"), "false");
+  assert.equal(await nice.getAttribute("aria-label"), "Like 5");
   assert.equal(
     await nice.evaluate((node, old) => node === old, originalNice),
     true,

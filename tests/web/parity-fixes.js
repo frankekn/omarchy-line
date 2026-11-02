@@ -634,7 +634,12 @@ export async function reactionEscape(h) {
   await first.getByRole("button", { name: "React" }).click();
   await second.getByRole("button", { name: "React" }).click();
   assert.equal(await page.locator(".reaction-picker").count(), 2);
-  await second.getByRole("button", { name: "LOVE" }).focus();
+  assert.equal(
+    await first.getByRole("button", { name: "React", exact: true })
+      .getAttribute("aria-expanded"),
+    "true",
+  );
+  await second.getByRole("button", { name: "Love", exact: true }).focus();
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".reaction-picker").count(), 0);
   assert.equal(
@@ -642,6 +647,16 @@ export async function reactionEscape(h) {
       (node) => node === document.activeElement,
     ),
     true,
+  );
+  assert.equal(
+    await first.getByRole("button", { name: "React", exact: true })
+      .getAttribute("aria-expanded"),
+    "false",
+  );
+  assert.equal(
+    await second.getByRole("button", { name: "React", exact: true })
+      .getAttribute("aria-controls"),
+    null,
   );
   assert.equal(await page.locator("#sticker-picker").isVisible(), true);
   assert.equal(

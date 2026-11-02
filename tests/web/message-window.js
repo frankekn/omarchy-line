@@ -79,13 +79,13 @@ async function reactDuringEmptyPage(h) {
   const after = await react.boundingBox();
   await page.mouse.up();
   assert.ok(Math.abs(after.y - before.y) <= 1, "React moves during the press");
-  await row.getByRole("button", { name: "NICE", exact: true }).waitFor();
+  await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await react.tap();
-  await row.getByRole("button", { name: "NICE", exact: true }).waitFor({
+  await row.getByRole("button", { name: "Like", exact: true }).waitFor({
     state: "hidden",
   });
   await react.tap();
-  await row.getByRole("button", { name: "NICE", exact: true }).waitFor();
+  await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await context.close();
   h.step("empty older page keeps React stable during pointer and touch input");
 }
