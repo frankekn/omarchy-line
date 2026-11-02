@@ -42,7 +42,9 @@ of them must update this page in the same commit.
 - **It does not serve your messages to the network unless you turn the web
   page on.** The web page is off until you set `ENIL_WEB_ADDR`. When it is
   on, anyone who can reach that address and has the web key or a valid
-  browser cookie can read and send your messages. Bind it to a Tailscale
+  browser cookie can read and send your messages. If you opt in with
+  `ENIL_WEB_TAILSCALE_LOGIN`, all untagged devices owned by that account can
+  also enter without a key. Bind it to a Tailscale
   address, not `0.0.0.0`, and do not run another HTTP service on the same IP:
   browsers share cookies across its ports. A sign-in link can also remain in
   browser history, and the cross-site sign-in check is not reliable on plain

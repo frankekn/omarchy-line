@@ -22,10 +22,11 @@
 #                    XDG_STATE_HOME afterwards and the binary cannot write
 #                    the new dir, so rebuild (enil-run.sh falls back to
 #                    `deno run` only when the rev stamp is stale).
-#   --allow-run      Exactly the six binaries the daemon spawns: dbus-monitor
+#   --allow-run      Only the binaries the daemon spawns: dbus-monitor
 #                    (watchdog.ts, suspend/resume), wl-paste (clipboard.ts),
 #                    ffmpegthumbnailer and ffmpeg (video.ts), omarchy-shell
-#                    and notify-send (notify.ts).
+#                    and notify-send (notify.ts), and the Tailscale CLI
+#                    (web/tailscale.ts, optional owner authentication).
 #   --allow-env      The variables modules/env.ts and web/server.ts read,
 #                    plus the two the npm dependencies read through Node's
 #                    process.env shim, which throws NotCapable for an
@@ -61,5 +62,5 @@ set -f
 ENIL_DENO_FLAGS="--allow-net
 --allow-read
 --allow-write=$ENIL_STATE_DIR
---allow-run=dbus-monitor,wl-paste,ffmpegthumbnailer,ffmpeg,omarchy-shell,notify-send
---allow-env=HOME,XDG_STATE_HOME,ENIL_DEVICE,ENIL_INCREMENTAL,ENIL_CHAT_LIMIT,ENIL_PUSH_STALE_MS,ENIL_REQUEST_TIMEOUT_MS,ENIL_WEB_ADDR,ENIL_WEB_KEY,Q_DEBUG,NODE_DEBUG"
+--allow-run=dbus-monitor,wl-paste,ffmpegthumbnailer,ffmpeg,omarchy-shell,notify-send,tailscale,/Applications/Tailscale.app/Contents/MacOS/Tailscale
+--allow-env=HOME,XDG_STATE_HOME,ENIL_DEVICE,ENIL_INCREMENTAL,ENIL_CHAT_LIMIT,ENIL_PUSH_STALE_MS,ENIL_REQUEST_TIMEOUT_MS,ENIL_WEB_ADDR,ENIL_WEB_KEY,ENIL_WEB_TAILSCALE_LOGIN,Q_DEBUG,NODE_DEBUG"

@@ -146,14 +146,15 @@ still use `-A`.
 - `--allow-write` covers only the state directory: `state.json`, the socket,
   the lock, the session store, decrypted media, and avatars. Every temporary
   file the daemon makes is there too, so there is no `/tmp` entry.
-- `--allow-run` names the six programs the daemon starts: `dbus-monitor`
+- `--allow-run` names the programs the daemon starts: `dbus-monitor`
   (sleep and wake, `watchdog.ts`), `wl-paste` (`clipboard.ts`),
   `ffmpegthumbnailer` and `ffmpeg` (`video.ts`), and `omarchy-shell` and
-  `notify-send` (`notify.ts`).
+  `notify-send` (`notify.ts`), plus the Tailscale CLI (`web/tailscale.ts`) for
+  optional owner authentication. On macOS the CLI is inside `Tailscale.app`.
 - `--allow-env` names the variables that `modules/env.ts` reads: `HOME`,
   `XDG_STATE_HOME`, `ENIL_DEVICE`, `ENIL_INCREMENTAL`, `ENIL_CHAT_LIMIT`,
   `ENIL_PUSH_STALE_MS`, `ENIL_REQUEST_TIMEOUT_MS`, `ENIL_WEB_ADDR`, and
-  `ENIL_WEB_KEY`. It also names
+  `ENIL_WEB_KEY` and `ENIL_WEB_TAILSCALE_LOGIN`. It also names
   `Q_DEBUG` and `NODE_DEBUG`. Two npm dependencies read them through Node's
   `process.env`, which throws for an unlisted name, and the daemon does not
   boot without `Q_DEBUG`.

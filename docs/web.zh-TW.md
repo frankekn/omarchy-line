@@ -14,6 +14,7 @@ LINE 帳號裡多出裝置。
 |---|---|
 | `ENIL_WEB_ADDR` | 要監聽的 `host:port`。請用這台機器的 Tailscale IP，例如 `100.64.0.1:3440`。不要用 `0.0.0.0`：對機器實際 IP 的請求會被拒絕。 |
 | `ENIL_WEB_KEY` | 登入用的 key：16 個以上的 `A-Z a-z 0-9 - . _ ~`。沒設定或格式不對時，每次啟動都會產生新的 key。 |
+| `ENIL_WEB_TAILSCALE_LOGIN` | 選填，Tailscale 帳號的完整 `LoginName`，例如 `owner@example.com` 或 `owner@github`。該帳號擁有的裝置可免 key 登入。預設不啟用。 |
 
 設定有效的 `ENIL_WEB_KEY` 時，daemon 啟動會記錄
 `[web] sign in: http://100.64.0.1:3440/`，不會顯示 key。daemon 自行產生新 key 時，
@@ -39,6 +40,26 @@ HTTP，因此 cookie 沒有 `Secure` 屬性。請使用可信任的 Tailscale �
 cookie。網頁收到 LINE 登出狀態時，會清除該帳號的草稿。
 
 如果位址還不存在（Tailscale 還在啟動），daemon 每 10 秒重試一次，LINE 本身照常運作。
+
+## 在自己的 Tailscale 裝置上自動登入
+
+把 `ENIL_WEB_TAILSCALE_LOGIN` 設為 `tailscale whois --json <自己的裝置-IP>`
+回報的完整 `UserProfile.LoginName`，再重啟 daemon。macOS 的 App Store 版 CLI
+位於 `/Applications/Tailscale.app/Contents/MacOS/Tailscale`；Linux 的 `tailscale`
+必須在 daemon 的 `PATH` 裡。不需要額外的服務或代理，繼續開啟原本的
+`http://<Tailscale-IP>:3440/` 即可。
+
+伺服器會向本機 Tailscale 查詢實際 TCP 來源 IP 的擁有者，不採信 HTTP 標頭裡的帳號。
+只有原生 tailnet IP、屬於指定帳號且沒有 tag 的裝置可以自動登入。查詢失敗、其他帳號
+或帶 tag 的裝置仍須輸入 web key。請保留固定 `ENIL_WEB_KEY`，以便 CLI 無法使用時
+登入。指定帳號擁有的所有裝置都會取得權限，因此只應填入自己的帳號。請直接連線；
+反向代理或 subnet router 可能隱藏瀏覽器的來源身分，帶有代理標頭的請求不會自動登入。
+
+身分查詢結果最多快取 15 秒。Tailscale 自動登入不會產生長期瀏覽器 cookie。已建立的
+WebSocket 會保持授權直到斷線；新的 HTTP 請求與 WebSocket 握手會再次查驗身分，並可能
+使用快取。更換 web key 只會撤銷以 key 登入的 cookie。要停用自動登入，請移除
+`ENIL_WEB_TAILSCALE_LOGIN` 並重啟 daemon；重啟也會關閉既有 WebSocket。「離開網頁」
+會清除以 key 登入的 cookie，但已獲准的 Tailscale 裝置仍可立即免 key 再次進入。
 
 ## 網頁版能做和不能做的事
 

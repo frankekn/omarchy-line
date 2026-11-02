@@ -56,11 +56,13 @@ Deno.test("the permission set is explicit: no -A, writes confined to the state d
   assertEquals(
     byName.get("--allow-run")?.split(",").sort(),
     [
+      "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
       "dbus-monitor",
       "ffmpeg",
       "ffmpegthumbnailer",
       "notify-send",
       "omarchy-shell",
+      "tailscale",
       "wl-paste",
     ],
   );

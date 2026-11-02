@@ -15,6 +15,7 @@ The page is off by default. It starts when `ENIL_WEB_ADDR` is set.
 |---|---|
 | `ENIL_WEB_ADDR` | `host:port` to listen on. Use the machine's Tailscale IP, for example `100.64.0.1:3440`. Do not use `0.0.0.0`: requests to the machine's actual IP will be refused. |
 | `ENIL_WEB_KEY` | The sign-in key: 16 or more of `A-Z a-z 0-9 - . _ ~`. If missing or invalid, each start makes a new key. |
+| `ENIL_WEB_TAILSCALE_LOGIN` | Optional exact Tailscale `LoginName`, such as `owner@example.com` or `owner@github`. Devices owned by this account can use the page without a key. Unset by default. |
 
 With a valid `ENIL_WEB_KEY`, the daemon logs
 `[web] sign in: http://100.64.0.1:3440/` at start, without showing the key.
@@ -49,6 +50,33 @@ page receives the logged-out state.
 
 If the address does not exist yet (Tailscale is still starting), the daemon
 tries again every 10 seconds. LINE keeps working in the meantime.
+
+## Sign in automatically from your Tailscale devices
+
+Set `ENIL_WEB_TAILSCALE_LOGIN` to your account's exact `UserProfile.LoginName`
+from `tailscale whois --json <your-device-IP>`, then restart the daemon. On
+macOS, the App Store CLI is
+`/Applications/Tailscale.app/Contents/MacOS/Tailscale`. On Linux, `tailscale`
+must be on the daemon's `PATH`. No extra service or proxy is needed; keep
+opening the same `http://<Tailscale-IP>:3440/` address.
+
+The server asks its local Tailscale daemon who owns the actual TCP peer IP.
+It never accepts an account name from HTTP headers. Only native tailnet IPs
+and the configured user's untagged devices qualify. Failed lookups, other
+accounts and tagged devices still need the web key. Keep a fixed
+`ENIL_WEB_KEY` as a fallback if the CLI is unavailable. Access is granted to
+all devices owned by the configured account, so only name your own account.
+Connect directly: reverse proxies and subnet routers can hide the browser's
+identity, and proxy-marked requests are not automatically authenticated.
+
+Identity decisions are cached for up to 15 seconds. Tailscale access does not
+mint a persistent browser cookie. Existing WebSockets remain authorized until
+they disconnect; a new HTTP request or WebSocket handshake checks identity
+again using the cache. Changing the web key only revokes key-based cookies.
+To disable automatic access, unset `ENIL_WEB_TAILSCALE_LOGIN` and restart the
+daemon; the restart also closes existing WebSockets. “Leave web page” clears
+the key-based cookie, but an allowed Tailscale device can immediately enter
+again without a key.
 
 ## What the page can and cannot do
 

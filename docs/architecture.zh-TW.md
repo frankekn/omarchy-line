@@ -114,12 +114,15 @@ systemd：inactive 或 failed 的 unit 用 `start`，不用 `restart`。同一�
   直接在原位置讀檔。
 - `--allow-write` 只涵蓋 state 目錄：`state.json`、socket、lock、session 存檔、解密
   後的媒體和大頭貼。daemon 產生的暫存檔也都在這裡，所以沒有 `/tmp` 這一項。
-- `--allow-run` 列出 daemon 會啟動的六個程式：`dbus-monitor`（睡眠與喚醒，
+- `--allow-run` 列出 daemon 會啟動的程式：`dbus-monitor`（睡眠與喚醒，
   `watchdog.ts`）、`wl-paste`（`clipboard.ts`）、`ffmpegthumbnailer` 和 `ffmpeg`
-  （`video.ts`），以及 `omarchy-shell` 和 `notify-send`（`notify.ts`）。
+  （`video.ts`），以及 `omarchy-shell` 和 `notify-send`（`notify.ts`）。另外允許
+  Tailscale CLI（`web/tailscale.ts`）驗證選填的擁有者登入；macOS 的 CLI 位於
+  `Tailscale.app` 裡。
 - `--allow-env` 列出 `modules/env.ts` 會讀的變數：`HOME`、`XDG_STATE_HOME`、
   `ENIL_DEVICE`、`ENIL_INCREMENTAL`、`ENIL_CHAT_LIMIT`、`ENIL_PUSH_STALE_MS` 和
-  `ENIL_REQUEST_TIMEOUT_MS`、`ENIL_WEB_ADDR` 和 `ENIL_WEB_KEY`。另外還有 `Q_DEBUG`
+  `ENIL_REQUEST_TIMEOUT_MS`、`ENIL_WEB_ADDR`、`ENIL_WEB_KEY` 和
+  `ENIL_WEB_TAILSCALE_LOGIN`。另外還有 `Q_DEBUG`
   和 `NODE_DEBUG`：兩個 npm 相依套件
   透過 Node 的 `process.env` 讀它們，沒列出的名稱會直接丟錯誤，而少了 `Q_DEBUG`
   daemon 根本啟動不了。

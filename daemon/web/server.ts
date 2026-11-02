@@ -5,7 +5,8 @@
  *
  * Off unless ENIL_WEB_ADDR names an address (host:port). Bind it to the
  * machine's Tailscale IP, never 0.0.0.0: the address is the only network
- * boundary, and the web key (auth.ts) is the only credential.
+ * boundary. The web key (auth.ts) or an opted-in Tailscale owner identifies
+ * the browser; forwarded identity headers are never trusted.
  *
  * Routes:
  *   GET  /                 the page (public/index.html); /?key=… signs in
@@ -32,6 +33,7 @@ import { originAllowed, usableKey, WebAuth } from "./auth.ts";
 import { bridge, StateFeed } from "./bridge.ts";
 import { serveFile, Uploads } from "./files.ts";
 import { json, securityHeaders, status } from "./http.ts";
+import { TailscaleAuth } from "./tailscale.ts";
 
 const BIND_RETRY_MS = 10_000;
 const MAX_BRIDGES = 32;
@@ -44,6 +46,10 @@ export interface WebOptions {
   addr: string;
   key: string | undefined;
   stateDir: string;
+  /** Exact Tailscale LoginName permitted without a web key; off by default. */
+  tailscaleLogin?: string;
+  /** Local identity lookup; tests supply fixtures instead of the CLI. */
+  tailscaleLookup?: (ip: string) => Promise<unknown>;
   /** Where the page's files are; tests point it elsewhere. */
   publicDir?: URL;
   log?: (line: string) => void;
@@ -52,7 +58,7 @@ export interface WebOptions {
 }
 
 export interface WebHandler {
-  handle(req: Request): Promise<Response>;
+  handle(req: Request, remoteAddress?: string): Promise<Response>;
   /** The key in force, minted when the option was missing or unusable. */
   key: string;
   close(): void;
@@ -294,6 +300,10 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
   const ownHost = canonicalHost(opts.addr);
   const assets = await loadAssets(publicDir);
   const auth = await WebAuth.create(opts.key);
+  const tailscale = new TailscaleAuth(
+    opts.tailscaleLogin ?? "",
+    opts.tailscaleLookup,
+  );
   const uploads = await Uploads.open(opts.stateDir);
   const feed = new StateFeed(`${opts.stateDir}/state.json`);
   const connections = new Set<() => void>();
@@ -307,7 +317,10 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
     connections,
   };
 
-  async function handle(req: Request): Promise<Response> {
+  async function handle(
+    req: Request,
+    remoteAddress?: string,
+  ): Promise<Response> {
     if (closed) return status(503);
     const url = new URL(req.url);
     const host = req.headers.get("host") ?? url.host;
@@ -332,7 +345,9 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
     }
     if (get && ASSET_RE.test(path)) return serveAsset(assets, path, req);
     if (get && path === "/api/session") {
-      return json({ signedIn: auth.signedIn(req) });
+      const signedIn = auth.signedIn(req) ||
+        await tailscale.signedIn(req, remoteAddress);
+      return closed ? status(503) : json({ signedIn });
     }
     if (req.method === "POST" && path === "/api/signin") {
       if (crossSite(req)) return status(403);
@@ -360,7 +375,10 @@ export async function createWeb(opts: WebOptions): Promise<WebHandler> {
     }
 
     if (!path.startsWith("/api/")) return status(404);
-    if (!auth.signedIn(req)) return status(401);
+    if (!auth.signedIn(req) && !await tailscale.signedIn(req, remoteAddress)) {
+      return status(401);
+    }
+    if (closed) return status(503);
     if (req.method === "POST" && path === "/api/signout") {
       return withCookie(auth.signoutCookie());
     }
@@ -437,7 +455,7 @@ export async function startWeb(opts: WebOptions): Promise<void> {
           console.error(`[web] ${e instanceof Error ? e.message : String(e)}`);
           return status(500);
         },
-      }, (req) => web.handle(req));
+      }, (req, info) => web.handle(req, info.remoteAddr.hostname));
       await server.finished;
       return;
     } catch (e) {
@@ -459,6 +477,7 @@ if (import.meta.main) {
   await startWeb({
     addr: Deno.env.get("ENIL_WEB_ADDR") ?? "127.0.0.1:3440",
     key: Deno.env.get("ENIL_WEB_KEY"),
+    tailscaleLogin: Deno.env.get("ENIL_WEB_TAILSCALE_LOGIN"),
     stateDir,
   });
 }

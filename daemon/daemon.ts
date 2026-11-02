@@ -114,6 +114,7 @@ async function main() {
     void startWeb({
       addr: webAddr,
       key: Deno.env.get("ENIL_WEB_KEY"),
+      tailscaleLogin: Deno.env.get("ENIL_WEB_TAILSCALE_LOGIN"),
       stateDir: STATE_DIR,
     }).catch((e) => console.error(`[web] failed: ${errorLine(e)}`));
   }
