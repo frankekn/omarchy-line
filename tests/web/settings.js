@@ -17,6 +17,10 @@ const THEMES = [
   "tokyo-night",
 ];
 
+// WebKit can serialize a computed 18.2px size as 18.200001px.
+const roundedFontSize = (size) =>
+  `${Math.round(Number.parseFloat(size) * 1000) / 1000}px`;
+
 // Count started tones instead of playing them, and record the background of
 // the first frame before any page script runs.
 function instrument() {
@@ -180,6 +184,7 @@ async function keyboardAndSound(h) {
     "first frame",
   );
   const first = await page.evaluate(() => globalThis.__firstFrame);
+  first.composerFontSize = roundedFontSize(first.composerFontSize);
   assert.deepEqual(first, {
     theme: "nord",
     size: "115",
@@ -294,7 +299,13 @@ async function independentSizes(h) {
           getComputedStyle(document.querySelector(selector)).fontSize,
         ]),
       );
-    });
+    }).then((sizes) =>
+      Object.fromEntries(
+        Object.entries(sizes).map((
+          [name, size],
+        ) => [name, roundedFontSize(size)]),
+      )
+    );
   const defaults = await sizes();
   assert.deepEqual(
     [
@@ -531,7 +542,7 @@ async function narrow(h) {
       await page.evaluate(() => [
         getComputedStyle(document.querySelector(".bubble")).fontSize,
         getComputedStyle(document.querySelector("#message-input")).fontSize,
-      ]),
+      ]).then((sizes) => sizes.map(roundedFontSize)),
       [bubbleSize, composerSize],
     );
     assert.deepEqual(
