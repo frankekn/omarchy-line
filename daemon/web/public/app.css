@@ -73,6 +73,10 @@ a:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
+/* Focus placed on load, before any key press (js/view-chats.js). */
+.chat-list.quiet-focus:focus-visible {
+  outline: none;
+}
 [hidden] {
   display: none!important;
 }
@@ -245,8 +249,6 @@ a:focus-visible {
 }
 .sync-button {
   margin-left: auto;
-  min-width: 44px;
-  min-height: 44px;
 }
 .sync-button:disabled {
   opacity: 1;
@@ -527,6 +529,11 @@ textarea::placeholder {
 .empty-chat p {
   font-size: calc(12rem / 14);
   line-height: 1.6;
+}
+.empty-chat kbd {
+  font: inherit;
+  color: var(--text);
+  font-weight: 700;
 }
 .chat-view {
   height: 100%;
@@ -881,11 +888,13 @@ textarea::placeholder {
   color: var(--accent);
   background: var(--hover);
 }
-/* The keyboard choice in a picker: the same accent fill as a checked
-   setting, so it reads apart from the pointer's hover. */
+/* The keyboard choice in a picker: a quiet accent tint and bold text, like
+   the open chat in the list. At 12% every theme keeps AA for text, muted
+   text and accent text on it. */
 .mention-option.selected {
-  color: var(--accent-ink);
-  background: var(--accent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  font-weight: 700;
 }
 .mention-error {
   padding: 8px 10px;
@@ -1042,6 +1051,11 @@ textarea::placeholder {
   }
   .search-wrap input,
   .composer textarea {
+    min-height: 44px;
+  }
+  /* A message with no actions, such as an unsent one, keeps the same
+     rhythm as its neighbors, whose action buttons make the row 44px. */
+  .message-meta {
     min-height: 44px;
   }
   .message-text a {
@@ -1448,6 +1462,18 @@ textarea::placeholder {
   border-radius: 8px;
   cursor: pointer;
 }
+/* Themes: equal cells, two per row in the dialog, one at 200% text. Match
+   system takes a full row so the ten named themes fill five rows. */
+.text-sizes.themes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8rem), 1fr));
+}
+.themes label {
+  text-align: center;
+}
+.themes label:first-child {
+  grid-column: 1 / -1;
+}
 .text-sizes input {
   position: absolute;
   opacity: 0;
@@ -1489,35 +1515,89 @@ textarea::placeholder {
   font-size: calc(12rem / 14);
   font-weight: 400;
 }
+/* Label left, value right. A value too long for the rest of the row moves
+   to its own line instead of breaking. */
 .daemon-status dl {
   display: grid;
-  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: 6px 16px;
+  gap: 6px;
   margin: 0;
+}
+.daemon-status dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 16px;
 }
 .daemon-status dt {
   color: var(--muted);
 }
 .daemon-status dd {
-  margin: 0;
+  min-width: 0;
+  margin: 0 0 0 auto;
+  text-align: right;
   overflow-wrap: anywhere;
 }
-@media (max-width: 360px) {
-  .daemon-status dl {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-  }
-  .daemon-status dd {
-    margin-bottom: 6px;
-  }
-}
 /* Quick switcher and next unread. */
-/* The buttons' own padding spaces them; the negative margin lines their
-   labels up with the search box above. */
+/* The list shortcuts, Sync and the chat header actions: outlined like the
+   search box, so they read as buttons, and no taller than the plain text
+   buttons were. In the sidebar their outer edges line up with the search
+   box. */
 .nav-actions {
   display: flex;
   flex-wrap: wrap;
-  margin: 2px -8px 0;
+  gap: 6px;
+  margin-top: 8px;
+}
+.nav-actions .text-button,
+.chat-actions .text-button,
+.sync-button {
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: calc(11rem / 14);
+}
+.nav-actions .text-button:hover,
+.chat-actions .text-button:hover,
+.sync-button:hover {
+  background: var(--hover);
+}
+@media (max-width:700px), (pointer:coarse) {
+  /* The outline stays its desktop size inside the 44px touch target. The
+     target's own 6px above the outline spaces the row from the search box,
+     so the header is no taller than with the plain text buttons, and the
+     tighter spacing keeps one row at 320px and 150% text in zh-TW. */
+  .nav-actions {
+    gap: 0 4px;
+    margin-top: 2px;
+  }
+  .nav-actions .text-button,
+  .chat-actions .text-button,
+  .sync-button {
+    padding-inline: 6px;
+    position: relative;
+    isolation: isolate;
+    border-color: transparent;
+  }
+  .nav-actions .text-button:hover,
+  .chat-actions .text-button:hover,
+  .sync-button:hover {
+    background: transparent;
+  }
+  .nav-actions .text-button::before,
+  .chat-actions .text-button::before,
+  .sync-button::before {
+    content: "";
+    position: absolute;
+    inset: 6px 0;
+    z-index: -1;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .nav-actions .text-button:hover::before,
+  .chat-actions .text-button:hover::before,
+  .sync-button:hover::before {
+    background: var(--hover);
+  }
 }
 .switcher {
   width: min(520px, calc(100vw - 24px));
@@ -1568,26 +1648,12 @@ textarea::placeholder {
 .switcher-option:hover {
   background: var(--hover);
 }
+/* Same choice style as .mention-option.selected. */
 .switcher-option[aria-selected="true"] {
-  color: var(--accent-ink);
-  background: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
-.switcher-option[aria-selected="true"] .switcher-tag,
-.switcher-option[aria-selected="true"] .search-meta,
-.switcher-option[aria-selected="true"] .search-meta .switcher-name {
-  color: inherit;
-}
-.switcher-option[aria-selected="true"] .badge {
-  color: var(--accent);
-  background: var(--accent-ink);
-}
-.switcher-option[aria-selected="true"] .badge.quiet {
-  color: inherit;
-  background: transparent;
-  box-shadow: inset 0 0 0 1px currentColor;
-}
-.switcher-option[aria-selected="true"] mark {
-  text-decoration-color: currentColor;
+.switcher-option[aria-selected="true"] .switcher-name {
+  font-weight: 700;
 }
 .switcher-name {
   flex: 1;
@@ -1612,6 +1678,7 @@ textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 6px;
   margin-left: auto;
 }
 .row-marks {

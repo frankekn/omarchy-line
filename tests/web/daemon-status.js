@@ -2,7 +2,7 @@
 // metadata, a field the daemon does not write is not shown, and the block
 // stays usable at 320px and 200% text.
 import axe from "npm:axe-core@4.10.3";
-import { assert, until } from "./harness.js";
+import { assert, tapSocket, until } from "./harness.js";
 
 async function rows(page) {
   return await page.locator("#daemon-status-list").evaluate((list) => {
@@ -67,6 +67,65 @@ export async function daemonStatus(h) {
   assert.deepEqual(result, [], "axe on the settings dialog");
   h.step("status-failures-and-axe");
   await context.close();
+
+  // A phone, with a push link up since yesterday: every value stays on one
+  // line, and the themes fill an even grid.
+  const phone = await h.context({
+    locale: "en-US",
+    viewport: { width: 390, height: 844 },
+    isMobile: true,
+    hasTouch: true,
+  });
+  const phonePage = await phone.newPage();
+  const since = Date.now() - 26 * 3600_000;
+  await tapSocket(phonePage, {
+    server(frame) {
+      if (frame.web === "state" && frame.state) {
+        frame.state.link = { push: "up", since };
+      }
+      return true;
+    },
+  });
+  await h.signIn(phonePage);
+  await phonePage.locator("#settings-open").tap();
+  await phonePage.getByRole("region", { name: "Status" }).waitFor();
+  shown = await rows(phonePage);
+  assert.match(shown["Push connection"], /^Connected · since \S+/);
+  // Today's times are the clock alone.
+  assert.match(shown["Last sync"], /^\d{1,2}:\d\d [AP]M$/);
+  const lines = await phonePage.locator("#daemon-status-list").evaluate(
+    (list) =>
+      [...list.querySelectorAll("dd")].map((node) => {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const tops = new Set(
+          [...range.getClientRects()].map((rect) => Math.round(rect.top)),
+        );
+        return `${node.previousElementSibling.textContent} ${tops.size}`;
+      }),
+  );
+  assert.deepEqual(
+    lines,
+    Object.keys(shown).map((label) => `${label} 1`),
+    "one line per value",
+  );
+  const cells = await phonePage.locator("#themes label").evaluateAll((
+    labels,
+  ) =>
+    labels.map((node) => {
+      const box = node.getBoundingClientRect();
+      return [Math.round(box.left), Math.round(box.width)];
+    })
+  );
+  const [system, ...named] = cells;
+  const lefts = new Set(named.map(([left]) => left));
+  const widths = new Set(named.map(([, width]) => width));
+  assert.equal(named.length, 10);
+  assert.equal(lefts.size, 2, "two columns");
+  assert.equal(widths.size, 1, "equal cells");
+  assert.ok(system[1] > [...widths][0] * 2, "Match system spans the row");
+  h.step("status-one-line-and-theme-grid-390");
+  await phone.close();
 
   // 320px wide at 200% text: no horizontal scroll in the dialog.
   const narrow = await h.context({

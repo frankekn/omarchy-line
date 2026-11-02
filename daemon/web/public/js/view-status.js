@@ -62,22 +62,48 @@ export function statusRows(state, t, format) {
   return rows;
 }
 
+/**
+ * A short status time: the clock alone for today, the month and day before
+ * it for another day, and the year too for another year. Short enough that a
+ * normal value fits on one line in the settings dialog.
+ * @param {number} ms
+ * @param {Date} now
+ * @param {string} locale
+ * @returns {string}
+ */
+export function statusTime(ms, now, locale) {
+  const date = new Date(ms);
+  /** @type {Intl.DateTimeFormatOptions} */
+  const options = { hour: "numeric", minute: "2-digit" };
+  if (date.toDateString() !== now.toDateString()) {
+    options.month = "numeric";
+    options.day = "numeric";
+    if (date.getFullYear() !== now.getFullYear()) options.year = "numeric";
+  }
+  return date.toLocaleString(locale, options);
+}
+
 export function createStatusView(ctx) {
   const model = ctx.model, t = ctx.t;
   const list = $("daemon-status-list"), section = $("daemon-status");
-  const formatter = new Intl.DateTimeFormat(ctx.english ? "en-US" : "zh-TW", {
-    dateStyle: "short",
-    timeStyle: "medium",
-  });
+  const locale = ctx.english ? "en-US" : "zh-TW";
   function render() {
-    const rows = statusRows(model.state, t, (ms) => formatter.format(ms));
+    const now = new Date();
+    const rows = statusRows(
+      model.state,
+      t,
+      (ms) => statusTime(ms, now, locale),
+    );
     section.hidden = rows.length === 0;
+    // One wrapper per pair, so a value that does not fit beside its label
+    // moves below it instead of breaking.
     list.replaceChildren(
-      ...rows.flatMap(([key, value]) => {
-        const term = el("dt"), detail = el("dd");
+      ...rows.map(([key, value]) => {
+        const row = el("div"), term = el("dt"), detail = el("dd");
         term.textContent = t(key);
         detail.textContent = value;
-        return [term, detail];
+        row.append(term, detail);
+        return row;
       }),
     );
   }

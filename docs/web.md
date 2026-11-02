@@ -104,6 +104,8 @@ returns to the list and focuses search, `r` syncs, and `j`/`k` select a chat
 or scroll messages. These character shortcuts do not run on other controls.
 On the first workspace render, the list gets focus if the viewport is wider
 than 700 px, the primary pointer is not coarse, and nothing else is focused.
+Its focus ring stays hidden until the first key press. With no chat open, the
+empty pane names the switcher and next-unread keys.
 Clicking a blank area can move focus to the page body; the character shortcuts
 then stop until you focus the list or messages again.
 
@@ -219,6 +221,9 @@ dialog stays open:
 - **Last sync**: the last time the chat list was fresh.
 - **Sync failures in a row**, with the reason when there is one.
 - **State updated**: the last time the daemon wrote its state.
+
+Times from today show only the clock. Older times add the date, and the year
+when it is not the current year.
 
 A row whose field the daemon does not write is left out. `state.json` has no
 daemon version or commit, so the block does not show one. It has no restart

@@ -99,6 +99,34 @@ async function desktop(h) {
   assert.equal(sidebar?.y, 0);
   h.step("no-top-bar-and-title");
 
+  // The list shortcuts and Sync are outlined buttons on one row, lined up
+  // with the search box.
+  await page.locator("#next-unread").waitFor();
+  const header = await page.evaluate(() => {
+    const box = (node) => node.getBoundingClientRect();
+    const search = box(document.querySelector(".search-wrap"));
+    const buttons = [
+      ...document.querySelectorAll(".nav-actions button:not([hidden])"),
+    ];
+    const sync = document.getElementById("sync");
+    return {
+      outlined: [...buttons, sync].every((node) =>
+        getComputedStyle(node).borderTopStyle === "solid"
+      ),
+      rows: new Set(buttons.map((node) => box(node).top)).size,
+      left: box(buttons[0]).left - search.left,
+      right: box(sync).right - search.right,
+    };
+  });
+  assert.deepEqual(header, { outlined: true, rows: 1, left: 0, right: 0 });
+  // The empty pane names the keys that get to a chat.
+  assert.match(
+    await page.locator("#empty-description").textContent(),
+    /^Press (Ctrl\+K|⌘K) to switch chats, or (Alt\+↓|⌥↓) for the next unread\.$/,
+  );
+  assert.equal(await page.locator("#empty-description kbd").count(), 2);
+  h.step("list-header-buttons-and-empty-pane");
+
   const opener = await bottomLeft(page, "#settings-open");
   const status = await page.locator("#connection").boundingBox();
   assert.ok(status && status.x < opener.x, "status left of the button");

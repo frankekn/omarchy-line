@@ -66,13 +66,25 @@ export async function navigation(h) {
     await page.locator(`#${active}`).getAttribute("aria-selected"),
     "true",
   );
-  // The choice is a filled row, not a side stripe.
+  // The choice is a quiet tinted row in the normal text color: not an
+  // accent fill and not a side stripe.
   assert.deepEqual(
     await page.locator(`#${active}`).evaluate((node) => {
       const style = getComputedStyle(node);
-      return [style.boxShadow, style.borderLeftWidth];
+      const probe = document.createElement("span");
+      probe.style.color = "var(--accent)";
+      document.body.append(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      return [
+        style.boxShadow,
+        style.borderLeftWidth,
+        style.color === getComputedStyle(document.body).color,
+        style.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+        style.backgroundColor !== accent,
+      ];
     }),
-    ["none", "0px"],
+    ["none", "0px", true, true],
   );
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
