@@ -62,6 +62,7 @@ import type {
 // Exactly TalkMessage's `hasContents` (client/features/message/talk.ts:24);
 // getData() throws "message have no contents" for anything else. There is no
 // "GIF" ContentType either -- animated images arrive as IMAGE.
+// enil:messageconvert-begin
 const MEDIA_TYPES = ["IMAGE", "VIDEO", "AUDIO", "FILE"];
 
 /** What an @All mention is called; the per-person ones use resolveName. */
@@ -132,7 +133,7 @@ async function toPluginMessage(
     contentType === "CHATEVENT" && !out.unsent && !out.decryptFailed &&
     (!out.text || out.text.toUpperCase() === "CHATEVENT") &&
     meta.LOC_KEY === "C_MA" && typeof meta.LOC_ARGS === "string" &&
-    meta.LOC_ARGS.length === 33 && /^u[0-9a-f]{32}$/.test(meta.LOC_ARGS) &&
+    /^u[0-9a-f]{32}$/.test(meta.LOC_ARGS) &&
     owner && sessionIsCurrent(owner, generation)
   ) {
     const name = await resolveName(meta.LOC_ARGS, owner, generation);
@@ -242,6 +243,8 @@ async function toPluginMessage(
   }
   return out;
 }
+
+// enil:messageconvert-end
 
 /**
  * The fields finalizeMessageState reads off a wire Message. The generated
@@ -663,10 +666,14 @@ function pushedPreviewText(
     fileName?: string;
     altText?: string;
     text: string;
+    chatEvent?: { kind: string };
   },
   raw: RawPreviewFields,
 ): string {
   if (message.unsent) return UNSENT_TEXT;
+  // Refresh derives previews from the wire text, before actor resolution.
+  // Keep push previews identical rather than flipping labels on refresh.
+  if (message.chatEvent) return previewText("", raw);
   return clipPreview(message.fileName || message.altText || "") ||
     previewText(message.text, raw);
 }

@@ -140,7 +140,7 @@ const strings = {
   decryptFailed: ["無法解密這則訊息", "Unable to decrypt this message"],
   message: ["訊息", "Message"],
   systemEvent: ["尚未支援的聊天室事件", "Unsupported chat event"],
-  announcementSet: ["設定了公告", " set an announcement"],
+  announcementSet: ["{actor}設定了公告", "{actor} set an announcement"],
   eventMember: ["成員", "A member"],
   postEvent: ["貼文動態", "Post activity"],
   read: ["已讀", "Read"],

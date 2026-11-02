@@ -17267,6 +17267,20 @@ group("(y1) Strings.t / Strings.fmt cover both languages and every key");
   );
 }
 
+group("announcement notices localize structured events in both languages");
+{
+  const event = { contentType: "CHATEVENT", text: "Jordan設定了公告",
+    chatEvent: { kind: "announcement", actor: "Jordan" } };
+  const Ten = (key, ...args) => Strings.fmt(key, "en", ...args);
+  ok(EventLog.systemEventText(event, Tzh) === "Jordan設定了公告",
+    "Chinese announcement text includes the decoded actor");
+  ok(EventLog.systemEventText(event, Ten) === "Jordan set an announcement",
+    "English announcement text does not leak the Chinese wire fallback");
+  ok(EventLog.systemEventText({ ...event,
+    chatEvent: { kind: "announcement", actor: "" } }, Ten) ===
+    "A member set an announcement", "unknown actors use a localized fallback");
+}
+
 group("(y2) normalizeLang maps the setting enum to zh/en");
 {
   ok(

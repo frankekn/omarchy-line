@@ -27,10 +27,30 @@ interface PreviewModule {
       fileName?: string;
       altText?: string;
       text: string;
+      chatEvent?: { kind: string };
     },
     raw: Json,
   ): string;
 }
+Deno.test("announcement previews agree between push and refresh", async () => {
+  const m = await mod();
+  const raw = {
+    contentType: "CHATEVENT",
+    contentMetadata: { LOC_KEY: "C_MA", LOC_ARGS: "u" + "a".repeat(32) },
+  };
+  const converted = {
+    unsent: false,
+    text: "小葵設定了公告",
+    chatEvent: { kind: "announcement" },
+  };
+  assertEquals(m.pushedPreviewText(converted, raw), m.previewText("", raw));
+  assertEquals(m.pushedPreviewText(converted, raw), "[系統事件]");
+  assertEquals(
+    m.pushedPreviewText({ ...converted, unsent: true }, raw),
+    "已收回訊息",
+  );
+});
+
 let M: PreviewModule | undefined;
 async function mod() {
   // previewText calls unsentOf, so the real mediastate block goes in front of

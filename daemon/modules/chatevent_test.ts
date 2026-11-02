@@ -1,5 +1,5 @@
 import { assert, assertEquals } from "@std/assert";
-import { sliceBlock } from "../slice_test.ts";
+import { loadBlocks } from "../slice_test.ts";
 import type { PluginMessage } from "./types.ts";
 
 const ACTOR = "u" + "a".repeat(32);
@@ -36,15 +36,6 @@ function event(
 }
 
 async function converter(): Promise<ConversionModule> {
-  const source = await Deno.readTextFile(
-    new URL("./messages.ts", import.meta.url),
-  );
-  const start = source.indexOf("const MEDIA_TYPES =");
-  const end = source.indexOf(
-    "\n/**\n * The fields finalizeMessageState",
-    start,
-  );
-  assert(start > 0 && end > start);
   const prelude = `
 let client = {};
 let sessionGeneration = 1;
@@ -78,16 +69,10 @@ export function convert(message) {
   return toPluginMessage(message, "c-test", false);
 }
 `;
-  const file = await Deno.makeTempFile({ suffix: ".ts" });
-  try {
-    await Deno.writeTextFile(
-      file,
-      prelude + await sliceBlock("mediastate") + source.slice(start, end),
-    );
-    return await import("file://" + file) as ConversionModule;
-  } finally {
-    await Deno.remove(file);
-  }
+  return await loadBlocks<ConversionModule>(
+    ["mediastate", "messageconvert"],
+    prelude,
+  );
 }
 
 Deno.test("C_MA resolves its argument actor instead of the sender", async () => {

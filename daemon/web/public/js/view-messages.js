@@ -164,9 +164,10 @@ export function createMessagesView(ctx) {
       message.contentType === "CHATEVENT" &&
       message.chatEvent?.kind === "announcement"
     ) {
-      return `${message.chatEvent.actor || t("eventMember")}${
-        t("announcementSet")
-      }`;
+      return t("announcementSet").replace(
+        "{actor}",
+        () => message.chatEvent.actor || t("eventMember"),
+      );
     }
     const body = message.contentType === "FLEX" && message.altText
       ? String(message.altText)

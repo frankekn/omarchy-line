@@ -233,6 +233,9 @@ function isSystemEvent(m) {
 
 // 這兩種事件的 text 幾乎都是空的，走 bodyText 會印出 [CHATEVENT] 這種內部代號。
 function systemEventText(m, tr) {
+  if (m.contentType === "CHATEVENT" && !m.unsent && !m.decryptFailed &&
+      m.chatEvent && m.chatEvent.kind === "announcement")
+    return tr("sys.announcement", m.chatEvent.actor || tr("sys.member"))
   var label = tr(m.contentType === "POSTNOTIFICATION" ? "sys.post" : "sys.event")
   // LINE 常把事件名本身塞進 text（text === "POSTNOTIFICATION"），
   // 照印就變成聊天視窗裡的英文代碼，所以只有真的人話才用 text。
