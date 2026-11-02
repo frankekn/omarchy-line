@@ -177,6 +177,8 @@ var STRINGS = {
   "read.n":      { zh: "已讀 %1", en: "Read %1" },
   "sys.post":    { zh: "貼文通知", en: "Post notification" },
   "sys.event":   { zh: "系統事件", en: "System event" },
+  "sys.announcement": { zh: "%1設定了公告", en: "%1 set an announcement" },
+  "sys.member":  { zh: "成員", en: "A member" },
   "notif.msg":   { zh: "訊息", en: "message" },
   "day.today":   { zh: "今天", en: "Today" },
   "day.yesterday":{ zh: "昨天", en: "Yesterday" },

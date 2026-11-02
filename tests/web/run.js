@@ -24,6 +24,7 @@ import { daemonStatus } from "./daemon-status.js";
 import { messageActions } from "./message-actions.js";
 import { search } from "./search.js";
 import { chrome } from "./chrome.js";
+import { chatEvents } from "./chat-events.js";
 
 const suites = {
   main,
@@ -50,6 +51,7 @@ const suites = {
   "message-actions": messageActions,
   search,
   chrome,
+  "chat-events": chatEvents,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

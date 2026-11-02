@@ -62,6 +62,7 @@ import type {
 // Exactly TalkMessage's `hasContents` (client/features/message/talk.ts:24);
 // getData() throws "message have no contents" for anything else. There is no
 // "GIF" ContentType either -- animated images arrive as IMAGE.
+// enil:messageconvert-begin
 const MEDIA_TYPES = ["IMAGE", "VIDEO", "AUDIO", "FILE"];
 
 /** What an @All mention is called; the per-person ones use resolveName. */
@@ -126,6 +127,24 @@ async function toPluginMessage(
   // message that plainly had one; the plugin renders that case explicitly.
   if (!out.text && raw.contentMetadata?.e2eeVersion && !out.hasMedia) {
     out.decryptFailed = true;
+  }
+
+  if (
+    contentType === "CHATEVENT" && !out.unsent && !out.decryptFailed &&
+    (!out.text || out.text.toUpperCase() === "CHATEVENT") &&
+    meta.LOC_KEY === "C_MA" && typeof meta.LOC_ARGS === "string" &&
+    /^u[0-9a-f]{32}$/.test(meta.LOC_ARGS) &&
+    owner && sessionIsCurrent(owner, generation)
+  ) {
+    const name = await resolveName(meta.LOC_ARGS, owner, generation);
+    if (sessionIsCurrent(owner, generation)) {
+      const actor = name.length <= 200 && name.trim() &&
+          !/[ucr][0-9a-f]{32}/i.test(name) && !/\p{Cc}/u.test(name)
+        ? name.trim()
+        : "";
+      out.chatEvent = { kind: "announcement", actor };
+      out.text = `${actor || "成員"}設定了公告`;
+    }
   }
 
   // After the recall and decrypt-failure branches above, not before: the
@@ -224,6 +243,8 @@ async function toPluginMessage(
   }
   return out;
 }
+
+// enil:messageconvert-end
 
 /**
  * The fields finalizeMessageState reads off a wire Message. The generated
@@ -645,10 +666,14 @@ function pushedPreviewText(
     fileName?: string;
     altText?: string;
     text: string;
+    chatEvent?: { kind: string };
   },
   raw: RawPreviewFields,
 ): string {
   if (message.unsent) return UNSENT_TEXT;
+  // Refresh derives previews from the wire text, before actor resolution.
+  // Keep push previews identical rather than flipping labels on refresh.
+  if (message.chatEvent) return previewText("", raw);
   return clipPreview(message.fileName || message.altText || "") ||
     previewText(message.text, raw);
 }
