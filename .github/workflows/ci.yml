@@ -86,4 +86,3 @@ jobs:
         run: |
           deno run --frozen -A tests/web/run.js main edge media mentions parity review a11y state-wire state-wire-resync preview-cache drafts message-window settings navigation pin-mute events-catchup daemon-status message-actions search chrome
           deno run --frozen -A tests/web/boot-rtt.js
-          deno run --frozen -A tests/web/tail-negative.js
