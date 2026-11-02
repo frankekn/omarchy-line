@@ -1129,7 +1129,123 @@ async function scrollFollow(h) {
   await context.close();
 }
 
+async function conversationGrouping(h) {
+  const context = await h.context({ locale: "en-US" });
+  await exposeFollowContext(context);
+  const page = await context.newPage();
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.waitForFunction(() => !globalThis.__followModel.loading);
+  const result = await page.evaluate(async () => {
+    const model = globalThis.__followModel, ctx = globalThis.__followCtx;
+    const time = new Date(2026, 5, 1, 12).getTime();
+    const message = (id) => ({
+      id: String(id),
+      chat: model.active,
+      from: "u-group-peer",
+      fromName: "Peer",
+      time: time + id * 1000,
+      text: `Grouped ${id}`,
+      contentType: "NONE",
+    });
+    const row = (id) =>
+      document.querySelector(`article[data-message-id="${id}"]`);
+    const grouped = (id) => row(id).classList.contains("continuation");
+    model.messages = [message(2), message(3)];
+    model.unreadMarkId = "";
+    model.noOlder = true;
+    ctx.renderMessages("bottom");
+    const retained = row(2);
+    const sender = retained.querySelector(".sender");
+    const text = retained.querySelector(".message-text");
+    const action = retained.querySelector(".message-actions button");
+    const stamp = retained.querySelector("time");
+    const media = document.createElement("video");
+    retained.querySelector(".bubble").append(media);
+    action.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    const initial = !grouped(2) && grouped(3);
+    model.messages = [message(1), ...model.messages];
+    ctx.renderMessages("anchor");
+    const prepend = grouped(2) && row(2) === retained &&
+      retained.querySelector(".sender") === sender &&
+      retained.querySelector("time") === stamp && media.isConnected &&
+      retained.querySelector(".message-actions button") === action &&
+      document.activeElement === action &&
+      getSelection().toString() === "Grouped 2";
+    const hiddenAuthor = getComputedStyle(sender).clipPath === "inset(50%)" &&
+      sender.textContent === "Peer" && !sender.hasAttribute("aria-hidden");
+    const tighter = getComputedStyle(retained).marginTop === "-5px";
+    model.messages[0] = { ...model.messages[0], unsent: true };
+    ctx.renderMessages("preserve");
+    const unsend = !grouped(2) && grouped(3) &&
+      retained.querySelector("time") === stamp && media.isConnected;
+    model.unreadMarkId = "3";
+    ctx.renderMessages("preserve");
+    const unread = !grouped(3);
+    model.unreadMarkId = "";
+    model.messages = model.messages.slice(1);
+    ctx.renderMessages("preserve");
+    const removal = !grouped(2) && grouped(3);
+    getSelection().removeAllRanges();
+    ctx.renderMessages("bottom");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: message(4),
+      },
+    });
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    );
+    const list = document.getElementById("messages");
+    const checks = {
+      initial,
+      prepend,
+      hiddenAuthor,
+      tighter,
+      unsend,
+      unread,
+      removal,
+      append: grouped(4),
+      times: [...list.querySelectorAll(".message-row")].every((node) =>
+        node.querySelector("time")?.textContent
+      ),
+      following: list.scrollHeight - list.clientHeight - list.scrollTop <= 2,
+    };
+    // Exceed the trim batch to exercise the append-only desired-items path.
+    model.messages = Array.from(
+      { length: 702 },
+      (_, index) => message(100 + index),
+    );
+    ctx.renderMessages("bottom");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: message(802),
+      },
+    });
+    checks.appendOnly = grouped(802);
+    return checks;
+  });
+  for (const [name, passed] of Object.entries(result)) assert.ok(passed, name);
+  await context.close();
+  h.step(
+    "conversation grouping updates append, prepend, unsend and unread boundaries without replacing retained nodes",
+  );
+}
+
 export async function messageWindow(h) {
+  await conversationGrouping(h);
   await reactDuringEmptyPage(h);
   await touchDuringAccountChange(h);
   await touchPagingNearTop(h);

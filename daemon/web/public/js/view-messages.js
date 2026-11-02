@@ -3,6 +3,7 @@
 import { $, el, formatTime, icon, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
+import { continuesMessageRun } from "./message-grouping.js";
 const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
@@ -922,14 +923,16 @@ export function createMessagesView(ctx) {
     let desired;
     if (appendOnly) {
       desired = renderedDesired.slice();
-      desired.push({
+      const item = {
         key: `message:${tail.id}:0`,
         type: "message",
         message: tail,
         time: tailTime,
         day: tailDay,
         today,
-      });
+      };
+      item.continuation = continuesMessageRun(desired.at(-1), item);
+      desired.push(item);
     } else {
       desired = [];
       // Keep the control's space after an empty page: removing it at the top
@@ -973,7 +976,9 @@ export function createMessagesView(ctx) {
           desired.push({ key: "control:unread", type: "unread" });
           unreadPlaced = true;
         }
-        desired.push({ key, type: "message", message, time, day, today });
+        const item = { key, type: "message", message, time, day, today };
+        item.continuation = continuesMessageRun(desired.at(-1), item);
+        desired.push(item);
       }
     }
     renderedTail = lastConfirmed(rows);
@@ -994,16 +999,23 @@ export function createMessagesView(ctx) {
           hasPreview = model.previews.has(id);
         const unchanged = prior?.message === item.message &&
           prior.preview === preview && prior.hasPreview === hasPreview &&
-          prior.today === today;
+          prior.today === today && prior.continuation === item.continuation;
         if (unchanged) continue;
-        const signature = JSON.stringify([
+        const contentSignature = JSON.stringify([
           item.message,
           preview,
           hasPreview,
           today,
         ]);
-        if (prior?.signature === signature) {
+        const signature = JSON.stringify([contentSignature, item.continuation]);
+        if (prior?.contentSignature === contentSignature) {
+          // Boundary-only changes must retain every child, including selection.
+          if (prior.signature !== signature) {
+            prior.node.classList.toggle("continuation", item.continuation);
+          }
           prior.message = item.message;
+          prior.continuation = item.continuation;
+          prior.signature = signature;
           continue;
         }
         const mediaSignature = JSON.stringify([
@@ -1025,6 +1037,7 @@ export function createMessagesView(ctx) {
         ]);
         const keepMedia = prior?.mediaSignature === mediaSignature;
         let node = messageNode(item.message, !keepMedia);
+        node.classList.toggle("continuation", item.continuation);
         if (prior) {
           if (!keepMedia) ctx.unobservePreviews(prior.node);
           updateMessageParts(
@@ -1042,6 +1055,8 @@ export function createMessagesView(ctx) {
           node,
           message: item.message,
           signature,
+          contentSignature,
+          continuation: item.continuation,
           mediaSignature,
           preview,
           hasPreview,
