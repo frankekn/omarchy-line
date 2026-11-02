@@ -1,5 +1,11 @@
 // Browser-independent protocol, text, storage and connection tests.
-import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertMatch,
+  assertRejects,
+  assertThrows,
+} from "@std/assert";
 import {
   acceptEvent,
   applyChatPush,
@@ -25,7 +31,7 @@ import { loadBlocks } from "../slice_test.ts";
 import { planKeyChanges } from "./public/js/keyed.js";
 import { createChatController } from "./public/js/controller-chat.js";
 import { createStateController } from "./public/js/controller-state.js";
-import { statusRows } from "./public/js/view-status.js";
+import { statusRows, statusTime } from "./public/js/view-status.js";
 import { createSendController } from "./public/js/controller-send.js";
 import { createComposerController } from "./public/js/controller-composer.js";
 import { putPreview } from "./public/js/preview-cache.js";
@@ -1737,4 +1743,22 @@ Deno.test("status rows show only the metadata the state carries", () => {
     ),
     [],
   );
+});
+
+Deno.test("status times print the clock alone for today", () => {
+  const now = new Date(2026, 10, 2, 15, 0);
+  const at = (...parts: [number, number, number, number, number]) =>
+    new Date(...parts).getTime();
+  const today = at(2026, 10, 2, 10, 14);
+  const yesterday = at(2026, 10, 1, 22, 5);
+  const lastYear = at(2025, 11, 31, 9, 30);
+  // ICU picks the exact wording; check what is and is not there.
+  for (const locale of ["en-US", "zh-TW"]) {
+    const clock = statusTime(today, now, locale);
+    assertMatch(clock, /^\D*10:14\D*$/);
+    const other = statusTime(yesterday, now, locale);
+    assertMatch(other, /11\/1\b.*10:05/);
+    assertEquals(/2026|:\d\d:/.test(other), false);
+    assertMatch(statusTime(lastYear, now, locale), /2025.*9:30/);
+  }
 });

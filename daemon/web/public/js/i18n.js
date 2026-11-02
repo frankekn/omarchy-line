@@ -63,9 +63,10 @@ const strings = {
   chats: ["聊天", "Chats"],
   search: ["搜尋聊天", "Search chats"],
   emptyTitle: ["選擇一個聊天室", "Choose a conversation"],
+  // {switch} and {next} become the platform's keys (js/view-switcher.js).
   emptyDescription: [
-    "從左側選擇對話，繼續聊下去。",
-    "Select a chat to continue the conversation.",
+    "按 {switch} 切換聊天室，按 {next} 跳到下一個未讀。",
+    "Press {switch} to switch chats, or {next} for the next unread.",
   ],
   noChats: ["沒有符合的聊天室。", "No chats found."],
   hidden: ["已隱藏", "Hidden"],

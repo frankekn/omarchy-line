@@ -249,7 +249,7 @@ async function contrast(h) {
       await page.evaluate((theme) => {
         globalThis.enilSettings.apply({ theme, textSize: 100, sound: false });
       }, theme);
-      // Settings, and the quick switcher with its accent-filled choice.
+      // Settings, and the quick switcher with its tinted choice.
       for (const open of [null, "#settings-open", "#switcher-open"]) {
         if (open) await page.locator(open).click();
         if (open === "#switcher-open") {

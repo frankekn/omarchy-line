@@ -424,6 +424,19 @@ export async function shortcutFocus(h) {
     await page.evaluate(() => document.activeElement.id),
     "chat-list",
   );
+  // The focus placed on load draws no ring until the first key press.
+  const ring = () =>
+    page.locator("#chat-list").evaluate((node) => [
+      node.matches(":focus-visible"),
+      getComputedStyle(node).outlineStyle,
+    ]);
+  assert.deepEqual(await ring(), [true, "none"]);
+  await page.keyboard.press("Shift");
+  assert.deepEqual(await ring(), [true, "solid"]);
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "chat-list",
+  );
   await page.locator(".section-heading h1").click();
   assert.equal(
     await page.evaluate(() => document.activeElement.tagName),

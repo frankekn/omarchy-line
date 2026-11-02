@@ -242,8 +242,20 @@ export function createChatsView(ctx) {
         document.activeElement === document.body &&
         globalThis.innerWidth > 700 &&
         !globalThis.matchMedia("(pointer: coarse)").matches
-      ) list.focus({ preventScroll: true });
+      ) focusQuietly();
     }
+  }
+  // The list takes focus on load so the shortcuts work at once, but the ring
+  // stays hidden until the first key press. Any keyboard return to the list
+  // also starts with a key press, so the ring shows then as usual.
+  function focusQuietly() {
+    list.classList.add("quiet-focus");
+    document.addEventListener(
+      "keydown",
+      () => list.classList.remove("quiet-focus"),
+      { capture: true, once: true },
+    );
+    list.focus({ preventScroll: true });
   }
   function renderActiveHeader() {
     const chat = model.chats.find((row) => String(row.mid) === model.active);

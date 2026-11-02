@@ -254,6 +254,13 @@ export function createSwitcherView(ctx) {
     mac ? "Meta+K" : "Control+K",
   );
   $("switcher-open").title = `${t("switcher")} (${mac ? "⌘K" : "Ctrl+K"})`;
+  // The empty conversation pane names the two keys that get to a chat.
+  const keys = { switch: mac ? "⌘K" : "Ctrl+K", next: mac ? "⌥↓" : "Alt+↓" };
+  $("empty-description").replaceChildren(
+    ...t("emptyDescription").split(/\{(switch|next)\}/).map((part, i) =>
+      i % 2 ? el("kbd", "", keys[part]) : part
+    ),
+  );
 
   document.addEventListener("keydown", (event) => {
     if (event.defaultPrevented || event.isComposing || event.repeat) return;
