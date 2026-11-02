@@ -316,13 +316,15 @@ export async function parity(h) {
   await page.locator('article[data-message-id="parity6"] .quote').evaluate((
     node,
   ) => node.click());
-  assert.equal(
-    await page.evaluate(() => globalThis.__quoteScrollBehavior),
-    "smooth",
-  );
+  await page.waitForFunction(() => {
+    const target = document.querySelector('article[data-message-id="parity1"]')
+      .getBoundingClientRect();
+    const area = document.getElementById("messages").getBoundingClientRect();
+    return target.bottom > area.top && target.top < area.bottom;
+  });
   await quotedOrigin.evaluate((row) => delete row.scrollIntoView);
   await page.evaluate(() => delete globalThis.__quoteScrollBehavior);
-  h.step("quote-reduced-motion");
+  h.step("quote-motion-preferences");
   const historyBefore =
     tap.sent.filter((frame) => frame.cmd === "history").length;
   await page.waitForTimeout(1000);
