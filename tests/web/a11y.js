@@ -263,7 +263,7 @@ export async function a11y(h) {
     await contrast("chat");
     await page.getByRole("button", { name: "React", exact: true }).first()
       .click();
-    await page.getByRole("button", { name: "NICE", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Like", exact: true }).waitFor();
     await targets("reaction");
     await page.locator("#stickers").click();
     await page.locator("#sticker-picker:not([hidden])").waitFor();

@@ -159,6 +159,14 @@ async function desktop(h) {
   await input.fill("alice");
   await page.keyboard.press("Enter");
   await page.locator("#active-name", { hasText: "STUB Alice" }).waitFor();
+  const summary = page.locator("#chat-options > summary");
+  await summary.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  assert.equal(
+    await page.evaluate(() => document.activeElement.id),
+    "pin-chat",
+  );
   const pin = page.locator("#pin-chat");
   assert.equal(await pin.textContent(), "釘選");
   await pin.focus();
@@ -215,6 +223,25 @@ async function desktop(h) {
     assert.deepEqual(violations, [], colorScheme);
   }
   h.step("pinned and muted rows pass contrast");
+
+  // Escape closes only the disclosure and returns focus to its summary.
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await page.locator("#chat-options").evaluate((node) => node.open),
+    false,
+  );
+  assert.equal(
+    await summary.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await page.keyboard.press("Space");
+  await page.locator("#active-name").click();
+  assert.equal(
+    await page.locator("#chat-options").evaluate((node) => node.open),
+    false,
+  );
+  await summary.click();
+  h.step("chat options supports Enter, Tab, Space, Escape and outside click");
 
   // Mute and undo with the keyboard; the daemon files follow.
   const mute = page.locator("#mute-chat");
@@ -273,6 +300,7 @@ async function narrow(h) {
   const page = await context.newPage();
   await h.signIn(page);
   await page.getByRole("button", { name: /STUB 工作/ }).click();
+  await page.locator("#chat-options > summary").click();
   await page.locator("#pin-chat", { hasText: "取消釘選" }).waitFor();
   await page.locator("#mute-chat", { hasText: "取消靜音" }).waitFor();
   const overflow = await page.evaluate(() =>
@@ -286,6 +314,21 @@ async function narrow(h) {
     )
   );
   assert.deepEqual(overflow, []);
+  const panel = await page.locator(".chat-options-panel").boundingBox();
+  const header = await page.locator(".chat-header").boundingBox();
+  assert.ok(
+    panel && header && panel.x >= header.x &&
+      panel.x + panel.width <= header.x + header.width,
+    "panel stays inside header width",
+  );
+  const search = await page.locator("#chat-search").boundingBox();
+  const summary = await page.locator("#chat-options > summary").boundingBox();
+  assert.ok(
+    search && summary && search.width === 44 && search.height === 44 &&
+      search.y === summary.y &&
+      summary.y + summary.height <= header.y + header.height,
+    "search and disclosure stay on one header row",
+  );
   for (const id of ["pin-chat", "mute-chat", "hide-chat"]) {
     const box = await page.locator(`#${id}`).boundingBox();
     assert.ok(box && box.width >= 44 && box.height >= 44, id);

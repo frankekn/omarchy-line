@@ -191,8 +191,10 @@ returns focus to **Settings**.
 
 ### Pinned and muted chats
 
-**Pin** and **Mute** in the chat header turn each preference on or off for the
-open chat. The daemon keeps them in `pinned.json` and `muted.json` in its
+Open **Chat options** (the three-dot button) in the chat header to reach
+**Pin**, **Mute** and **Hide**. Press Escape to close it and return focus to
+the button. Pin and Mute turn each preference on or off for the open chat.
+The daemon keeps them in `pinned.json` and `muted.json` in its
 state directory, so every device that opens the page sees the same pinned and
 muted chats.
 
@@ -249,6 +251,12 @@ is at most 200 characters, so list search matches only that part of a long
 last message.
 
 ### Message actions, voice and location
+
+Message actions use labeled icons. With a mouse, hover over the message to
+reveal them; keyboard focus also reveals them. On touch screens the icons
+stay visible with 44px touch targets. Choosing React focuses the first
+choice and keeps the choices above the composer; selecting or cancelling
+returns focus to React.
 
 Next to **Reply** and **React**, a message can offer these actions:
 

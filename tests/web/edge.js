@@ -109,7 +109,7 @@ export async function edge(h) {
     boot: state.bootId,
   }));
   const row = page.locator('article[data-message-id="ui-edge-message"]');
-  await row.getByRole("button", { name: /❤️ 2/ }).waitFor();
+  await row.getByRole("button", { name: "Love 2", exact: true }).waitFor();
   tap.socket.send(JSON.stringify({
     event: {
       seq: seq++,

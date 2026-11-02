@@ -285,17 +285,38 @@ export function createChatsView(ctx) {
     return !!model.active && !document.hidden &&
       (globalThis.innerWidth > 700 || model.chatOpen);
   }
+  const chatOptions = $("chat-options");
+  function closeChatOptions() {
+    chatOptions.open = false;
+  }
+  document.addEventListener("click", (event) => {
+    if (!chatOptions.contains(event.target)) closeChatOptions();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key !== "Escape" || !chatOptions.open || event.defaultPrevented ||
+      event.isComposing || $("lightbox").open ||
+      document.querySelector("dialog[open]")
+    ) return;
+    closeChatOptions();
+    chatOptions.querySelector("summary").focus();
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
   function showChat() {
+    closeChatOptions();
     $("workspace").classList.add("chat-open");
     $("empty-chat").hidden = true;
     $("chat-view").hidden = false;
   }
   function hideChat() {
+    closeChatOptions();
     $("workspace").classList.remove("chat-open");
     $("chat-view").hidden = true;
     $("empty-chat").hidden = false;
   }
   function showChatList() {
+    closeChatOptions();
     $("workspace").classList.remove("chat-open");
   }
   $("search").addEventListener("input", renderChats);

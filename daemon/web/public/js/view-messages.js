@@ -66,10 +66,13 @@ export function createMessagesView(ctx) {
   }
   function closeOpenReactions() {
     for (const picker of $("messages").querySelectorAll(".reaction-picker")) {
+      const trigger = picker.parentElement.querySelector(
+        ".message-actions button[aria-expanded]",
+      );
+      trigger?.setAttribute("aria-expanded", "false");
+      trigger?.removeAttribute("aria-controls");
       if (picker.contains(document.activeElement)) {
-        picker.parentElement.querySelector(
-          ".message-actions button:nth-child(2)",
-        )?.focus();
+        trigger?.focus({ preventScroll: true });
       }
       picker.remove();
     }
@@ -92,10 +95,16 @@ export function createMessagesView(ctx) {
     }
     return card;
   }
+  function messageAction(label, symbol) {
+    const button = el("button", "message-action");
+    button.type = "button";
+    button.title = t(label);
+    button.append(icon(symbol), el("span", "sr-only", t(label)));
+    return button;
+  }
   function appendMessageActions(actions, chat, message, text) {
     if (text) {
-      const copy = el("button", "", t("copy"));
-      copy.type = "button";
+      const copy = messageAction("copy", "copy");
       copy.addEventListener("click", () => void ctx.copyText(text));
       actions.append(copy);
     }
@@ -103,8 +112,7 @@ export function createMessagesView(ctx) {
       ["IMAGE", "VIDEO", "FILE", "AUDIO"].includes(message.contentType) &&
       message.hasMedia && (!message.mediaState || message.mediaState === "ok")
     ) {
-      const save = el("button", "", t("save"));
-      save.type = "button";
+      const save = messageAction("save", "download");
       save.addEventListener("click", () => {
         const current = rowMessages.get(save.closest(".message-row"));
         void ctx.downloadMessage(chat, current || message);
@@ -114,8 +122,7 @@ export function createMessagesView(ctx) {
     if (
       text && message.contentType === "NONE" && !message.decryptFailed
     ) {
-      const forward = el("button", "", t("forward"));
-      forward.type = "button";
+      const forward = messageAction("forward", "forward");
       forward.addEventListener("click", () => ctx.forwardText(text, forward));
       actions.append(forward);
     }
@@ -193,13 +200,22 @@ export function createMessagesView(ctx) {
       const reactions = el("div", "reactions");
       for (const reaction of message.reactions) {
         const type = String(reaction.type || ""),
+          known = Object.hasOwn(reactionTypes, type),
+          reactionName = known ? t(`reaction${type}`) : type,
           button = el(
             "button",
             `reaction-pill${reaction.mine ? " mine" : ""}`,
-            `${reactionTypes[type] || type} ${Number(reaction.count || 0)}`,
+            `${known ? reactionTypes[type] : type} ${
+              Number(reaction.count || 0)
+            }`,
           );
         button.type = "button";
         button.dataset.reactionType = type;
+        button.setAttribute("aria-pressed", String(Boolean(reaction.mine)));
+        button.setAttribute(
+          "aria-label",
+          `${reactionName} ${Number(reaction.count || 0)}`,
+        );
         button.title = reaction.mine ? t("undoReaction") : t("reaction");
         button.addEventListener(
           "click",
@@ -256,32 +272,44 @@ export function createMessagesView(ctx) {
       !["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType)
     ) {
       const actions = el("span", "message-actions");
-      const reply = el("button", "", t("reply"));
-      reply.type = "button";
+      const reply = messageAction("reply", "reply");
       reply.addEventListener("click", () => {
         const current = rowMessages.get(reply.closest(".message-row"));
         if (current) ctx.startReply(current);
       });
       actions.append(reply);
-      const react = el("button", "", t("reaction"));
-      react.type = "button";
+      const react = messageAction("reaction", "sticker");
+      const reactionId = encodeURIComponent(String(message.id));
+      react.id = `reaction-trigger-${reactionId}`;
+      react.setAttribute("aria-expanded", "false");
+      const closePicker = (picker) => {
+        ctx.closeReactionPicker(String(message.id));
+        react.setAttribute("aria-expanded", "false");
+        react.removeAttribute("aria-controls");
+        react.focus({ preventScroll: true });
+        picker?.remove();
+      };
       react.addEventListener("click", () => {
         const currentColumn = react.closest(".message-column");
         if (!currentColumn) return;
         const id = String(message.id);
         if (!ctx.toggleReactionPicker(id)) {
-          currentColumn.querySelector(".reaction-picker")?.remove();
+          closePicker(currentColumn.querySelector(".reaction-picker"));
           return;
         }
         const picker = el("div", "reaction-picker");
+        picker.id = `reaction-picker-${reactionId}`;
+        picker.setAttribute("role", "group");
+        picker.setAttribute("aria-labelledby", react.id);
+        react.setAttribute("aria-expanded", "true");
+        react.setAttribute("aria-controls", picker.id);
         for (const [type, emoji] of Object.entries(reactionTypes)) {
           const button = el("button", "", emoji);
           button.type = "button";
-          button.title = type;
-          button.setAttribute("aria-label", type);
+          button.title = t(`reaction${type}`);
+          button.setAttribute("aria-label", t(`reaction${type}`));
           button.addEventListener("click", () => {
-            ctx.closeReactionPicker(id);
-            picker.remove();
+            closePicker(picker);
             command("react", { chat, messageId: String(message.id), type })
               .catch(
                 displayError,
@@ -295,8 +323,7 @@ export function createMessagesView(ctx) {
         undo.title = t("undoReaction");
         undo.setAttribute("aria-label", t("undoReaction"));
         undo.addEventListener("click", () => {
-          ctx.closeReactionPicker(id);
-          picker.remove();
+          closePicker(picker);
           command("react", {
             chat,
             messageId: String(message.id),
@@ -306,12 +333,14 @@ export function createMessagesView(ctx) {
         });
         picker.append(undo);
         currentColumn.append(picker);
+        picker.firstElementChild.focus({ preventScroll: true });
+        suspendPaging(200);
+        picker.scrollIntoView({ block: "nearest", behavior: "instant" });
       });
       actions.append(react);
       appendMessageActions(actions, chat, message, system ? "" : body);
       if (own) {
-        const unsend = el("button", "", t("unsend"));
-        unsend.type = "button";
+        const unsend = messageAction("unsend", "unsend");
         unsend.addEventListener("click", () => {
           if (confirm(t("confirmUnsend"))) {
             command("unsend", { chat, messageId: String(message.id) }).catch(
@@ -345,6 +374,12 @@ export function createMessagesView(ctx) {
         button.textContent = next.textContent;
       }
       if (button.title !== next.title) button.title = next.title;
+      for (const attribute of ["aria-pressed", "aria-label"]) {
+        const value = next.getAttribute(attribute);
+        if (button.getAttribute(attribute) !== value) {
+          button.setAttribute(attribute, value);
+        }
+      }
       return button;
     });
     const focused = oldButtons.includes(document.activeElement)
