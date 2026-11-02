@@ -172,7 +172,15 @@ const strings = {
   // Settings panel.
   settings: ["設定", "Settings"],
   textSize: ["介面字體", "Interface text"],
-  messageTextSize: ["訊息字體", "Message text"],
+  messageTextSize: ["閱讀字體", "Reading text"],
+  interfaceTextHint: [
+    "按鈕、選單、時間與狀態。",
+    "Buttons, menus, times and status.",
+  ],
+  readingTextHint: [
+    "聊天室名稱、預覽、內文、引言與輸入框。",
+    "Chat names, previews, messages, quotes and the input.",
+  ],
   theme: ["主題配色", "Theme"],
   themeSystem: ["跟隨系統", "Match system"],
   messageSound: ["新訊息提示音", "New message sound"],

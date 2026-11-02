@@ -211,12 +211,13 @@ its own header. On the LINE sign-in screen the button and the status sit in
 the bottom-left corner. Each browser keeps its own settings in local storage;
 the server does not store them.
 
-- **Interface text** scales controls, chat names, sender names and message
-  times. Choose 85%, 100%, 115%, 130% or 150%, where 100% is 14 px.
-- **Message text** independently scales message bubbles and the message input,
-  with the same five sizes and a 14 px default. Sidebar message previews and
-  quotes scale with the messages.
-  On phones, the input stays at least 16 px to prevent zoom when you focus it.
+- **Interface text** scales controls, menus, settings, sender names, times and
+  status. Choose 85%, 100%, 115%, 130% or 150%, where 100% is 14 px.
+- **Reading text** independently scales chat names, message bubbles and the
+  message input, with the same five sizes and a 14 px default. Sidebar previews
+  and quotes scale with it while staying smaller than chat names. On phones,
+  the input stays at least 16 px to prevent zoom when you focus it. Previously
+  saved **Message text** sizes continue to apply.
 - **Theme** is **Match system** by default, which uses the green light or dark
   colors from the system setting. The other themes take their colors from
   Omarchy themes: Catppuccin, Catppuccin Latte, Everforest, Flexoki Light,

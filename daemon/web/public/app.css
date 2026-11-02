@@ -439,6 +439,7 @@ textarea::placeholder {
   margin-bottom: 3px;
 }
 .row-name {
+  font-size: var(--message-font-size);
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -569,7 +570,7 @@ textarea::placeholder {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(14rem / 14);
+  font-size: var(--message-font-size);
 }
 .chat-heading span {
   display: block;
@@ -1662,6 +1663,12 @@ textarea::placeholder {
   margin-bottom: 8px;
   color: var(--muted);
   font-size: calc(12rem / 14);
+}
+.settings-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: calc(12rem / 14);
+  line-height: 1.5;
 }
 .text-sizes {
   display: flex;

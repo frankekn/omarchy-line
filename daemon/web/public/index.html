@@ -215,12 +215,16 @@
           aria-label="關閉"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
       </div>
       <div class="settings-body">
-        <fieldset>
+        <fieldset aria-describedby="interface-text-hint">
           <legend data-i18n="textSize">介面字體</legend>
+          <p id="interface-text-hint" class="settings-hint"
+            data-i18n="interfaceTextHint">按鈕、選單、時間與狀態。</p>
           <div id="text-sizes" class="text-sizes"></div>
         </fieldset>
-        <fieldset>
-          <legend data-i18n="messageTextSize">訊息字體</legend>
+        <fieldset aria-describedby="reading-text-hint">
+          <legend data-i18n="messageTextSize">閱讀字體</legend>
+          <p id="reading-text-hint" class="settings-hint"
+            data-i18n="readingTextHint">聊天室名稱、預覽、內文、引言與輸入框。</p>
           <div id="message-text-sizes" class="text-sizes"></div>
         </fieldset>
         <fieldset>
