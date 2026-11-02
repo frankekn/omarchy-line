@@ -314,6 +314,73 @@ export async function messageActions(h) {
   assert.equal(await menu.isVisible(), false);
   h.step("menu-keyboard-dismiss-scroll");
 
+  await more.click();
+  assert.equal(await menu.isVisible(), true);
+  await more.click();
+  assert.equal(await menu.isVisible(), false);
+  const originalReply = textRow.locator('[data-action="reply"]');
+  await originalReply.evaluate((button) => button.disabled = true);
+  await more.click();
+  assert.equal(
+    await page.getByRole("menuitem", { name: "Reply", exact: true })
+      .isDisabled(),
+    true,
+  );
+  assert.equal(await menu.locator(":focus").textContent(), "React");
+  await menu.locator(":focus").press("Home");
+  assert.equal(await menu.locator(":focus").textContent(), "React");
+  await page.keyboard.press("Escape");
+  await originalReply.evaluate((button) => button.disabled = false);
+  h.step("menu-toggle-and-disabled-actions");
+
+  const state = await h.state();
+  let injectedSeq = Math.max(0, ...state.events.map((event) => event.seq));
+  await page.locator("#messages").evaluate((list) => {
+    list.scrollTop = list.scrollHeight;
+  });
+  await page.waitForFunction(() => {
+    const list = document.getElementById("messages");
+    return list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
+  });
+  const placeMore = place.locator(".message-more");
+  await placeMore.click();
+  const anchorBefore = await placeMore.boundingBox();
+  tap.socket.send(JSON.stringify({
+    boot: state.bootId,
+    event: {
+      seq: ++injectedSeq,
+      at: Date.now(),
+      kind: "message",
+      chat: CHAT,
+      message: {
+        id: "menu-live",
+        chat: CHAT,
+        from: "ustub-mom",
+        fromName: "STUB 媽",
+        time: Date.now() + 10000,
+        text: "Arrived while choosing an action",
+        contentType: "NONE",
+      },
+    },
+  }));
+  await page.locator('[data-message-id="menu-live"]').waitFor({
+    state: "attached",
+  });
+  await page.evaluate(() =>
+    new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    })
+  );
+  assert.equal(await menu.isVisible(), true);
+  assert.equal(await menu.locator(":focus").textContent(), "Reply");
+  const anchorAfter = await placeMore.boundingBox();
+  assert.ok(Math.abs(anchorAfter.y - anchorBefore.y) <= 1);
+  await page.getByRole("menuitem", { name: "Reply", exact: true }).click();
+  await page.locator("#reply-target").waitFor();
+  assert.match(await page.locator("#reply-label").textContent(), /Taipei 101/);
+  await page.locator("#cancel-reply").click();
+  h.step("incoming-message-keeps-menu-and-original-action-stable");
+
   // At 320 px and 200% text, the trigger has its own gutter.
   await page.setViewportSize({ width: 320, height: 640 });
   await page.evaluate(() => document.documentElement.style.fontSize = "200%");
@@ -350,12 +417,11 @@ export async function messageActions(h) {
   h.step("narrow-large-text");
 
   await more.click();
-  const state = await h.state();
   const messageId = await textRow.getAttribute("data-message-id");
   tap.socket.send(JSON.stringify({
     boot: state.bootId,
     event: {
-      seq: Math.max(0, ...state.events.map((event) => event.seq)) + 1,
+      seq: ++injectedSeq,
       at: Date.now(),
       kind: "unsend",
       chat: CHAT,

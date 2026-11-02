@@ -123,7 +123,7 @@ export function createMessagesView(ctx) {
       const copy = messageAction("copy", "copy");
       copy.addEventListener(
         "click",
-        () => void ctx.copyText(copy.closest(".message-actions").dataset.text),
+        () => void ctx.copyText(actionText(copy)),
       );
       actions.append(copy);
     }
@@ -146,12 +146,20 @@ export function createMessagesView(ctx) {
         "click",
         () =>
           ctx.forwardText(
-            forward.closest(".message-actions").dataset.text,
+            actionText(forward),
             actionFocus(forward),
           ),
       );
       actions.append(forward);
     }
+  }
+  function actionText(button) {
+    const current = rowMessages.get(button.closest(".message-row"));
+    return String(
+      current?.contentType === "FLEX" && current.altText
+        ? current.altText
+        : current?.text || "",
+    );
   }
   // enil:message-actions-end
   function messageNode(message, includeMedia = true) {
@@ -302,7 +310,6 @@ export function createMessagesView(ctx) {
       !["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType)
     ) {
       const actions = el("span", "message-actions");
-      actions.dataset.text = system ? "" : body;
       const reply = messageAction("reply", "reply");
       reply.addEventListener("click", () => {
         const current = rowMessages.get(reply.closest(".message-row"));
@@ -389,7 +396,12 @@ export function createMessagesView(ctx) {
       more.setAttribute("aria-expanded", "false");
       more.setAttribute("aria-controls", "message-action-menu");
       more.append(icon("more"));
-      more.addEventListener("click", () => actionMenu.open(more));
+      more.setAttribute("popovertarget", "message-action-menu");
+      more.addEventListener("click", (event) => {
+        event.preventDefault();
+        interruptFollowing();
+        actionMenu.open(more);
+      });
       more.addEventListener("keydown", (event) => {
         if (
           event.isComposing || event.ctrlKey || event.metaKey || event.altKey
@@ -398,6 +410,7 @@ export function createMessagesView(ctx) {
         }
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
+          interruptFollowing();
           actionMenu.open(more);
         }
       });
@@ -518,7 +531,6 @@ export function createMessagesView(ctx) {
     const text = updateBubblePart(".message-text", keepText, media);
     updateBubblePart(".quote", keepQuote, text || media);
     if (keepActions) {
-      oldActions.dataset.text = newActions.dataset.text;
       for (const child of [...oldMeta.children]) {
         if (child !== oldActions) child.remove();
       }
@@ -645,11 +657,12 @@ export function createMessagesView(ctx) {
     return null;
   }
   function isFollowing(list) {
+    if (actionMenu.row) return false;
     return list.scrollHeight - list.scrollTop - list.clientHeight <= 2 ||
       (followedTop !== null && Math.abs(list.scrollTop - followedTop) <= 2);
   }
   function followBottom(list) {
-    if (programmaticScroll || touchPhase !== "idle") return;
+    if (actionMenu.row || programmaticScroll || touchPhase !== "idle") return;
     if (followFrame) cancelAnimationFrame(followFrame);
     list.scrollTop = list.scrollHeight;
     followedTop = list.scrollTop;
@@ -865,7 +878,10 @@ export function createMessagesView(ctx) {
   function renderMessages(mode = "preserve") {
     keepSelectedTailVisible($("messages"));
     if (model.noOlder) ctx.refreshOlderAvailability();
-    if (mode === "bottom") endProgrammaticScroll();
+    if (mode === "bottom") {
+      actionMenu.close(false);
+      endProgrammaticScroll();
+    }
     if ((mode === "bottom" || mode === "anchor") && trimFrame) {
       cancelAnimationFrame(trimFrame);
       trimFrame = 0;
@@ -1187,6 +1203,8 @@ export function createMessagesView(ctx) {
       if (formerTail?.message) {
         // WebKit can discard the measured size when the visible tail becomes
         // deferred. Preserve its block size before changing the last child.
+        // This is a fallback, not fixed sizing. Edits, resizing or text-size
+        // changes can leave offscreen estimates stale until the row is laid out.
         const height = formerTail.node.getBoundingClientRect().height;
         if (height > 0) {
           formerTail.node.style.containIntrinsicBlockSize = `auto ${height}px`;

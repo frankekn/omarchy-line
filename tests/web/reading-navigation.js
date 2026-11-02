@@ -98,8 +98,89 @@ export async function readingNavigation(h, exposeFollowContext) {
     await page.locator(".day-divider").filter({ hasText: "Yesterday" }).count(),
     1,
   );
-  await context.close();
   h.step(
     "history keeps its position and can return to live following; day captions update across midnight",
   );
+
+  await page.evaluate(() => {
+    const model = globalThis.__followModel, ctx = globalThis.__followCtx;
+    model.messages = Array.from(
+      { length: 200 },
+      (_, i) => globalThis.__readingMessage(i),
+    );
+    model.messages[150].text = "Long quote ".repeat(40);
+    model.messages[199].text = "Long tail ".repeat(40);
+    model.noOlder = true;
+    ctx.renderMessages("preserve");
+    const list = document.getElementById("messages");
+    list.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, bubbles: true }));
+    list.scrollTop = 0;
+  });
+  const settle = () =>
+    page.evaluate(() =>
+      new Promise((resolve) => {
+        let frames = 3;
+        function tick() {
+          if (--frames) requestAnimationFrame(tick);
+          else resolve();
+        }
+        requestAnimationFrame(tick);
+      })
+    );
+  await settle();
+  const measure = () =>
+    page.evaluate(() => ({
+      height: document.querySelector('[data-message-id="900199"]')
+        .getBoundingClientRect().height,
+      scrollHeight: document.getElementById("messages").scrollHeight,
+    }));
+  const before = await measure();
+  assert.ok(before.height > 150);
+  await receive(200);
+  await settle();
+  const after = await measure();
+  assert.ok(
+    Math.abs(after.height - before.height) <= 1,
+    JSON.stringify({ before, after }),
+  );
+  assert.ok(after.scrollHeight >= before.scrollHeight);
+  await jump.click();
+  await settle();
+  await receive(201);
+  await settle();
+  assert.ok(
+    await page.locator("#messages").evaluate((list) =>
+      list.scrollHeight - list.scrollTop - list.clientHeight <= 2
+    ),
+  );
+  h.step(
+    "a former tail keeps its measured height and live following remains stable",
+  );
+
+  const quote = page.locator('[data-message-id="900150"]');
+  await page.evaluate(() => globalThis.__followCtx.scrollToMessage("900150"));
+  await settle();
+  const quoteHeight = await quote.evaluate((node) =>
+    node.getBoundingClientRect().height
+  );
+  await jump.click();
+  await settle();
+  assert.equal(
+    await quote.evaluate((node) => node.classList.contains("quote-target")),
+    true,
+  );
+  await page.waitForFunction(() =>
+    !document.querySelector('[data-message-id="900150"]').classList.contains(
+      "quote-target",
+    )
+  );
+  const releasedHeight = await quote.evaluate((node) =>
+    node.getBoundingClientRect().height
+  );
+  assert.ok(
+    Math.abs(quoteHeight - releasedHeight) <= 1,
+    JSON.stringify({ quoteHeight, releasedHeight }),
+  );
+  h.step("an offscreen quote retains its height when its highlight expires");
+  await context.close();
 }

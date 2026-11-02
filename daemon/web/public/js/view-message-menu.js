@@ -31,6 +31,12 @@ export function makeMessageMenu(t) {
       button.type = "button";
       button.setAttribute("role", "menuitem");
       button.tabIndex = -1;
+      button.disabled = original.disabled;
+      for (const name of ["aria-expanded", "aria-controls"]) {
+        if (original.hasAttribute(name)) {
+          button.setAttribute(name, original.getAttribute(name));
+        }
+      }
       button.addEventListener("click", () => {
         close();
         if (original.isConnected) original.click();
@@ -38,7 +44,7 @@ export function makeMessageMenu(t) {
       menu.append(button);
     }
     trigger.setAttribute("aria-expanded", "true");
-    menu.showPopover();
+    menu.showPopover({ source: trigger });
     const anchor = trigger.getBoundingClientRect();
     anchorPosition = { left: anchor.left, top: anchor.top };
     const rect = menu.getBoundingClientRect();
@@ -55,7 +61,7 @@ export function makeMessageMenu(t) {
         Math.min(anchor.bottom + 4, top + height - rect.height - 8),
       )
     }px`;
-    menu.firstElementChild?.focus({ preventScroll: true });
+    menu.querySelector("button:not(:disabled)")?.focus({ preventScroll: true });
   }
   // Run before the conversation's Escape handler (including reaction pickers).
   globalThis.addEventListener("keydown", (event) => {
@@ -69,7 +75,7 @@ export function makeMessageMenu(t) {
     if (event.isComposing || event.ctrlKey || event.metaKey || event.altKey) {
       return;
     }
-    const items = [...menu.children];
+    const items = [...menu.children].filter((button) => !button.disabled);
     const index = items.indexOf(document.activeElement);
     let next;
     if (event.key === "ArrowDown") next = (index + 1) % items.length;
@@ -80,7 +86,7 @@ export function makeMessageMenu(t) {
     if (event.key === "End") next = items.length - 1;
     if (next !== undefined) {
       event.preventDefault();
-      items[next].focus({ preventScroll: true });
+      items[next]?.focus({ preventScroll: true });
     } else if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();

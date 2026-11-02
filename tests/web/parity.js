@@ -313,9 +313,14 @@ export async function parity(h) {
     true,
   );
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.evaluate(() => globalThis.__quoteScrollBehavior = "");
   await page.locator('article[data-message-id="parity6"] .quote').evaluate((
     node,
   ) => node.click());
+  assert.equal(
+    await page.evaluate(() => globalThis.__quoteScrollBehavior),
+    "instant",
+  );
   await page.waitForFunction(() => {
     const target = document.querySelector('article[data-message-id="parity1"]')
       .getBoundingClientRect();
@@ -342,6 +347,9 @@ export async function parity(h) {
     tap.sent.filter((frame) => frame.cmd === "history").length,
     historyBefore,
   );
+  // Also verify real pointer actionability. Revealing the button may page.
+  await page.locator('article[data-message-id="parity7"] .quote').click();
+  await page.getByText(/The original isn't in this page/).waitFor();
   h.step("quote-navigation");
 
   await page.locator('article[data-message-id="parity4"] img.media-image')

@@ -1297,37 +1297,6 @@ export async function messageWindow(h) {
     "**/js/app.js",
     (route) => route.fulfill({ contentType: "text/javascript", body: app }),
   );
-  const viewUrl = new URL(
-    "../../daemon/web/public/js/view-messages.js",
-    import.meta.url,
-  );
-  let view = await Deno.readTextFile(viewUrl);
-  for (
-    const [marker, trace] of [
-      [
-        "    const following = !programmaticScroll && wasFollowing;",
-        `
-    globalThis.__windowTraceFollow?.({phase: "render", mode,
-      count: model.messages.length, oldTop, oldHeight, followedTop,
-      wasFollowing, following, programmaticScroll, programmaticMoved,
-      touchPhase, followFrame});`,
-      ],
-      [
-        "    if (deferTrim) scheduleTrim(list);",
-        `
-    globalThis.__windowTraceFollow?.({phase: "after", mode,
-      count: model.messages.length, followedTop, programmaticScroll,
-      touchPhase, followFrame});`,
-      ],
-    ]
-  ) {
-    assert.equal(view.split(marker).length, 2);
-    view = view.replace(marker, marker + trace);
-  }
-  await context.route(
-    "**/js/view-messages.js",
-    (route) => route.fulfill({ contentType: "text/javascript", body: view }),
-  );
   const page = await context.newPage();
   page.setDefaultTimeout(120000);
   const now = Date.now();
@@ -1461,7 +1430,6 @@ export async function messageWindow(h) {
         clientHeight: list.clientHeight,
         active: document.activeElement?.outerHTML.slice(0, 300),
         selected: getSelection()?.toString().slice(0, 80),
-        followTrace: globalThis.__windowFollowTrace,
         bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
         noOlder: model.noOlder,
       };
@@ -1488,7 +1456,6 @@ export async function messageWindow(h) {
         count: state.ids.length,
         active: state.active,
         selected: state.selected,
-        followTrace: state.followTrace,
         scrollTop: state.scrollTop,
         scrollHeight: state.scrollHeight,
         clientHeight: state.clientHeight,
@@ -1678,16 +1645,6 @@ export async function messageWindow(h) {
       "visible",
     );
   }
-  await page.evaluate(() => {
-    let lost = false;
-    const trace = globalThis.__windowFollowTrace = [];
-    globalThis.__windowTraceFollow = (entry) => {
-      if (lost && trace.length >= 30) return;
-      trace.push(entry);
-      if (entry.phase === "render" && !entry.following) lost = true;
-      if (!lost && trace.length > 12) trace.shift();
-    };
-  });
   let beforeTrim, maxBottom = 0, maxTailMove = 0;
   for (let i = 50; i < 750; i += 25) {
     if (i === 725) {
