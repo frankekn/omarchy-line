@@ -1182,6 +1182,17 @@ export function createMessagesView(ctx) {
         records.set(item.key, { node, text: item.text, today });
       }
     }
+    if (order.at(-1) !== keys.at(-1)) {
+      const formerTail = records.get(order.at(-1));
+      if (formerTail?.message) {
+        // WebKit can discard the measured size when the visible tail becomes
+        // deferred. Preserve its block size before changing the last child.
+        const height = formerTail.node.getBoundingClientRect().height;
+        if (height > 0) {
+          formerTail.node.style.containIntrinsicBlockSize = `auto ${height}px`;
+        }
+      }
+    }
     // A top trim followed by an append leaves all retained nodes in order.
     if (
       changes.removed.length && !changes.moved.length &&

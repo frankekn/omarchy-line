@@ -332,7 +332,11 @@ export async function parity(h) {
     tap.sent.filter((frame) => frame.cmd === "history").length,
     historyBefore,
   );
-  await page.locator('article[data-message-id="parity7"] .quote').click();
+  // Isolate activation from browser scrolling to reveal an offscreen button.
+  // Scrolling near the top is a separate, legitimate history-paging gesture.
+  await page.locator('article[data-message-id="parity7"] .quote').evaluate(
+    (node) => node.click(),
+  );
   await page.getByText(/The original isn't in this page/).waitFor();
   assert.equal(
     tap.sent.filter((frame) => frame.cmd === "history").length,
