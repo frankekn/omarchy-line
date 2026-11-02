@@ -303,7 +303,11 @@ export async function messageActions(h) {
   assert.equal(await more.evaluate((n) => document.activeElement === n), true);
   await more.click();
   await page.locator("#messages").dispatchEvent("scroll");
-  assert.equal(await menu.isVisible(), false);
+  assert.equal(await menu.isVisible(), true);
+  await page.locator("#messages").evaluate((list) => {
+    list.scrollTop += list.scrollTop > 20 ? -20 : 20;
+  });
+  await menu.waitFor({ state: "hidden" });
   assert.equal(await more.evaluate((n) => document.activeElement === n), true);
   await more.click();
   await page.mouse.click(2, 2);
@@ -344,4 +348,26 @@ export async function messageActions(h) {
   assert.equal(await page.locator(".message-menu").count(), 1);
   await page.keyboard.press("Escape");
   h.step("narrow-large-text");
+
+  await more.click();
+  const state = await h.state();
+  const messageId = await textRow.getAttribute("data-message-id");
+  tap.socket.send(JSON.stringify({
+    boot: state.bootId,
+    event: {
+      seq: Math.max(0, ...state.events.map((event) => event.seq)) + 1,
+      at: Date.now(),
+      kind: "unsend",
+      chat: CHAT,
+      messageId,
+    },
+  }));
+  await page.locator(`article[data-message-id="${messageId}"]`)
+    .getByText("Message unsent").waitFor();
+  assert.equal(await menu.isVisible(), false);
+  assert.equal(
+    await log.evaluate((node) => document.activeElement === node),
+    true,
+  );
+  h.step("removed-actions-close-menu-and-preserve-focus");
 }

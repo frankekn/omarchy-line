@@ -4,21 +4,21 @@ import { $, el, formatTime, icon, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
 import { continuesMessageRun } from "./message-grouping.js";
-import { createMessageMenu } from "./view-message-menu.js";
+import { makeMessageMenu } from "./view-message-menu.js";
 const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
-  const actionMenu = createMessageMenu(t);
+  const actionMenu = makeMessageMenu(t);
   const actionFocus = (button) =>
-    button.closest(".message-actions")?.querySelector(".message-more");
+    button?.closest(".message-actions")?.querySelector(".message-more");
   const rowMessages = new WeakMap();
   const selectionVisibility = new Map();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let renderedRows = [], renderedDesired = [], renderedToday = "";
   let renderedUnread = "";
   let followedTop = null;
-  let followFrame = 0, trimFrame = 0;
+  let followFrame = 0, trimFrame = 0, quoteFrame = 0;
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   let programmaticScroll = false, programmaticMoved = false;
   let programmaticTop = 0, programmaticTimer = 0;
@@ -41,13 +41,23 @@ export function createMessagesView(ctx) {
     OMG: "😱",
   };
   function alignQuoteTarget(target) {
-    target.scrollIntoView({
-      block: "center",
-      behavior:
-        globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "auto"
-          : "smooth",
-    });
+    if (quoteFrame) cancelAnimationFrame(quoteFrame);
+    const chat = renderedChat, account = renderedAccount;
+    const id = target.dataset.messageId;
+    let frames = 3;
+    function align() {
+      quoteFrame = 0;
+      if (
+        !target.isConnected || chat !== renderedChat ||
+        account !== renderedAccount || !programmaticScroll ||
+        quoteJumpTarget !== id
+      ) return;
+      // Deferred rows change height when revealed. Settle locally instead of
+      // animating toward an estimate through an unlaid-out history window.
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      if (--frames) quoteFrame = requestAnimationFrame(align);
+    }
+    align();
   }
   function scrollToMessage(id) {
     const list = $("messages");
@@ -147,7 +157,10 @@ export function createMessagesView(ctx) {
   function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
-      row = el("article", `message-row${own ? " own" : ""}`),
+      row = el(
+        "article",
+        `message-row${own ? " own" : ""}${message.unsent ? " unsent" : ""}`,
+      ),
       column = el("div", "message-column");
     rowMessages.set(row, message);
     row.dataset.messageId = String(message.id || "");
@@ -461,10 +474,15 @@ export function createMessagesView(ctx) {
     const picker = oldColumn.querySelector(":scope > .reaction-picker");
     if (!keepActions) {
       actionMenu.closeRow(oldRow);
+      if (oldActions?.contains(document.activeElement)) {
+        $("messages").focus({ preventScroll: true });
+      }
       ctx.closeReactionPicker(id);
       picker?.remove();
     }
+    const highlighted = oldRow.classList.contains("quote-target");
     oldRow.className = newRow.className;
+    if (highlighted) oldRow.classList.add("quote-target");
     oldBubble.className = newBubble.className;
     function updateBubblePart(selector, keep, before) {
       const old = oldBubble.querySelector(`:scope > ${selector}`);
@@ -670,6 +688,8 @@ export function createMessagesView(ctx) {
       followAfterProgrammatic &&
       Math.abs(list.scrollTop - programmaticTop) <= 2;
     clearTimeout(programmaticTimer);
+    if (quoteFrame) cancelAnimationFrame(quoteFrame);
+    quoteFrame = 0;
     programmaticTimer = 0;
     programmaticScroll = false;
     programmaticMoved = false;
@@ -932,7 +952,11 @@ export function createMessagesView(ctx) {
       }
     }
     rows.sort(compareMessages);
-    const today = new Date().toDateString();
+    const currentDate = new Date();
+    const today = currentDate.toDateString();
+    const previousDate = new Date(currentDate);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const yesterday = previousDate.toDateString();
     let appendOnly = false, tail, tailTime = 0, tailDay = "";
     if (
       deferTrim && !pendingRows.length && !model.sent.size &&
@@ -1003,7 +1027,12 @@ export function createMessagesView(ctx) {
         if (day && day !== previousDay) {
           const dayCount = dayCounts.get(day) || 0;
           dayCounts.set(day, dayCount + 1);
-          desired.push({ key: `day:${day}:${dayCount}`, type: "day", time });
+          desired.push({
+            key: `day:${day}:${dayCount}`,
+            type: "day",
+            time,
+            day,
+          });
           previousDay = day;
         }
         if (
@@ -1038,21 +1067,19 @@ export function createMessagesView(ctx) {
           prior.preview === preview && prior.hasPreview === hasPreview &&
           prior.today === today && prior.continuation === item.continuation;
         if (unchanged) continue;
-        const contentSignature = JSON.stringify([
+        const signature = JSON.stringify([
           item.message,
           preview,
           hasPreview,
           today,
         ]);
-        const signature = JSON.stringify([contentSignature, item.continuation]);
-        if (prior?.contentSignature === contentSignature) {
+        if (prior?.signature === signature) {
           // Boundary-only changes must retain every child, including selection.
-          if (prior.signature !== signature) {
+          if (prior.continuation !== item.continuation) {
             prior.node.classList.toggle("continuation", item.continuation);
           }
           prior.message = item.message;
           prior.continuation = item.continuation;
-          prior.signature = signature;
           continue;
         }
         const mediaSignature = JSON.stringify([
@@ -1092,7 +1119,6 @@ export function createMessagesView(ctx) {
           node,
           message: item.message,
           signature,
-          contentSignature,
           continuation: item.continuation,
           mediaSignature,
           preview,
@@ -1102,7 +1128,8 @@ export function createMessagesView(ctx) {
           day: item.day,
         });
       } else if (
-        !prior || (item.type === "empty" && prior.text !== item.text)
+        !prior || (item.type === "empty" && prior.text !== item.text) ||
+        (item.type === "day" && prior.today !== today)
       ) {
         let node;
         if (item.type === "older") {
@@ -1110,19 +1137,31 @@ export function createMessagesView(ctx) {
           node.type = "button";
           node.addEventListener("click", () => ctx.loadOlder());
         } else if (item.type === "day") {
-          node = el(
-            "div",
-            "day-divider",
-            new Date(item.time).toLocaleDateString(
-              english ? "en" : "zh-TW",
-              { year: "numeric", month: "short", day: "numeric" },
-            ),
-          );
+          const date = new Date(item.time), locale = english ? "en" : "zh-TW";
+          const caption = item.day === today
+            ? t("today")
+            : item.day === yesterday
+            ? t("yesterday")
+            : date.toLocaleDateString(locale, {
+              year: date.getFullYear() === currentDate.getFullYear()
+                ? undefined
+                : "numeric",
+              month: "short",
+              day: "numeric",
+            });
+          node = el("h2", "day-divider", caption);
+          node.title = date.toLocaleDateString(locale, {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          node.setAttribute("aria-label", `${caption} · ${node.title}`);
         } else if (item.type === "unread") {
           node = el("div", "unread-divider", t("unreadDivider"));
         } else node = el("div", "loading-message", item.text);
         if (prior) prior.node.replaceWith(node);
-        records.set(item.key, { node, text: item.text });
+        records.set(item.key, { node, text: item.text, today });
       }
     }
     // A top trim followed by an append leaves all retained nodes in order.
@@ -1184,8 +1223,21 @@ export function createMessagesView(ctx) {
       list.scrollTop = oldTop;
     }
     if (deferTrim) scheduleTrim(list);
+    updateNavigation();
   }
-  const list = $("messages");
+  const list = $("messages"), jumpLatest = $("jump-latest");
+  function updateNavigation() {
+    const hidden = !model.active || isFollowing(list) ||
+      list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+    if (jumpLatest.hidden !== hidden) jumpLatest.hidden = hidden;
+  }
+  jumpLatest.addEventListener("click", () => {
+    resumePaging(false);
+    suspendPaging(200);
+    list.focus({ preventScroll: true });
+    followBottom(list);
+    updateNavigation();
+  });
   document.addEventListener("selectionchange", releaseSelectionVisibility);
   function loadNearTop() {
     if (list.scrollTop < 150 && list.scrollHeight > list.clientHeight + 10) {
@@ -1202,6 +1254,7 @@ export function createMessagesView(ctx) {
     if (up) loadNearTop();
   }
   list.addEventListener("scroll", () => {
+    updateNavigation();
     // Settle after a reader reaches the bottom, including deferred layout.
     if (programmaticScroll) {
       if (Math.abs(list.scrollTop - programmaticTop) > 2) {

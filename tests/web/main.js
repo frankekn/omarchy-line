@@ -125,11 +125,18 @@ export async function main(h) {
     .getByRole("button", { name: "訊息動作" }).waitFor();
   assert.ok(tap.sent.some((frame) => frame.cmd === "sendFile"));
   h.step("file-upload");
+  const sentId = await sentRow.getAttribute("data-message-id");
   await sentRow.getByRole("button", { name: "訊息動作" }).click();
   await page.getByRole("menuitem", { name: "收回", exact: true }).click();
-  await page.getByText("已收回訊息").last().waitFor();
+  await page.locator(`article[data-message-id="${sentId}"]`)
+    .getByText("已收回訊息").waitFor();
   assert.ok(
     h.dialogs.some((d) => d.type === "confirm" && d.message.includes("收回")),
+  );
+  assert.equal(
+    await log.evaluate((node) => document.activeElement === node),
+    true,
+    await page.evaluate(() => document.activeElement.outerHTML.slice(0, 500)),
   );
   h.step("unsend-confirmation");
 

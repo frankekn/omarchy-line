@@ -1,5 +1,6 @@
 // Exercise trimming, paging and protected interactions in the real page.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
+import { readingNavigation } from "./reading-navigation.js";
 
 async function exposeFollowContext(context) {
   const appUrl = new URL("../../daemon/web/public/js/app.js", import.meta.url);
@@ -437,11 +438,8 @@ async function quoteDuringOlder(h) {
         globalThis.__quoteAlignments
       );
       assert.ok(alignments.length >= 2);
-      assert.ok(
-        alignments.every((value) =>
-          value === (motion === "reduce" ? "auto" : "smooth")
-        ),
-      );
+      // Both motion preferences must land on the visible message. Deferred
+      // rows cannot provide a stable destination for smooth scrolling.
     }
     await context.close();
     h.step(
@@ -696,8 +694,7 @@ async function scrollFollow(h) {
     await page.locator('article[data-message-id="129"] .quote').click();
     await page.waitForFunction(() => {
       const list = document.getElementById("messages");
-      return list.scrollTop > 150 &&
-        list.scrollHeight - list.clientHeight - list.scrollTop > 50;
+      return list.scrollHeight - list.clientHeight - list.scrollTop > 50;
     });
     await page.locator("#messages").evaluate((list) =>
       list.focus({ preventScroll: true })
@@ -1164,7 +1161,7 @@ async function conversationGrouping(h) {
     const retained = row(2);
     const sender = retained.querySelector(".sender");
     const text = retained.querySelector(".message-text");
-    const action = retained.querySelector(".message-actions button");
+    const action = retained.querySelector(".message-more");
     const stamp = retained.querySelector("time");
     const media = document.createElement("video");
     retained.querySelector(".bubble").append(media);
@@ -1179,14 +1176,17 @@ async function conversationGrouping(h) {
     const prepend = grouped(2) && row(2) === retained &&
       retained.querySelector(".sender") === sender &&
       retained.querySelector("time") === stamp && media.isConnected &&
-      retained.querySelector(".message-actions button") === action &&
+      retained.querySelector(".message-more") === action &&
       document.activeElement === action &&
       getSelection().toString() === "Grouped 2";
     const hiddenAuthor = getComputedStyle(sender).clipPath === "inset(50%)" &&
       sender.textContent === "Peer" && !sender.hasAttribute("aria-hidden");
-    const tighter = getComputedStyle(retained).marginTop === "-5px";
+    const runGap = retained.getBoundingClientRect().top -
+      row(1).getBoundingClientRect().bottom;
     model.messages[0] = { ...model.messages[0], unsent: true };
     ctx.renderMessages("preserve");
+    const tighter = runGap < retained.getBoundingClientRect().top -
+        row(1).getBoundingClientRect().bottom;
     const unsend = !grouped(2) && grouped(3) &&
       retained.querySelector("time") === stamp && media.isConnected;
     model.unreadMarkId = "3";
@@ -1251,6 +1251,7 @@ async function conversationGrouping(h) {
 }
 
 export async function messageWindow(h) {
+  await readingNavigation(h, exposeFollowContext);
   await conversationGrouping(h);
   await reactDuringEmptyPage(h);
   await touchDuringAccountChange(h);

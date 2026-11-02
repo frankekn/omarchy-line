@@ -606,6 +606,12 @@ textarea::placeholder {
 .message-row.continuation {
   margin-top: -5px;
 }
+.message-row.unsent .bubble {
+  padding: 2px 0;
+  background: transparent;
+  font-size: calc(12rem / 14);
+  font-style: normal;
+}
 /* Retain each message's author for assistive technology. */
 .message-row.continuation .sender {
   position: absolute;
@@ -737,6 +743,31 @@ textarea::placeholder {
   background: var(--hover);
   color: var(--text);
 }
+@media (hover:hover) and (pointer:fine) {
+  .message-more {
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+  }
+  .message-row:hover .message-more,
+  .message-row:focus-within .message-more,
+  .message-more[aria-expanded="true"] {
+    opacity: 1;
+  }
+  .message-more:focus-visible {
+    transition: none;
+  }
+}
+@media (any-pointer:coarse) {
+  .message-more {
+    opacity: 1;
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion:reduce) {
+  .message-more {
+    transition: none;
+  }
+}
 .message-meta time,
 .chat-time {
   font-variant-numeric: tabular-nums;
@@ -865,6 +896,7 @@ textarea::placeholder {
   cursor: pointer;
 }
 .day-divider {
+  font-weight: 500;
   text-align: center;
   color: var(--muted);
   font-size: calc(11rem / 14);
@@ -887,6 +919,30 @@ textarea::placeholder {
   background: color-mix(in srgb,var(--panel) 94%,transparent);
   color: var(--accent);
   font-weight: 700;
+}
+.message-navigation {
+  position: relative;
+  flex: none;
+  height: 0;
+  z-index: 1;
+}
+#jump-latest {
+  position: absolute;
+  bottom: 12px;
+  right: var(--conversation-gutter);
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 3px 12px rgb(0 0 0 / 16%);
+}
+#jump-latest:hover {
+  background: var(--hover);
+}
+#jump-latest .icon {
+  transform: rotate(180deg);
 }
 .composer-area {
   flex: none;
@@ -1428,7 +1484,7 @@ textarea::placeholder {
   --muted: #5c5971;
   --accent: #3a656c;
   --accent-ink: #ffffff;
-  --bubble: #ebe5df;
+  --bubble: #faf4ed;
   --own: #d9e1dd;
   --danger: #894b5d;
   --warn: #7a521b;

@@ -92,7 +92,15 @@ While you follow new messages at the bottom, the page can remove older loaded
 messages to keep about 500 confirmed rows. Scroll up to try to load them again;
 see the sparse-cache limitation below. The page keeps the loaded history while
 you read above the bottom, and defers removal when it would disturb an unread
-marker, a selection, focus or media.
+marker, a selection, focus or media. After scrolling away from the bottom,
+**Jump to latest** returns to the newest loaded messages and resumes following.
+New messages do not pull you away from older content.
+
+Adjacent messages from the same author within five minutes form a visual run.
+Dates, unread dividers, replies, system events, unsent messages, pending sends
+and decryption errors break runs. Every message retains its time and read status. Day headings show Today
+or Yesterday when applicable, with the full date in their accessible name and
+hover text.
 
 Unconfirmed sends remain visible for review and manual retry. If the outcome
 is unknown, retrying can send the same message twice. Recent acknowledged
@@ -111,7 +119,8 @@ then stop until you focus the list or messages again.
 
 Outside inputs, up/down also navigate. When navigating the list, Enter opens
 the selected chat if focus is on the list, a chat row or the page body. Esc
-closes reaction pickers first, even from the message input. Outside inputs it
+closes an open message-action menu first, then reaction pickers, even from the
+message input. Outside inputs it
 then closes the sticker or mention picker, cancels a reply, returns to the
 list, or clears search.
 Esc also closes the mention picker from the message input. These shortcuts
@@ -252,13 +261,17 @@ last message.
 
 ### Message actions, voice and location
 
-Message actions use labeled icons. With a mouse, hover over the message to
-reveal them; keyboard focus also reveals them. On touch screens the icons
-stay visible with 44px touch targets. Choosing React focuses the first
-choice and keeps the choices above the composer; selecting or cancelling
-returns focus to React.
+Messages with available commands show one **Message actions** button beside
+the bubble. With a mouse,
+hover over the message to reveal it; keyboard focus also reveals it. On touch
+screens it stays visible with a 44px target. The menu uses text labels, supports
+arrow keys, Home, End and Escape, and stays inside the viewport. Moving the
+message by scrolling closes the menu without jumping the reading position.
 
-Next to **Reply** and **React**, a message can offer these actions:
+Choose **Reply** or **React** in the menu. React focuses the first choice and
+keeps the choices above the composer; selecting or cancelling returns focus to
+Message actions. When an update removes those actions, focus returns to the
+message area. The menu can also offer:
 
 - **Copy** copies the text of a text, FLEX or other message with text. On a
   secure origin (HTTPS or `localhost`), the page uses the browser clipboard

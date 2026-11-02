@@ -1,14 +1,14 @@
 // One native top-layer menu; original action buttons and handlers stay in rows.
 import { el } from "./dom.js";
 
-export function createMessageMenu(t) {
+export function makeMessageMenu(t) {
   const menu = el("div", "message-menu");
   menu.id = "message-action-menu";
   menu.setAttribute("popover", "auto");
   menu.setAttribute("role", "menu");
   menu.setAttribute("aria-label", t("messageActions"));
   document.body.append(menu);
-  let owner = null;
+  let owner = null, anchorPosition = null;
   function close(restore = true) {
     if (!owner) return;
     const trigger = owner;
@@ -40,6 +40,7 @@ export function createMessageMenu(t) {
     trigger.setAttribute("aria-expanded", "true");
     menu.showPopover();
     const anchor = trigger.getBoundingClientRect();
+    anchorPosition = { left: anchor.left, top: anchor.top };
     const rect = menu.getBoundingClientRect();
     const viewport = globalThis.visualViewport;
     const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
@@ -92,17 +93,27 @@ export function createMessageMenu(t) {
     if (restore && trigger.isConnected) trigger.focus({ preventScroll: true });
   });
   document.addEventListener("scroll", (event) => {
-    if (owner && !menu.contains(event.target)) {
-      close(menu.contains(document.activeElement));
+    if (owner && event.target.contains?.(owner)) {
+      const anchor = owner.getBoundingClientRect();
+      // A queued scroll from focusing the trigger can arrive after opening.
+      if (
+        Math.abs(anchor.top - anchorPosition.top) > 1 ||
+        Math.abs(anchor.left - anchorPosition.left) > 1
+      ) close(menu.contains(document.activeElement));
     }
   }, true);
   globalThis.addEventListener("resize", () => close());
   globalThis.visualViewport?.addEventListener("resize", () => close());
+  globalThis.visualViewport?.addEventListener("scroll", () => close());
   return {
     open,
     close,
     closeRow(row) {
-      if (owner && row.contains(owner)) close(false);
+      if (owner && row.contains(owner)) {
+        const focused = menu.contains(document.activeElement);
+        close(false);
+        if (focused) row.closest(".messages")?.focus({ preventScroll: true });
+      }
     },
     get row() {
       return owner?.closest(".message-row");
