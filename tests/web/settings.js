@@ -172,6 +172,7 @@ async function keyboardAndSound(h) {
 
   // Sound: hide one chat, then view another.
   await page.getByRole("button", { name: /STUB Alice/ }).click();
+  await page.getByLabel("Chat options", { exact: true }).click();
   await page.locator("#hide-chat").click();
   await page.locator("#hide-chat", { hasText: "Unhide" }).waitFor();
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();

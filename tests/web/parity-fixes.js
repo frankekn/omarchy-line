@@ -534,6 +534,7 @@ export async function shortcutFocus(h) {
   await page.keyboard.press("/");
   assert.equal(await page.evaluate(() => document.activeElement.id), "search");
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.locator("#chat-options > summary").click();
   await page.locator("#hide-chat").focus();
   await page.keyboard.press("Tab");
   assert.equal(

@@ -72,6 +72,7 @@ const strings = {
   hidden: ["已隱藏", "Hidden"],
   hide: ["隱藏", "Hide"],
   unhide: ["取消隱藏", "Unhide"],
+  chatOptions: ["聊天室選項", "Chat options"],
   // Pin and mute.
   pin: ["釘選", "Pin"],
   unpin: ["取消釘選", "Unpin"],

@@ -54,12 +54,14 @@ export async function mentions(h) {
   })
     .locator(".mention").first().waitFor();
   h.step("mention-utf16-draft");
+  await page.locator("#chat-options > summary").click();
   await page.getByRole("button", { name: "隱藏", exact: true }).click();
   await page.getByRole("button", { name: /STUB 家庭群組/ }).waitFor({
     state: "hidden",
   });
   await page.getByLabel("搜尋聊天").fill("STUB 家庭");
   await page.getByRole("button", { name: /STUB 家庭群組.*已隱藏/ }).click();
+  await page.locator("#chat-options > summary").click();
   await page.getByRole("button", { name: "取消隱藏", exact: true }).click();
   await page.getByLabel("搜尋聊天").fill("");
   await page.getByRole("button", { name: /STUB 家庭群組/ }).waitFor();

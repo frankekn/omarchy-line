@@ -671,6 +671,18 @@ async function reactionPickerDuringUpdates(h) {
   assert.equal(await react.getAttribute("aria-expanded"), "false");
   assert.equal(await react.getAttribute("aria-controls"), null);
   await react.press("Enter");
+  const pickerBounds = await messageRow.locator(".reaction-picker")
+    .boundingBox();
+  const logBounds = await page.locator("#messages").boundingBox();
+  assert.ok(pickerBounds && logBounds);
+  assert.ok(
+    pickerBounds.y >= logBounds.y - 1,
+    "reaction choices start inside the log",
+  );
+  assert.ok(
+    pickerBounds.y + pickerBounds.height <= logBounds.y + logBounds.height + 1,
+    "reaction choices stay above the composer",
+  );
   await messageRow.getByRole("button", { name: "Remove reaction", exact: true })
     .press("Enter");
   assert.equal(
