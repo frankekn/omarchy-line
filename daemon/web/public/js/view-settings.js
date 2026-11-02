@@ -1,4 +1,4 @@
-// Settings dialog: text size, theme and the new-message sound. js/boot.js owns
+// Settings dialog: font sizes, theme and the new-message sound. js/boot.js owns
 // storage and applies the theme before the first paint; this view edits it.
 import { $, el } from "./dom.js";
 
@@ -80,18 +80,25 @@ export function createSettingsView(ctx) {
     group.append(label);
   }
   const sizes = $("text-sizes");
-  for (const size of store.sizes) {
-    radio(
-      sizes,
-      "text-size",
-      String(size),
-      `${size}%`,
-      size === settings.textSize,
-      () => {
-        settings = { ...settings, textSize: size };
-        save();
-      },
-    );
+  for (
+    const [group, name, key] of [
+      [sizes, "text-size", "textSize"],
+      [$("message-text-sizes"), "message-text-size", "messageTextSize"],
+    ]
+  ) {
+    for (const size of store.sizes) {
+      radio(
+        group,
+        name,
+        String(size),
+        `${size}%`,
+        size === settings[key],
+        () => {
+          settings = { ...settings, [key]: size };
+          save();
+        },
+      );
+    }
   }
   // Radios, not a <select>: WebKit reports a style-src-attr CSP violation
   // whenever a <select> element is created.

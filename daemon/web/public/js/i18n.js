@@ -169,7 +169,8 @@ const strings = {
   genericError: ["操作失敗。", "The action failed."],
   // Settings panel.
   settings: ["設定", "Settings"],
-  textSize: ["字體大小", "Text size"],
+  textSize: ["介面字體", "Interface text"],
+  messageTextSize: ["訊息字體", "Message text"],
   theme: ["主題配色", "Theme"],
   themeSystem: ["跟隨系統", "Match system"],
   messageSound: ["新訊息提示音", "New message sound"],

@@ -204,15 +204,18 @@ are sent with Brotli or gzip when the browser accepts it. Media from
 ### Settings
 
 The page has no top bar. The gear button at the bottom left, next to your
-name and the connection status, opens a dialog with three options. The status
+name and the connection status, opens a dialog with four options. The status
 is a dot and a word, in the warning color while the page is disconnected. On
 a phone the button is at the bottom of the chat list; an open chat shows only
 its own header. On the LINE sign-in screen the button and the status sit in
 the bottom-left corner. Each browser keeps its own settings in local storage;
 the server does not store them.
 
-- **Text size** scales the whole page: 85%, 100%, 115%, 130% or 150%, where
-  100% is 14 px.
+- **Interface text** scales controls, the chat list, sender names and message
+  times. Choose 85%, 100%, 115%, 130% or 150%, where 100% is 14 px.
+- **Message text** independently scales message bubbles and the message input,
+  with the same five sizes and a 14 px default. Quotes scale with the messages.
+  On phones, the input stays at least 16 px to prevent zoom when you focus it.
 - **Theme** is **Match system** by default, which uses the green light or dark
   colors from the system setting. The other themes take their colors from
   Omarchy themes: Catppuccin, Catppuccin Latte, Everforest, Flexoki Light,
@@ -223,8 +226,10 @@ the server does not store them.
   own messages, hidden chats, or the chat that you are viewing while the
   window has focus. One chat plays at most one tone every 2 seconds.
 
-Changes apply immediately. Esc or the close button closes the dialog and
-returns focus to **Settings**.
+Changes apply immediately. Both text sizes are saved in this browser and
+apply before the first frame on reload. If you previously saved one text size,
+that size becomes the starting value for both controls. Esc or the close
+button closes the dialog and returns focus to **Settings**.
 
 ### Pinned and muted chats
 

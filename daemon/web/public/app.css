@@ -14,6 +14,7 @@
   --danger: #f29a91;
   --warn: #e7c789;
   --shadow: 0 4px 16px #0006;
+  --message-font-size: 14px;
   font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono",monospace;
   font-size: 14px;
 }
@@ -659,6 +660,7 @@ textarea::placeholder {
   border-radius: 6px 6px 6px 2px;
   padding: 6px 10px;
   overflow-wrap: anywhere;
+  font-size: var(--message-font-size);
   line-height: 1.45;
 }
 .own .bubble {
@@ -691,7 +693,7 @@ textarea::placeholder {
   padding: 2px 0 2px 9px;
   margin-bottom: 9px;
   color: var(--muted);
-  font-size: calc(11rem / 14);
+  font-size: calc(var(--message-font-size) * 11 / 14);
   white-space: pre-wrap;
 }
 .quote-target .bubble {
@@ -1007,6 +1009,7 @@ textarea::placeholder {
   border: 0;
   outline: 0;
   padding: 6px 0;
+  font-size: var(--message-font-size);
   line-height: 1.4;
 }
 .search-wrap input:focus-visible {
@@ -1342,7 +1345,7 @@ textarea::placeholder {
       max(8px,env(safe-area-inset-bottom));
   }
   .composer textarea {
-    font-size: max(16px, 1rem);
+    font-size: max(16px, var(--message-font-size));
   }
   .composer-hint {
     display: none;
@@ -1388,7 +1391,7 @@ textarea::placeholder {
   }
 }
 
-/* Settings: text size, theme and sound. js/boot.js sets the data attributes
+/* Settings: interface/message font sizes, theme and sound. js/boot.js sets the data attributes
    before the first paint. Theme colors come from Omarchy's colors.toml, with
    text colors adjusted where needed to reach WCAG AA on every surface. */
 :root[data-text-size="85"] {
@@ -1402,6 +1405,18 @@ textarea::placeholder {
 }
 :root[data-text-size="150"] {
   font-size: 21px;
+}
+:root[data-message-text-size="85"] {
+  --message-font-size: 11.9px;
+}
+:root[data-message-text-size="115"] {
+  --message-font-size: 16.1px;
+}
+:root[data-message-text-size="130"] {
+  --message-font-size: 18.2px;
+}
+:root[data-message-text-size="150"] {
+  --message-font-size: 21px;
 }
 :root[data-theme="catppuccin"] {
   color-scheme: dark;

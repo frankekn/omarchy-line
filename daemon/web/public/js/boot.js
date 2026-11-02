@@ -1,4 +1,4 @@
-// Apply the saved theme and text size before the first paint. index.html loads
+// Apply the saved theme and font sizes before the first paint. index.html loads
 // this classic script synchronously in <head>; the page CSP forbids inline
 // scripts. view-settings.js uses the same functions through enilSettings.
 (() => {
@@ -18,18 +18,23 @@
   ];
   const SIZES = [85, 100, 115, 130, 150];
   const DEFAULTS = { theme: "system", textSize: 100, sound: false };
+  function textSize(value, fallback = DEFAULTS.textSize) {
+    return SIZES.includes(value) ? value : fallback;
+  }
   function read() {
     let saved = {};
     try {
       saved = JSON.parse(localStorage.getItem(KEY) || "{}") || {};
     } catch { /* Unreadable storage keeps the defaults. */ }
+    const interfaceSize = textSize(saved.textSize);
     return {
       theme: THEMES.some(([id]) => id === saved.theme)
         ? saved.theme
         : DEFAULTS.theme,
-      textSize: SIZES.includes(saved.textSize)
-        ? saved.textSize
-        : DEFAULTS.textSize,
+      textSize: interfaceSize,
+      // Older browsers saved one size for the whole page. Keep that appearance
+      // until the user chooses different interface and message sizes.
+      messageTextSize: textSize(saved.messageTextSize, interfaceSize),
       sound: saved.sound === true,
     };
   }
@@ -38,8 +43,12 @@
     const theme = THEMES.find(([id]) => id === settings.theme);
     if (theme) root.dataset.theme = theme[0];
     else delete root.dataset.theme;
-    if (settings.textSize === 100) delete root.dataset.textSize;
-    else root.dataset.textSize = String(settings.textSize);
+    const interfaceSize = textSize(settings.textSize);
+    const messageSize = textSize(settings.messageTextSize, interfaceSize);
+    if (interfaceSize === 100) delete root.dataset.textSize;
+    else root.dataset.textSize = String(interfaceSize);
+    if (messageSize === 100) delete root.dataset.messageTextSize;
+    else root.dataset.messageTextSize = String(messageSize);
     const scheme = document.querySelector('meta[name="color-scheme"]');
     if (scheme) scheme.content = theme ? theme[1] : "dark light";
     const color = document.querySelector('meta[name="theme-color"]');
