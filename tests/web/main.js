@@ -93,6 +93,15 @@ export async function main(h) {
     .locator(".quote").waitFor();
   h.step("reaction-reply");
   await page.getByRole("button", { name: "貼圖", exact: true }).click();
+  const pickerBox = await page.locator("#sticker-picker").boundingBox();
+  const composerBox = await page.locator(".composer").boundingBox();
+  assert.ok(pickerBox && composerBox);
+  assert.ok(
+    Math.abs(
+      pickerBox.x + pickerBox.width - composerBox.x - composerBox.width,
+    ) < 1,
+    "sticker picker aligns with the composer",
+  );
   await page.locator("#sticker-content .sticker-cell").first().click();
   const sticker = page.locator(".message-row.own .sticker-image").first();
   await sticker.waitFor();

@@ -10,6 +10,14 @@ export async function mentions(h) {
   await page.getByRole("log").getByText("晚上回來吃飯嗎？").waitFor();
   const input = page.getByLabel("訊息", { exact: true });
   await input.fill("😀 @ST");
+  await page.getByRole("button", { name: "@STUB 媽" }).waitFor();
+  const mentionBox = await page.locator("#mention-picker").boundingBox();
+  const composerBox = await page.locator(".composer").boundingBox();
+  assert.ok(mentionBox && composerBox);
+  assert.ok(
+    Math.abs(mentionBox.x - composerBox.x) < 1,
+    "mention picker aligns with the composer",
+  );
   await page.getByRole("button", { name: "@STUB 媽" }).click();
   await input.press("Home");
   await page.keyboard.insertText("hi ");

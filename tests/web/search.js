@@ -235,12 +235,27 @@ async function deepJump(h) {
     frame.cmd === "history" && frame.chat === CHAT && frame.before
   );
   assert.deepEqual(older.map((frame) => frame.before), ["1100", "1050"]);
-  await until(async () => {
-    const box = await target.boundingBox();
-    const list = await page.locator("#messages").boundingBox();
-    return box && list && box.y >= list.y &&
-      box.y + box.height <= list.y + list.height;
-  }, "deep hit scrolled into view");
+  let jumpGeometry;
+  try {
+    await until(async () => {
+      const box = await target.boundingBox();
+      const list = await page.locator("#messages").boundingBox();
+      jumpGeometry = { box, list };
+      return box && list && box.y >= list.y &&
+        box.y + box.height <= list.y + list.height;
+    }, "deep hit scrolled into view");
+  } catch (error) {
+    console.log("search jump geometry", JSON.stringify(jumpGeometry));
+    console.log(
+      "search scroll metrics",
+      await page.locator("#messages").evaluate((list) => ({
+        top: list.scrollTop,
+        height: list.scrollHeight,
+        client: list.clientHeight,
+      })),
+    );
+    throw error;
+  }
   h.step("jump-pages-back-to-old-hit");
   await context.close();
 }
