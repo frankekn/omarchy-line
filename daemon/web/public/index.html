@@ -26,6 +26,7 @@
     <link rel="modulepreload" href="/js/ids.js">
     <link rel="modulepreload" href="/js/keyed.js">
     <link rel="modulepreload" href="/js/media-kind.js">
+    <link rel="modulepreload" href="/js/message-grouping.js">
     <link rel="modulepreload" href="/js/model.js">
     <link rel="modulepreload" href="/js/preview-cache.js">
     <link rel="modulepreload" href="/js/protocol.js">
@@ -44,6 +45,7 @@
     <link rel="modulepreload" href="/js/view-switcher.js">
     <link rel="modulepreload" href="/js/view-status.js">
     <link rel="modulepreload" href="/js/view-message-actions.js">
+    <link rel="modulepreload" href="/js/view-message-menu.js">
     <link rel="modulepreload" href="/js/view-search.js">
     <script type="module" src="/js/app.js"></script>
   </head>
@@ -93,7 +95,7 @@
         <path d="M3 5h10M6 3h4M4 5l1 8h6l1-8M7 7v4M9 7v4" />
       </symbol>
       <symbol id="i-more" viewBox="0 0 16 16">
-        <path d="M3 8h.01M8 8h.01M13 8h.01" />
+        <path d="M3 8h.01M8 8h.01M13 8h.01" stroke-width="2.5" />
       </symbol>
       <symbol id="i-play" viewBox="0 0 16 16">
         <path d="M5 3.5v9l7-4.5Z" />
@@ -175,6 +177,8 @@
             <div id="messages" class="messages" role="log" aria-live="polite"
               aria-relevant="additions text" aria-labelledby="active-name"
               tabindex="0"></div>
+            <div
+              class="message-navigation"><button id="jump-latest" class="icon-button" type="button" hidden data-i18n-title="jumpLatest" aria-label="回到最新訊息" title="回到最新訊息"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg></button></div>
             <div id="drop-overlay" class="drop-overlay" hidden
               data-i18n="dropFiles">放開以上傳檔案</div>
             <div class="composer-area">

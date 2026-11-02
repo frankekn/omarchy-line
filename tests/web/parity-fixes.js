@@ -344,7 +344,7 @@ export async function shortcutScope(h) {
     const selector of [
       "#settings-open",
       "#sync",
-      ".message-actions button",
+      ".message-more",
       'article[data-message-id="scope-image"] img',
     ]
   ) {
@@ -630,13 +630,16 @@ export async function reactionEscape(h) {
   const { context, page } = await pictureFixture(h, messages);
   const first = page.locator('article[data-message-id="reaction-1"]');
   const second = page.locator('article[data-message-id="reaction-2"]');
-  await first.getByRole("button", { name: "Reply" }).click();
+  await first.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "Reply", exact: true }).click();
   await page.locator("#stickers").click();
-  await first.getByRole("button", { name: "React" }).click();
-  await second.getByRole("button", { name: "React" }).click();
+  await first.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "React", exact: true }).click();
+  await second.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "React", exact: true }).click();
   assert.equal(await page.locator(".reaction-picker").count(), 2);
   assert.equal(
-    await first.getByRole("button", { name: "React", exact: true })
+    await first.locator('[data-action="reaction"]')
       .getAttribute("aria-expanded"),
     "true",
   );
@@ -644,18 +647,18 @@ export async function reactionEscape(h) {
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".reaction-picker").count(), 0);
   assert.equal(
-    await second.getByRole("button", { name: "React" }).evaluate(
+    await second.getByRole("button", { name: "Message actions" }).evaluate(
       (node) => node === document.activeElement,
     ),
     true,
   );
   assert.equal(
-    await first.getByRole("button", { name: "React", exact: true })
+    await first.locator('[data-action="reaction"]')
       .getAttribute("aria-expanded"),
     "false",
   );
   assert.equal(
-    await second.getByRole("button", { name: "React", exact: true })
+    await second.locator('[data-action="reaction"]')
       .getAttribute("aria-controls"),
     null,
   );
@@ -666,7 +669,8 @@ export async function reactionEscape(h) {
     ),
     true,
   );
-  await first.getByRole("button", { name: "React" }).click();
+  await first.getByRole("button", { name: "Message actions" }).click();
+  await page.getByRole("menuitem", { name: "React", exact: true }).click();
   assert.equal(await page.locator(".reaction-picker").count(), 1);
   const input = page.locator("#message-input");
   await input.fill("@ST");

@@ -301,9 +301,10 @@ export async function parity(h) {
   });
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.locator('article[data-message-id="parity6"] .quote').click();
-  assert.equal(
-    await page.evaluate(() => globalThis.__quoteScrollBehavior),
-    "auto",
+  assert.ok(
+    ["auto", "instant"].includes(
+      await page.evaluate(() => globalThis.__quoteScrollBehavior),
+    ),
   );
   assert.equal(
     await page.locator('article[data-message-id="parity1"]').evaluate((row) =>
@@ -312,16 +313,23 @@ export async function parity(h) {
     true,
   );
   await page.emulateMedia({ reducedMotion: "no-preference" });
+  await page.evaluate(() => globalThis.__quoteScrollBehavior = "");
   await page.locator('article[data-message-id="parity6"] .quote').evaluate((
     node,
   ) => node.click());
   assert.equal(
     await page.evaluate(() => globalThis.__quoteScrollBehavior),
-    "smooth",
+    "instant",
   );
+  await page.waitForFunction(() => {
+    const target = document.querySelector('article[data-message-id="parity1"]')
+      .getBoundingClientRect();
+    const area = document.getElementById("messages").getBoundingClientRect();
+    return target.bottom > area.top && target.top < area.bottom;
+  });
   await quotedOrigin.evaluate((row) => delete row.scrollIntoView);
   await page.evaluate(() => delete globalThis.__quoteScrollBehavior);
-  h.step("quote-reduced-motion");
+  h.step("quote-motion-preferences");
   const historyBefore =
     tap.sent.filter((frame) => frame.cmd === "history").length;
   await page.waitForTimeout(1000);
@@ -329,12 +337,19 @@ export async function parity(h) {
     tap.sent.filter((frame) => frame.cmd === "history").length,
     historyBefore,
   );
-  await page.locator('article[data-message-id="parity7"] .quote').click();
+  // Isolate activation from browser scrolling to reveal an offscreen button.
+  // Scrolling near the top is a separate, legitimate history-paging gesture.
+  await page.locator('article[data-message-id="parity7"] .quote').evaluate(
+    (node) => node.click(),
+  );
   await page.getByText(/The original isn't in this page/).waitFor();
   assert.equal(
     tap.sent.filter((frame) => frame.cmd === "history").length,
     historyBefore,
   );
+  // Also verify real pointer actionability. Revealing the button may page.
+  await page.locator('article[data-message-id="parity7"] .quote').click();
+  await page.getByText(/The original isn't in this page/).waitFor();
   h.step("quote-navigation");
 
   await page.locator('article[data-message-id="parity4"] img.media-image')

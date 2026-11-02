@@ -3,17 +3,22 @@
 import { $, el, formatTime, icon, richText } from "./dom.js";
 import { compareMessages, trimHistory } from "./protocol.js";
 import { placeKeyedNodes, planKeyChanges } from "./keyed.js";
+import { continuesMessageRun } from "./message-grouping.js";
+import { makeMessageMenu } from "./view-message-menu.js";
 const HISTORY_LIMIT = 500, TRIM_BATCH = 200;
 export function createMessagesView(ctx) {
   const model = ctx.model, t = ctx.t, english = ctx.english;
   const records = new Map();
+  const actionMenu = makeMessageMenu(t, resumeMenuFollowing);
+  const actionFocus = (button) =>
+    button?.closest(".message-actions")?.querySelector(".message-more");
   const rowMessages = new WeakMap();
   const selectionVisibility = new Map();
   let order = [], renderedChat = "", renderedAccount = "", renderedTail = null;
   let renderedRows = [], renderedDesired = [], renderedToday = "";
   let renderedUnread = "";
-  let followedTop = null;
-  let followFrame = 0, trimFrame = 0;
+  let followedTop = null, menuWasFollowing = false;
+  let followFrame = 0, trimFrame = 0, quoteFrame = 0;
   let suppressPaging = false, pagingTimer = 0, touchY = null;
   let programmaticScroll = false, programmaticMoved = false;
   let programmaticTop = 0, programmaticTimer = 0;
@@ -36,13 +41,23 @@ export function createMessagesView(ctx) {
     OMG: "😱",
   };
   function alignQuoteTarget(target) {
-    target.scrollIntoView({
-      block: "center",
-      behavior:
-        globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "auto"
-          : "smooth",
-    });
+    if (quoteFrame) cancelAnimationFrame(quoteFrame);
+    const chat = renderedChat, account = renderedAccount;
+    const id = target.dataset.messageId;
+    let frames = 3;
+    function align() {
+      quoteFrame = 0;
+      if (
+        !target.isConnected || chat !== renderedChat ||
+        account !== renderedAccount || !programmaticScroll ||
+        quoteJumpTarget !== id
+      ) return;
+      // Deferred rows change height when revealed. Settle locally instead of
+      // animating toward an estimate through an unlaid-out history window.
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+      if (--frames) quoteFrame = requestAnimationFrame(align);
+    }
+    align();
   }
   function scrollToMessage(id) {
     const list = $("messages");
@@ -67,12 +82,12 @@ export function createMessagesView(ctx) {
   function closeOpenReactions() {
     for (const picker of $("messages").querySelectorAll(".reaction-picker")) {
       const trigger = picker.parentElement.querySelector(
-        ".message-actions button[aria-expanded]",
+        ".message-action[data-action='reaction']",
       );
       trigger?.setAttribute("aria-expanded", "false");
       trigger?.removeAttribute("aria-controls");
       if (picker.contains(document.activeElement)) {
-        trigger?.focus({ preventScroll: true });
+        actionFocus(trigger)?.focus({ preventScroll: true });
       }
       picker.remove();
     }
@@ -98,6 +113,7 @@ export function createMessagesView(ctx) {
   function messageAction(label, symbol) {
     const button = el("button", "message-action");
     button.type = "button";
+    button.dataset.action = label;
     button.title = t(label);
     button.append(icon(symbol), el("span", "sr-only", t(label)));
     return button;
@@ -105,7 +121,10 @@ export function createMessagesView(ctx) {
   function appendMessageActions(actions, chat, message, text) {
     if (text) {
       const copy = messageAction("copy", "copy");
-      copy.addEventListener("click", () => void ctx.copyText(text));
+      copy.addEventListener(
+        "click",
+        () => void ctx.copyText(actionText(copy)),
+      );
       actions.append(copy);
     }
     if (
@@ -123,16 +142,80 @@ export function createMessagesView(ctx) {
       text && message.contentType === "NONE" && !message.decryptFailed
     ) {
       const forward = messageAction("forward", "forward");
-      forward.addEventListener("click", () => ctx.forwardText(text, forward));
+      forward.addEventListener(
+        "click",
+        () =>
+          ctx.forwardText(
+            actionText(forward),
+            actionFocus(forward),
+          ),
+      );
       actions.append(forward);
     }
+  }
+  function actionText(button) {
+    const current = rowMessages.get(button.closest(".message-row"));
+    return current ? messageBody(current) : "";
+  }
+  function messageBody(message) {
+    if (message.unsent) return t("unsent");
+    if (message.decryptFailed) return t("decryptFailed");
+    const body = message.contentType === "FLEX" && message.altText
+      ? String(message.altText)
+      : String(message.text || "");
+    // LINE repeats a place's title as the message text.
+    if (
+      message.contentType === "LOCATION" && message.location &&
+      body.trim() === String(message.location.title || "")
+    ) return "";
+    if (
+      ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) &&
+      (!body || body.toUpperCase() === message.contentType)
+    ) {
+      return t(
+        message.contentType === "CHATEVENT" ? "systemEvent" : "postEvent",
+      );
+    }
+    return body;
+  }
+  function openMessageMenu(trigger) {
+    const owner = actionMenu.row;
+    const resume = owner ? menuWasFollowing : isFollowing(list);
+    if (owner && owner !== trigger.closest(".message-row")) {
+      actionMenu.close(false, false);
+    }
+    endProgrammaticScroll();
+    cancelTouchSettling();
+    interruptFollowing();
+    menuWasFollowing = resume;
+    actionMenu.open(trigger);
+    updateNavigation();
+  }
+  function resumeMenuFollowing(allowed) {
+    const resume = allowed && menuWasFollowing;
+    menuWasFollowing = false;
+    if (!resume) return;
+    followBottom(list);
+    const focus = document.activeElement;
+    if (list.contains(focus)) {
+      const rect = focus.getBoundingClientRect(),
+        area = list.getBoundingClientRect();
+      if (rect.top < area.top || rect.bottom > area.bottom) {
+        list.focus({ preventScroll: true });
+      }
+    }
+    updateNavigation();
   }
   // enil:message-actions-end
   function messageNode(message, includeMedia = true) {
     const chat = model.active,
       own = message.from === model.account,
-      row = el("article", `message-row${own ? " own" : ""}`),
-      column = el("div", "message-column");
+      row = el(
+        "article",
+        `message-row${own ? " own" : ""}${message.unsent ? " unsent" : ""}`,
+      ),
+      column = el("div", "message-column"),
+      footer = el("div", "message-footer");
     rowMessages.set(row, message);
     row.dataset.messageId = String(message.id || "");
     if (
@@ -152,27 +235,10 @@ export function createMessagesView(ctx) {
       button.addEventListener("click", () => scrollToMessage(quote.id));
       bubble.append(button);
     }
-    let body = message.unsent
-      ? t("unsent")
-      : message.decryptFailed
-      ? t("decryptFailed")
-      : String(message.text || "");
-    if (message.contentType === "FLEX" && message.altText) {
-      body = String(message.altText);
-    }
+    const body = messageBody(message);
     const place = message.contentType === "LOCATION" && !message.unsent
       ? message.location
       : null;
-    // LINE repeats a place's title as the message text.
-    if (place && body.trim() === String(place.title || "")) body = "";
-    if (
-      ["CHATEVENT", "POSTNOTIFICATION"].includes(message.contentType) &&
-      (!body || body.toUpperCase() === message.contentType)
-    ) {
-      body = message.contentType === "CHATEVENT"
-        ? t("systemEvent")
-        : t("postEvent");
-    }
     if (body) {
       const content = el("div", "message-text");
       content.append(richText(body, message.mentions));
@@ -228,7 +294,7 @@ export function createMessagesView(ctx) {
         );
         reactions.append(button);
       }
-      column.append(reactions);
+      footer.append(reactions);
     }
     const meta = el("div", "message-meta");
     if (
@@ -286,7 +352,7 @@ export function createMessagesView(ctx) {
         ctx.closeReactionPicker(String(message.id));
         react.setAttribute("aria-expanded", "false");
         react.removeAttribute("aria-controls");
-        react.focus({ preventScroll: true });
+        actionFocus(react)?.focus({ preventScroll: true });
         picker?.remove();
       };
       react.addEventListener("click", () => {
@@ -350,9 +416,35 @@ export function createMessagesView(ctx) {
         });
         actions.append(unsend);
       }
+      const more = el("button", "message-more");
+      more.type = "button";
+      more.title = t("messageActions");
+      more.setAttribute("aria-label", t("messageActions"));
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-expanded", "false");
+      more.setAttribute("aria-controls", "message-action-menu");
+      more.append(icon("more"));
+      more.setAttribute("popovertarget", "message-action-menu");
+      more.addEventListener("click", (event) => {
+        event.preventDefault();
+        openMessageMenu(more);
+      });
+      more.addEventListener("keydown", (event) => {
+        if (
+          event.isComposing || event.ctrlKey || event.metaKey || event.altKey
+        ) {
+          return;
+        }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          openMessageMenu(more);
+        }
+      });
+      actions.append(more);
       meta.append(actions);
     }
-    column.append(meta);
+    footer.append(meta);
+    column.append(footer);
     row.append(column);
     return row;
   }
@@ -416,8 +508,10 @@ export function createMessagesView(ctx) {
     const newColumn = newRow.firstElementChild;
     const oldBubble = oldColumn.querySelector(":scope > .bubble");
     const newBubble = newColumn.querySelector(":scope > .bubble");
-    const oldMeta = oldColumn.querySelector(":scope > .message-meta");
-    const newMeta = newColumn.querySelector(":scope > .message-meta");
+    const oldFooter = oldColumn.querySelector(":scope > .message-footer");
+    const newFooter = newColumn.querySelector(":scope > .message-footer");
+    const oldMeta = oldFooter.querySelector(":scope > .message-meta");
+    const newMeta = newFooter.querySelector(":scope > .message-meta");
     const oldActions = oldMeta.querySelector(":scope > .message-actions");
     const newActions = newMeta.querySelector(":scope > .message-actions");
     const keepActions = oldActions && newActions &&
@@ -427,10 +521,16 @@ export function createMessagesView(ctx) {
       );
     const picker = oldColumn.querySelector(":scope > .reaction-picker");
     if (!keepActions) {
+      actionMenu.closeRow(oldRow);
+      if (oldActions?.contains(document.activeElement)) {
+        $("messages").focus({ preventScroll: true });
+      }
       ctx.closeReactionPicker(id);
       picker?.remove();
     }
+    const highlighted = oldRow.classList.contains("quote-target");
     oldRow.className = newRow.className;
+    if (highlighted) oldRow.classList.add("quote-target");
     oldBubble.className = newBubble.className;
     function updateBubblePart(selector, keep, before) {
       const old = oldBubble.querySelector(`:scope > ${selector}`);
@@ -466,30 +566,27 @@ export function createMessagesView(ctx) {
     } else {
       oldMeta.replaceWith(newMeta);
     }
-    const oldReactions = oldColumn.querySelector(":scope > .reactions");
-    const newReactions = newColumn.querySelector(":scope > .reactions");
-    let reactions = null;
+    const oldReactions = oldFooter.querySelector(":scope > .reactions");
+    const newReactions = newFooter.querySelector(":scope > .reactions");
     if (oldReactions && newReactions) {
       updateReactions(oldReactions, newReactions);
-      reactions = oldReactions;
     } else if (oldReactions) oldReactions.remove();
     else if (newReactions) {
-      reactions = newReactions;
-      oldColumn.insertBefore(reactions, keepActions ? oldMeta : newMeta);
+      oldFooter.insertBefore(newReactions, keepActions ? oldMeta : newMeta);
     }
     for (const child of [...oldColumn.children]) {
       if (
-        child !== oldBubble && child !== (keepActions ? oldMeta : newMeta) &&
-        child !== reactions && (!keepActions || child !== picker)
+        child !== oldBubble && child !== oldFooter &&
+        (!keepActions || child !== picker)
       ) child.remove();
     }
     for (const child of [...newColumn.children]) {
-      if (child === newBubble || child === newMeta || child === newReactions) {
+      if (child === newBubble || child === newFooter) {
         continue;
       }
       if (child.classList.contains("sender")) {
         oldColumn.insertBefore(child, oldBubble);
-      } else oldColumn.insertBefore(child, keepActions ? oldMeta : newMeta);
+      } else oldColumn.insertBefore(child, oldFooter);
     }
   }
   function selectionIncludes(row, selection) {
@@ -553,6 +650,7 @@ export function createMessagesView(ctx) {
       if (row?.dataset.messageId) protectedIds.add(row.dataset.messageId);
     }
     protect(rowOf(document.activeElement));
+    protect(actionMenu.row);
     for (const video of list.getElementsByTagName("video")) {
       if (!video.paused && !video.ended) protect(rowOf(video));
     }
@@ -585,11 +683,12 @@ export function createMessagesView(ctx) {
     return null;
   }
   function isFollowing(list) {
+    if (actionMenu.row) return false;
     return list.scrollHeight - list.scrollTop - list.clientHeight <= 2 ||
       (followedTop !== null && Math.abs(list.scrollTop - followedTop) <= 2);
   }
   function followBottom(list) {
-    if (programmaticScroll || touchPhase !== "idle") return;
+    if (actionMenu.row || programmaticScroll || touchPhase !== "idle") return;
     if (followFrame) cancelAnimationFrame(followFrame);
     list.scrollTop = list.scrollHeight;
     followedTop = list.scrollTop;
@@ -610,6 +709,7 @@ export function createMessagesView(ctx) {
   }
   function removeRecord(key) {
     const record = records.get(key);
+    actionMenu.closeRow(record.node);
     if (record.message) {
       ctx.unobservePreviews(record.node);
       ctx.closeReactionPicker(String(record.message.id || ""));
@@ -622,6 +722,7 @@ export function createMessagesView(ctx) {
     node.style.visibility = available ? "" : "hidden";
   }
   function interruptFollowing() {
+    menuWasFollowing = false;
     followedTop = null;
     if (followFrame) cancelAnimationFrame(followFrame);
     if (trimFrame) cancelAnimationFrame(trimFrame);
@@ -633,6 +734,8 @@ export function createMessagesView(ctx) {
       followAfterProgrammatic &&
       Math.abs(list.scrollTop - programmaticTop) <= 2;
     clearTimeout(programmaticTimer);
+    if (quoteFrame) cancelAnimationFrame(quoteFrame);
+    quoteFrame = 0;
     programmaticTimer = 0;
     programmaticScroll = false;
     programmaticMoved = false;
@@ -749,9 +852,21 @@ export function createMessagesView(ctx) {
       removeEmptyDay();
       order = order.filter((key) => !removedKeys.has(key));
       renderedRows = renderedRows.filter((row) => !removed.has(row));
-      renderedDesired = renderedDesired.filter((item) =>
-        !removedKeys.has(item.key)
-      );
+      let previous = null;
+      renderedDesired = renderedDesired.filter((item) => {
+        if (removedKeys.has(item.key)) return false;
+        if (item.type === "message") {
+          const continuation = continuesMessageRun(previous, item);
+          if (item.continuation !== continuation) {
+            item.continuation = continuation;
+            const record = records.get(item.key);
+            record.continuation = continuation;
+            record.node.classList.toggle("continuation", continuation);
+          }
+        }
+        previous = item;
+        return true;
+      });
       if (!records.has("control:older")) {
         const node = el("button", "text-button", t("older"));
         node.type = "button";
@@ -790,7 +905,11 @@ export function createMessagesView(ctx) {
   function renderMessages(mode = "preserve") {
     keepSelectedTailVisible($("messages"));
     if (model.noOlder) ctx.refreshOlderAvailability();
-    if (mode === "bottom") endProgrammaticScroll();
+    if (mode === "bottom") {
+      menuWasFollowing = false;
+      actionMenu.close(false);
+      endProgrammaticScroll();
+    }
     if ((mode === "bottom" || mode === "anchor") && trimFrame) {
       cancelAnimationFrame(trimFrame);
       trimFrame = 0;
@@ -820,6 +939,8 @@ export function createMessagesView(ctx) {
     const chatChanged = renderedChat !== model.active ||
       renderedAccount !== model.account;
     if (chatChanged) {
+      menuWasFollowing = false;
+      actionMenu.close(false);
       suppressPaging = false;
       clearTimeout(pagingTimer);
       endProgrammaticScroll();
@@ -894,7 +1015,11 @@ export function createMessagesView(ctx) {
       }
     }
     rows.sort(compareMessages);
-    const today = new Date().toDateString();
+    const currentDate = new Date();
+    const today = currentDate.toDateString();
+    const previousDate = new Date(currentDate);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const yesterday = previousDate.toDateString();
     let appendOnly = false, tail, tailTime = 0, tailDay = "";
     if (
       deferTrim && !pendingRows.length && !model.sent.size &&
@@ -922,14 +1047,16 @@ export function createMessagesView(ctx) {
     let desired;
     if (appendOnly) {
       desired = renderedDesired.slice();
-      desired.push({
+      const item = {
         key: `message:${tail.id}:0`,
         type: "message",
         message: tail,
         time: tailTime,
         day: tailDay,
         today,
-      });
+      };
+      item.continuation = continuesMessageRun(desired.at(-1), item);
+      desired.push(item);
     } else {
       desired = [];
       // Keep the control's space after an empty page: removing it at the top
@@ -963,7 +1090,12 @@ export function createMessagesView(ctx) {
         if (day && day !== previousDay) {
           const dayCount = dayCounts.get(day) || 0;
           dayCounts.set(day, dayCount + 1);
-          desired.push({ key: `day:${day}:${dayCount}`, type: "day", time });
+          desired.push({
+            key: `day:${day}:${dayCount}`,
+            type: "day",
+            time,
+            day,
+          });
           previousDay = day;
         }
         if (
@@ -973,7 +1105,9 @@ export function createMessagesView(ctx) {
           desired.push({ key: "control:unread", type: "unread" });
           unreadPlaced = true;
         }
-        desired.push({ key, type: "message", message, time, day, today });
+        const item = { key, type: "message", message, time, day, today };
+        item.continuation = continuesMessageRun(desired.at(-1), item);
+        desired.push(item);
       }
     }
     renderedTail = lastConfirmed(rows);
@@ -994,7 +1128,7 @@ export function createMessagesView(ctx) {
           hasPreview = model.previews.has(id);
         const unchanged = prior?.message === item.message &&
           prior.preview === preview && prior.hasPreview === hasPreview &&
-          prior.today === today;
+          prior.today === today && prior.continuation === item.continuation;
         if (unchanged) continue;
         const signature = JSON.stringify([
           item.message,
@@ -1003,7 +1137,12 @@ export function createMessagesView(ctx) {
           today,
         ]);
         if (prior?.signature === signature) {
+          // Boundary-only changes must retain every child, including selection.
+          if (prior.continuation !== item.continuation) {
+            prior.node.classList.toggle("continuation", item.continuation);
+          }
           prior.message = item.message;
+          prior.continuation = item.continuation;
           continue;
         }
         const mediaSignature = JSON.stringify([
@@ -1025,6 +1164,7 @@ export function createMessagesView(ctx) {
         ]);
         const keepMedia = prior?.mediaSignature === mediaSignature;
         let node = messageNode(item.message, !keepMedia);
+        node.classList.toggle("continuation", item.continuation);
         if (prior) {
           if (!keepMedia) ctx.unobservePreviews(prior.node);
           updateMessageParts(
@@ -1042,6 +1182,7 @@ export function createMessagesView(ctx) {
           node,
           message: item.message,
           signature,
+          continuation: item.continuation,
           mediaSignature,
           preview,
           hasPreview,
@@ -1050,7 +1191,8 @@ export function createMessagesView(ctx) {
           day: item.day,
         });
       } else if (
-        !prior || (item.type === "empty" && prior.text !== item.text)
+        !prior || (item.type === "empty" && prior.text !== item.text) ||
+        (item.type === "day" && prior.today !== today)
       ) {
         let node;
         if (item.type === "older") {
@@ -1058,19 +1200,44 @@ export function createMessagesView(ctx) {
           node.type = "button";
           node.addEventListener("click", () => ctx.loadOlder());
         } else if (item.type === "day") {
-          node = el(
-            "div",
-            "day-divider",
-            new Date(item.time).toLocaleDateString(
-              english ? "en" : "zh-TW",
-              { year: "numeric", month: "short", day: "numeric" },
-            ),
-          );
+          const date = new Date(item.time), locale = english ? "en" : "zh-TW";
+          const caption = item.day === today
+            ? t("today")
+            : item.day === yesterday
+            ? t("yesterday")
+            : date.toLocaleDateString(locale, {
+              year: date.getFullYear() === currentDate.getFullYear()
+                ? undefined
+                : "numeric",
+              month: "short",
+              day: "numeric",
+            });
+          node = el("h2", "day-divider", caption);
+          node.title = date.toLocaleDateString(locale, {
+            weekday: "long",
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+          });
+          node.setAttribute("aria-label", `${caption} · ${node.title}`);
         } else if (item.type === "unread") {
           node = el("div", "unread-divider", t("unreadDivider"));
         } else node = el("div", "loading-message", item.text);
         if (prior) prior.node.replaceWith(node);
-        records.set(item.key, { node, text: item.text });
+        records.set(item.key, { node, text: item.text, today });
+      }
+    }
+    if (order.at(-1) !== keys.at(-1)) {
+      const formerTail = records.get(order.at(-1));
+      if (formerTail?.message) {
+        // WebKit can discard the measured size when the visible tail becomes
+        // deferred. Preserve its block size before changing the last child.
+        // This is a fallback, not fixed sizing. Edits, resizing or text-size
+        // changes can leave offscreen estimates stale until the row is laid out.
+        const height = formerTail.node.getBoundingClientRect().height;
+        if (height > 0) {
+          formerTail.node.style.containIntrinsicBlockSize = `auto ${height}px`;
+        }
       }
     }
     // A top trim followed by an append leaves all retained nodes in order.
@@ -1132,8 +1299,21 @@ export function createMessagesView(ctx) {
       list.scrollTop = oldTop;
     }
     if (deferTrim) scheduleTrim(list);
+    updateNavigation();
   }
-  const list = $("messages");
+  const list = $("messages"), jumpLatest = $("jump-latest");
+  function updateNavigation() {
+    const hidden = !model.active || isFollowing(list) ||
+      list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+    if (jumpLatest.hidden !== hidden) jumpLatest.hidden = hidden;
+  }
+  jumpLatest.addEventListener("click", () => {
+    resumePaging(false);
+    suspendPaging(200);
+    list.focus({ preventScroll: true });
+    followBottom(list);
+    updateNavigation();
+  });
   document.addEventListener("selectionchange", releaseSelectionVisibility);
   function loadNearTop() {
     if (list.scrollTop < 150 && list.scrollHeight > list.clientHeight + 10) {
@@ -1150,6 +1330,7 @@ export function createMessagesView(ctx) {
     if (up) loadNearTop();
   }
   list.addEventListener("scroll", () => {
+    updateNavigation();
     // Settle after a reader reaches the bottom, including deferred layout.
     if (programmaticScroll) {
       if (Math.abs(list.scrollTop - programmaticTop) > 2) {

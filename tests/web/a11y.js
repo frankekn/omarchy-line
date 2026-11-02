@@ -261,8 +261,9 @@ export async function a11y(h) {
       .waitFor();
     await targets("chat");
     await contrast("chat");
-    await page.getByRole("button", { name: "React", exact: true }).first()
-      .click();
+    await page.getByRole("button", { name: "Message actions", exact: true })
+      .first().click();
+    await page.getByRole("menuitem", { name: "React", exact: true }).click();
     await page.getByRole("button", { name: "Like", exact: true }).waitFor();
     await targets("reaction");
     await page.locator("#stickers").click();
@@ -273,8 +274,9 @@ export async function a11y(h) {
     await page.getByRole("button", { name: "@All" }).waitFor();
     await targets("mention");
     await page.getByLabel("Message", { exact: true }).fill("");
-    await page.getByRole("button", { name: "Reply", exact: true }).first()
-      .click();
+    await page.getByRole("button", { name: "Message actions", exact: true })
+      .first().click();
+    await page.getByRole("menuitem", { name: "Reply", exact: true }).click();
     await page.locator("#reply-target:not([hidden])").waitFor();
     await targets("reply");
     await contrast("reply");

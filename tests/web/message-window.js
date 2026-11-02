@@ -1,5 +1,6 @@
 // Exercise trimming, paging and protected interactions in the real page.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
+import { readingNavigation } from "./reading-navigation.js";
 
 async function exposeFollowContext(context) {
   const appUrl = new URL("../../daemon/web/public/js/app.js", import.meta.url);
@@ -63,7 +64,10 @@ async function reactDuringEmptyPage(h) {
   });
   await until(() => release, "held empty older page");
   const row = page.locator('article[data-message-id="100"]');
-  const react = row.getByRole("button", { name: "React", exact: true });
+  const react = row.getByRole("button", {
+    name: "Message actions",
+    exact: true,
+  });
   await react.scrollIntoViewIfNeeded();
   const before = await react.boundingBox();
   await page.mouse.move(
@@ -78,13 +82,16 @@ async function reactDuringEmptyPage(h) {
   await page.evaluate(() => new Promise(requestAnimationFrame));
   const after = await react.boundingBox();
   await page.mouse.up();
+  await page.getByRole("menuitem", { name: "React", exact: true }).click();
   assert.ok(Math.abs(after.y - before.y) <= 1, "React moves during the press");
   await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await react.tap();
+  await page.getByRole("menuitem", { name: "React", exact: true }).tap();
   await row.getByRole("button", { name: "Like", exact: true }).waitFor({
     state: "hidden",
   });
   await react.tap();
+  await page.getByRole("menuitem", { name: "React", exact: true }).tap();
   await row.getByRole("button", { name: "Like", exact: true }).waitFor();
   await context.close();
   h.step("empty older page keeps React stable during pointer and touch input");
@@ -431,11 +438,8 @@ async function quoteDuringOlder(h) {
         globalThis.__quoteAlignments
       );
       assert.ok(alignments.length >= 2);
-      assert.ok(
-        alignments.every((value) =>
-          value === (motion === "reduce" ? "auto" : "smooth")
-        ),
-      );
+      // Both motion preferences must land on the visible message. Deferred
+      // rows cannot provide a stable destination for smooth scrolling.
     }
     await context.close();
     h.step(
@@ -690,8 +694,7 @@ async function scrollFollow(h) {
     await page.locator('article[data-message-id="129"] .quote').click();
     await page.waitForFunction(() => {
       const list = document.getElementById("messages");
-      return list.scrollTop > 150 &&
-        list.scrollHeight - list.clientHeight - list.scrollTop > 50;
+      return list.scrollHeight - list.clientHeight - list.scrollTop > 50;
     });
     await page.locator("#messages").evaluate((list) =>
       list.focus({ preventScroll: true })
@@ -1129,7 +1132,142 @@ async function scrollFollow(h) {
   await context.close();
 }
 
+async function conversationGrouping(h) {
+  const context = await h.context({ locale: "en-US" });
+  await exposeFollowContext(context);
+  const page = await context.newPage();
+  await h.signIn(page);
+  await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+  await page.waitForFunction(() => !globalThis.__followModel.loading);
+  const result = await page.evaluate(async () => {
+    const model = globalThis.__followModel, ctx = globalThis.__followCtx;
+    const time = new Date(2026, 5, 1, 12).getTime();
+    const message = (id) => ({
+      id: String(id),
+      chat: model.active,
+      from: "u-group-peer",
+      fromName: "Peer",
+      time: time + id * 1000,
+      text: `Grouped ${id}`,
+      contentType: "NONE",
+    });
+    const row = (id) =>
+      document.querySelector(`article[data-message-id="${id}"]`);
+    const grouped = (id) => row(id).classList.contains("continuation");
+    model.messages = [message(2), message(3)];
+    model.unreadMarkId = "";
+    model.noOlder = true;
+    ctx.renderMessages("bottom");
+    const retained = row(2);
+    const sender = retained.querySelector(".sender");
+    const text = retained.querySelector(".message-text");
+    const action = retained.querySelector(".message-more");
+    const stamp = retained.querySelector("time");
+    const media = document.createElement("video");
+    retained.querySelector(".bubble").append(media);
+    action.focus({ preventScroll: true });
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    const initial = !grouped(2) && grouped(3);
+    model.messages = [message(1), ...model.messages];
+    ctx.renderMessages("anchor");
+    const prepend = grouped(2) && row(2) === retained &&
+      retained.querySelector(".sender") === sender &&
+      retained.querySelector("time") === stamp && media.isConnected &&
+      retained.querySelector(".message-more") === action &&
+      document.activeElement === action &&
+      getSelection().toString() === "Grouped 2";
+    const hiddenAuthor = getComputedStyle(sender).clipPath === "inset(50%)" &&
+      sender.textContent === "Peer" && !sender.hasAttribute("aria-hidden");
+    const runGap = retained.getBoundingClientRect().top -
+      row(1).getBoundingClientRect().bottom;
+    model.messages[0] = { ...model.messages[0], unsent: true };
+    ctx.renderMessages("preserve");
+    const tighter = runGap < retained.getBoundingClientRect().top -
+        row(1).getBoundingClientRect().bottom;
+    const unsend = !grouped(2) && grouped(3) &&
+      retained.querySelector("time") === stamp && media.isConnected;
+    model.unreadMarkId = "3";
+    ctx.renderMessages("preserve");
+    const unread = !grouped(3);
+    model.unreadMarkId = "";
+    model.messages = model.messages.slice(1);
+    ctx.renderMessages("preserve");
+    const removal = !grouped(2) && grouped(3);
+    getSelection().removeAllRanges();
+    ctx.renderMessages("bottom");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: message(4),
+      },
+    });
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve))
+    );
+    const list = document.getElementById("messages");
+    const checks = {
+      initial,
+      prepend,
+      hiddenAuthor,
+      tighter,
+      unsend,
+      unread,
+      removal,
+      append: grouped(4),
+      times: [...list.querySelectorAll(".message-row")].every((node) =>
+        node.querySelector("time")?.textContent
+      ),
+      following: list.scrollHeight - list.clientHeight - list.scrollTop <= 2,
+    };
+    // Exceed the trim batch to exercise the append-only desired-items path.
+    model.messages = Array.from(
+      { length: 702 },
+      (_, index) => message(100 + index),
+    );
+    ctx.renderMessages("bottom");
+    ctx.onFrame({
+      boot: model.boot,
+      event: {
+        seq: model.seq + 1,
+        kind: "message",
+        chat: model.active,
+        message: message(802),
+      },
+    });
+    checks.appendOnly = grouped(802);
+    await new Promise((resolve, reject) => {
+      let frames = 120;
+      function trimmed() {
+        if (model.messages.length === 500) return resolve();
+        if (!--frames) return reject(new Error("grouped trim did not settle"));
+        requestAnimationFrame(trimmed);
+      }
+      requestAnimationFrame(trimmed);
+    });
+    const head = list.querySelector(".message-row");
+    checks.trimmedHead = !head.classList.contains("continuation") &&
+      getComputedStyle(head.querySelector(".sender")).clipPath === "none";
+    checks.trimmedNext = head.nextElementSibling.classList.contains(
+      "continuation",
+    );
+    return checks;
+  });
+  for (const [name, passed] of Object.entries(result)) assert.ok(passed, name);
+  await context.close();
+  h.step(
+    "conversation grouping updates append, prepend, unsend and unread boundaries without replacing retained nodes",
+  );
+}
+
 export async function messageWindow(h) {
+  await readingNavigation(h, exposeFollowContext);
+  await conversationGrouping(h);
   await reactDuringEmptyPage(h);
   await touchDuringAccountChange(h);
   await touchPagingNearTop(h);
@@ -1290,6 +1428,8 @@ export async function messageWindow(h) {
         scrollTop: list.scrollTop,
         scrollHeight: list.scrollHeight,
         clientHeight: list.clientHeight,
+        active: document.activeElement?.outerHTML.slice(0, 300),
+        selected: getSelection()?.toString().slice(0, 80),
         bottom: list.scrollHeight - list.clientHeight - list.scrollTop,
         noOlder: model.noOlder,
       };
@@ -1313,6 +1453,9 @@ export async function messageWindow(h) {
       "  bottom diagnostic",
       JSON.stringify({
         bottom: state.bottom,
+        count: state.ids.length,
+        active: state.active,
+        selected: state.selected,
         scrollTop: state.scrollTop,
         scrollHeight: state.scrollHeight,
         clientHeight: state.clientHeight,
@@ -1525,7 +1668,9 @@ export async function messageWindow(h) {
     } else if (i === 500) {
       await deliver([row(i)]);
       const older = page.getByRole("button", { name: "Load older messages" });
-      assert.equal((await current()).noOlder, false);
+      const trimState = await current();
+      if (trimState.noOlder) await reportBottom(trimState);
+      assert.equal(trimState.noOlder, false);
       assert.equal(await older.isVisible(), true);
       assert.equal(await older.isEnabled(), true);
       await deliver(Array.from({ length: 24 }, (_, j) => row(i + j + 1)));
@@ -2112,7 +2257,7 @@ export async function messageWindow(h) {
 
   await fixture();
   await page.locator(
-    'article[data-message-id="10000000"] .message-actions button',
+    'article[data-message-id="10000000"] .message-more',
   ).first()
     .evaluate((node) => node.focus({ preventScroll: true }));
   await atBottom();

@@ -25,11 +25,14 @@ await runSuite("soak-edit-actions", async (h) => {
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
   const row = page.locator(`article[data-message-id="${original.id}"]`);
   await row.waitFor();
-  const react = () => row.getByRole("button", { name: "React", exact: true });
-  await react().click();
+  const react = async () => {
+    await row.getByRole("button", { name: "Message actions" }).click();
+    await page.getByRole("menuitem", { name: "React", exact: true }).click();
+  };
+  await react();
   const before = await row.locator(".reaction-picker").count();
   const beforeVisible = await row.locator(".reaction-picker").isVisible();
-  await react().click();
+  await react();
   let seq = Math.max(0, ...state.events.map((event) => event.seq));
   async function snapshot(label) {
     await cdp.send("HeapProfiler.collectGarbage");
@@ -53,12 +56,12 @@ await runSuite("soak-edit-actions", async (h) => {
       await snapshot(i + 1);
     }
     if (i === 0) {
-      await react().click();
+      await react();
       afterFirst = await row.locator(".reaction-picker").count();
-      await react().click();
+      await react();
     }
   }
-  await react().click();
+  await react();
   const afterRepeated = await row.locator(".reaction-picker").count();
   const afterVisible = await row.locator(".reaction-picker").isVisible();
   console.log(JSON.stringify({

@@ -86,11 +86,14 @@ const strings = {
   loading: ["載入中…", "Loading…"],
   noMessages: ["還沒有訊息。", "No messages yet."],
   older: ["載入更早的訊息", "Load older messages"],
+  jumpLatest: ["回到最新訊息", "Jump to latest"],
+  today: ["今天", "Today"],
+  yesterday: ["昨天", "Yesterday"],
   unreadDivider: ["未讀訊息", "Unread"],
   messageLabel: ["訊息", "Message"],
   mention: ["提及成員", "Mention members"],
   membersUnavailable: ["無法載入成員名單", "Could not load members"],
-  messagePlaceholder: ["輸入訊息…", "Write a message…"],
+  messagePlaceholder: ["輸入訊息…", "Message…"],
   send: ["送出", "Send"],
   composerHint: [
     "Enter 送出 · Shift + Enter 換行",
@@ -115,6 +118,7 @@ const strings = {
   zoomIn: ["放大", "Zoom in"],
   zoomOut: ["縮小", "Zoom out"],
   noStickers: ["沒有可用的貼圖。", "No stickers available."],
+  messageActions: ["訊息動作", "Message actions"],
   reply: ["回覆", "Reply"],
   jumpToOrigin: ["跳到原訊息", "Jump to original message"],
   missingOrigin: [

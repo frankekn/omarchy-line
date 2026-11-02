@@ -1038,7 +1038,9 @@ def fixture_demo(locale):
     emma, mei, notes = mid["emma"], mid["mei"], mid["notes"]
 
     def by(chat, i, key, text, ago, **extra):
-        who = "我" if key == "me" else name[key]
+        who = ("Me" if locale == "en" else "我") if key == "me" else name[key]
+        if extra.get("contentType") == "IMAGE" and extra.get("hasMedia"):
+            extra["previewable"] = True
         return msg(chat, i, mid[key], who, text, ago, **extra)
 
     def mentioned(parts, targets):

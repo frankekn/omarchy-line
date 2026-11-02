@@ -139,7 +139,7 @@ export async function edge(h) {
     hasText: fileName,
   });
   await pending.getByRole("button", { name: "Retry" }).click();
-  await pending.getByRole("button", { name: "Unsend" }).waitFor();
+  await pending.getByRole("button", { name: "Message actions" }).waitFor();
   assert.equal(filePaths.length, 2);
   assert.notEqual(filePaths[0], filePaths[1]);
   h.step("upload-retry-fresh-copy");
