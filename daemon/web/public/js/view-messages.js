@@ -200,17 +200,21 @@ export function createMessagesView(ctx) {
       const reactions = el("div", "reactions");
       for (const reaction of message.reactions) {
         const type = String(reaction.type || ""),
+          known = Object.hasOwn(reactionTypes, type),
+          reactionName = known ? t(`reaction${type}`) : type,
           button = el(
             "button",
             `reaction-pill${reaction.mine ? " mine" : ""}`,
-            `${reactionTypes[type] || type} ${Number(reaction.count || 0)}`,
+            `${known ? reactionTypes[type] : type} ${
+              Number(reaction.count || 0)
+            }`,
           );
         button.type = "button";
         button.dataset.reactionType = type;
         button.setAttribute("aria-pressed", String(Boolean(reaction.mine)));
         button.setAttribute(
           "aria-label",
-          `${t(`reaction${type}`)} ${Number(reaction.count || 0)}`,
+          `${reactionName} ${Number(reaction.count || 0)}`,
         );
         button.title = reaction.mine ? t("undoReaction") : t("reaction");
         button.addEventListener(

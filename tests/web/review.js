@@ -898,6 +898,15 @@ async function messageInteractionsDuringUpdates(h) {
   );
   h.step("reaction pills keep focus and use the current mine state");
 
+  updateReactions([...reactions, { type: "FUTURE", count: 2, mine: false }]);
+  const unknown = messageRow.getByRole("button", {
+    name: "FUTURE 2",
+    exact: true,
+  });
+  await unknown.waitFor();
+  assert.equal(await unknown.textContent(), "FUTURE 2");
+  h.step("unknown reactions keep readable visible and accessible names");
+
   await page.locator(".quote-target").evaluateAll((nodes) =>
     nodes.forEach((node) => node.classList.remove("quote-target"))
   );
