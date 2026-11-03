@@ -34,6 +34,11 @@ of them must update this page in the same commit.
   not stop the daemon. [When LINE restricts the
   account](docs/architecture.md#when-line-restricts-the-account) has the
   details.
+- **Media follows LINE's encryption negotiation.** Photos, videos and files
+  use end-to-end encryption when supported. If LINE explicitly answers
+  `E2EE_RETRY_PLAIN`, or reports that the recipient does not support E2EE,
+  the daemon uses LINE's normal HTTPS upload, without end-to-end encryption.
+  Network, key and authentication failures do not trigger this fallback.
 - **The daemon does not send your LINE token with public image requests.** It
   uses the token for LINE and sends messages and files to LINE. A web browser
   sends your actions and uploads to the daemon first. On your own computer,

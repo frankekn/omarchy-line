@@ -1105,6 +1105,68 @@ Deno.test("only a regular file has a size worth sending", async () => {
   }
 });
 
+for (const logoutDuring of ["negotiation", "upload"]) {
+  Deno.test(`sendFilePath handles plain media and logout during ${logoutDuring}`, async () => {
+    const previousClient = client;
+    const dir = await Deno.makeTempDir({ prefix: "enil-plain-send-test-" });
+    let requests = 0;
+    const owner = {
+      base: {
+        e2ee: {
+          getE2EELocalPublicKey: () => {
+            if (logoutDuring === "negotiation") setClient(previousClient);
+            return Promise.reject(
+              Object.assign(new Error("member settings off"), {
+                type: "RequestError",
+                data: { code: "E2EE_RETRY_PLAIN" },
+              }),
+            );
+          },
+        },
+        obs: { prefix: "https://obs.line-apps.com/" },
+        getReqseq: () => Promise.resolve(42),
+        request: { getHeader: () => ({}) },
+        fetch: async (url: URL, init: RequestInit) => {
+          requests++;
+          assertEquals(
+            String(url),
+            "https://obs.line-apps.com/r/talk/m/reqseq",
+          );
+          assert(init.body instanceof Blob);
+          assertEquals(await init.body.text(), "test file");
+          setClient(previousClient);
+          return new Response(null, {
+            status: 201,
+            headers: { "x-obs-oid": "123" },
+          });
+        },
+      },
+    } as unknown as NonNullable<Parameters<typeof setClient>[0]>;
+    try {
+      const path = `${dir}/file.txt`;
+      await Deno.writeTextFile(path, "test file");
+      setClient(owner);
+      const result = await sendFilePath(
+        "ctest",
+        path,
+        owner,
+        sessionGeneration,
+        "web-file-integration",
+      );
+      assertEquals(
+        result,
+        logoutDuring === "negotiation"
+          ? { ok: false, error: "尚未登入" }
+          : { ok: true },
+      );
+      assertEquals(requests, logoutDuring === "negotiation" ? 0 : 1);
+    } finally {
+      setClient(previousClient);
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+}
+
 Deno.test("at most two sends hold a whole file at once; the rest wait", async () => {
   const previousClient = client;
   const readFile = Object.getOwnPropertyDescriptor(Deno, "readFile");
@@ -1114,6 +1176,7 @@ Deno.test("at most two sends hold a whole file at once; the rest wait", async ()
   let reads = 0;
   const owner = {
     base: {
+      e2ee: { getE2EELocalPublicKey: () => Promise.resolve() },
       obs: {
         // Holds the bytes until the test lets go, like a slow upload. It
         // rejects so that no chat refresh runs against this fake client.
@@ -1176,6 +1239,7 @@ Deno.test("invalid files bypass occupied send slots and queued files are recheck
   let originalOpen: PropertyDescriptor | undefined;
   const owner = {
     base: {
+      e2ee: { getE2EELocalPublicKey: () => Promise.resolve() },
       obs: {
         uploadMediaByE2EE: () =>
           new Promise<never>((_, reject) => {

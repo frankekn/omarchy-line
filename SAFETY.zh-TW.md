@@ -24,6 +24,9 @@
   手動同步）或重新登入，自動流量才會恢復。你自己傳的訊息還是會送到 LINE，LINE 拒絕
   的話，面板會顯示 LINE 的錯誤。其他錯誤，例如 `MAINTENANCE_ERROR`，不會讓 daemon 停下來。細節見
   [LINE 限制帳號的時候](docs/architecture.zh-TW.md#line-限制帳號的時候)。
+- **媒體依 LINE 的加密協商結果傳送。** 圖片、影片與檔案在支援時使用端對端加密。
+  只有 LINE 明確回覆 `E2EE_RETRY_PLAIN`，或表示收件者不支援 E2EE 時，daemon 才改用
+  LINE 的一般 HTTPS 上傳，不使用端對端加密。網路、金鑰與驗證錯誤不會觸發這個備援。
 - **daemon 請求公開圖片時不會送出 LINE token。** daemon 用 token 跟 LINE 溝通，並把
   訊息和檔案送到 LINE。網頁版會先把操作和上傳檔案傳給 daemon。在你自己的電腦上，
   桌面通知會把聊天室名稱、傳送者和訊息預覽交給你的通知程式，通知程式可能會把它們
