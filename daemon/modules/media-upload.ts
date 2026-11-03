@@ -92,6 +92,8 @@ export async function uploadMedia(
 ): Promise<{ sent: boolean; previewError?: unknown }> {
   let encrypted = true;
   try {
+    // Preflight repeats key negotiation on encrypted sends so LINE's plain
+    // refusal is known before uploading a potentially large encrypted object.
     await owner.base.e2ee.getE2EELocalPublicKey(args.to);
   } catch (error) {
     if (!allowsPlainMedia(error, args.to)) throw error;

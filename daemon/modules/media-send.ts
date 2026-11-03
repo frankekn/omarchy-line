@@ -422,8 +422,8 @@ async function readAndUpload(
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }
-  // Only a video needs either. An image is its own preview (linejs re-uploads
-  // the payload as `__ud-preview`) and a file has no length to show.
+  // Only a video needs either. On the E2EE path an image is its own preview
+  // (linejs re-uploads the payload as `__ud-preview`); a file has no length.
   const durationMs = kind === "video" ? await videoLength(bytes) : null;
   const jpeg = kind === "video" ? await videoThumbnail(path, durationMs) : null;
   if (!sessionIsCurrent(owner, generation)) {
