@@ -2,8 +2,8 @@
  * Outgoing media and text sends: the sendMessage payload (enil:sendargs
  * block), ObjType detection from magic bytes + extension (enil:mediakind),
  * the per-kind size caps (enil:sendcap), the sometimes-present upload fields
- * (enil:uploadargs), and sendFilePath -- the one uploadMediaByE2EE caller the
- * clipboard path also uses.
+ * (enil:uploadargs), and sendFilePath -- the upload caller the clipboard
+ * path also uses.
  *
  * Dependency direction: imports video (duration + thumbnail), session
  * (sessionIsCurrent), caches (limiter), text (refusal), env, refresh
@@ -14,7 +14,9 @@ import { tagAt, videoLength, videoThumbnail } from "./video.ts";
 import { refreshChats } from "./refresh.ts";
 import { sessionIsCurrent } from "./session.ts";
 import { limiter } from "./caches.ts";
-import { refusal } from "./text.ts";
+import { errorLine, refusal, restrictionCode } from "./text.ts";
+import { haltForRestriction } from "./restriction.ts";
+import { uploadMedia } from "./media-upload.ts";
 import type { Client } from "@evex/linejs";
 import type { Json } from "./types.ts";
 
@@ -420,7 +422,6 @@ async function readAndUpload(
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }
-  const obs = owner.base.obs;
   // Only a video needs either. An image is its own preview (linejs re-uploads
   // the payload as `__ud-preview`) and a file has no length to show.
   const durationMs = kind === "video" ? await videoLength(bytes) : null;
@@ -428,18 +429,24 @@ async function readAndUpload(
   if (!sessionIsCurrent(owner, generation)) {
     return { ok: false, error: "尚未登入" };
   }
-  // uploadMediaByE2EE uploads *and* sends (it ends in talk.sendMessage), so
-  // there is no follow-up send to do here.
-  await obs.uploadMediaByE2EE({
+  // Both upload paths also send; neither needs a follow-up sendMessage.
+  const result = await uploadMedia(owner, {
     data: new Blob([bytes as BlobPart]),
     oType: kind,
     to,
     filename: name,
     ...uploadExtras(jpeg, durationMs, requestId),
-  });
-  // uploadMediaByE2EE ends by sending the message. Once it resolves, reporting
-  // failure would invite a duplicate retry even if logout raced the reply.
-  if (sessionIsCurrent(owner, generation)) refreshChats();
+  }, () => sessionIsCurrent(owner, generation));
+  if (!result.sent) return { ok: false, error: "尚未登入" };
+  // Once sent, a thumbnail failure or logout cannot invite a duplicate retry.
+  const restricted = restrictionCode(result.previewError) !== null;
+  if (result.previewError) {
+    if (restricted && sessionIsCurrent(owner, generation)) {
+      haltForRestriction(result.previewError);
+    }
+    console.error("[sendFile] preview:", errorLine(result.previewError));
+  }
+  if (!restricted && sessionIsCurrent(owner, generation)) refreshChats();
   return { ok: true };
 }
 
