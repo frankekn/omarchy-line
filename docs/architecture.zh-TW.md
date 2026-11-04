@@ -371,10 +371,10 @@ contentType 仍是 `FILE`／`IMAGE`，只是沒有內容。daemon 把它標成 `
 "unsent"`、`hasMedia: false`，`text` 換成「已收回訊息」（清單預覽也是），點下去回
 「訊息已收回」，完全不會去要檔案。聊天室的檔案 LINE 只保留 **7 天**（metadata 的
 `FILE_EXPIRE_TIMESTAMP`，寫進 `expiresAt`），過期的是 `mediaState: "expired"`，點下去回
-「檔案已過期（LINE 只保留 7 天）」，一樣不打網路。真的去要了才失敗的分兩種：物件已經
-不在（HTTP 404／410、`ObsError`，或上游 linejs 會先在解密那層炸出來的
-`encrypted data too short` ／ `HMAC verification failed`）回「檔案已過期或已被刪除」，
-其他才是「下載失敗」。面板照著這兩個欄位畫：收回的那則是一行灰斜體「已收回訊息」，
+「檔案已過期（LINE 只保留 7 天）」，一樣不打網路。真的去要了才失敗的分三種：物件已經
+不在（HTTP 404／410 的 `ObsError`，或空內容解密時的 `encrypted data too short (0 bytes)`）回
+「檔案已過期或已被刪除」，並記成過期；`HMAC verification failed` 代表內容拿到了，但
+跟金鑰對不上，回「無法解密這個檔案」，不記成過期；其他才是「下載失敗」。面板照著這兩個欄位畫：收回的那則是一行灰斜體「已收回訊息」，
 貼圖、FLEX 圖、縮圖、📎 全部收掉；過期的檔案 📎 那行的檔名後面接「（已過期）」，
 兩種都點不下去，燈箱的 ←/→ 也不會停在上面。
 

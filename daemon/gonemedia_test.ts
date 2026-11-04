@@ -106,3 +106,26 @@ Deno.test("the memory is bounded and forgets the oldest first", async () => {
   assertEquals(m.goneMedia.size, m.GONE_MEDIA_MAX);
   assertEquals([...m.goneMedia.keys()].at(-1), "1");
 });
+
+Deno.test("a failed HMAC is not remembered, so the message is not shown as expired", async () => {
+  const m = await load();
+  const hmac = Object.assign(
+    new Error(
+      "HMAC verification failed: ciphertext was tampered with or keyMaterial is wrong",
+    ),
+    { name: "E2EEMediaError" },
+  );
+  assertEquals(m.rememberGoneMedia("hm1", hmac), false);
+  assertEquals(m.mediaStateFor("hm1", false, undefined, Date.now()), "ok");
+  const truncated = Object.assign(
+    new Error("encrypted data too short (12 bytes) to contain HMAC"),
+    { name: "E2EEMediaError" },
+  );
+  assertEquals(m.rememberGoneMedia("tr1", truncated), false);
+  const empty = Object.assign(
+    new Error("encrypted data too short (0 bytes) to contain HMAC"),
+    { name: "E2EEMediaError" },
+  );
+  assertEquals(m.rememberGoneMedia("em1", empty), true);
+  assertEquals(m.mediaStateFor("em1", false, undefined, Date.now()), "expired");
+});
