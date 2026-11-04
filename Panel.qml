@@ -2694,6 +2694,15 @@ Panel {
   // root.sockConnected —— 同一個條件寫在兩個地方，遲早會不一致，這次的 bug 就是這樣來的。
   function request(cmd, extra, msgId) {
     if (!root.sockConnected) { root.notice = tr("daemon.notRunning"); return false }
+    function followMediaSend() {
+      if ((cmd !== "sendFile" && cmd !== "sendClipboardImage") || !root.activeChat
+          || (root.view !== "chat" && !root.twoPane)
+          || String(extra && extra.chat || "") !== String(root.activeChat.mid || "")) return
+      // positionViewAtEnd can pass through the paging threshold on its way down.
+      root.keepContentY = Math.max(0, msgList.contentY - msgList.originY)
+      msgList.toBottom()
+      Qt.callLater(root.clearSwap)
+    }
     var spendsDraft = root.isSendCmd(cmd) || !!(extra && extra._spendsDraft)
     // A pre-load draft has no stable version yet. Sending it with version 0
     // lets an early acknowledgement miss the staged revision and resurrect it
@@ -2732,6 +2741,7 @@ Panel {
       })
       root.deferredDraftRequests = queued
       root.notice = tr("send.afterDraft")
+      followMediaSend()
       return true
     }
     var reservedId = extra && Number(extra._requestId || 0)
@@ -2811,7 +2821,11 @@ Panel {
               // 為了一個 cmd 在 request 裡多開一條路。
               gen: root.historyGen }
     root.pending = p
-    return root.sockSend(req)
+    var sent = root.sockSend(req)
+    // A queued request already followed when accepted. Do not pull the reader
+    // back down if they scrolled up before the draft finished loading.
+    if (sent && !(reservedId > 0)) followMediaSend()
+    return sent
   }
 
   function onReply(line) {
@@ -4016,7 +4030,7 @@ Panel {
     for (var k in fields) bubble[k] = fields[k]
     var list = root.messages.slice()
     list.push(bubble)
-    root.setMessages(root.withDay(list))
+    root.setMessages(root.withDay(list), true)
     return bubble.id
   }
 
