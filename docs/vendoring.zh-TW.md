@@ -14,13 +14,13 @@ linejs 採用 MIT 授權。內附的副本保留它的授權檔
 
 ## 釘住的 commit
 
-submodule 釘在 `omarchy-vendor` 上的 `4d6aa18`。這個 commit 比上游 `802f4c7`
-「fix: E2EE key registration and client message handling (#226)」多兩個 commit，
-`802f4c7` 就是 `omarchy-vendor` 的起點。
-
-- 第一個 commit 是對 `packages/linejs` 與 `packages/types` 的 omarchy 修補。
-- 第二個 commit `4d6aa18` 把 fork 根目錄的 `README.md` 從 symlink 改成真正的檔案，
-  讓 `omarchy plugin validate` 能通過。這個檢查工具不接受外掛資料夾裡有任何 symlink。
+submodule 釘在 `omarchy-vendor` 上的某個 commit，實際是哪一個請看
+`git submodule status daemon/vendor/linejs`。這個分支從上游 `802f4c7`「fix: E2EE
+key registration and client message handling (#226)」開始。最前面兩個 commit 是對
+`packages/linejs` 與 `packages/types` 的 omarchy 修補，以及把 fork 根目錄的
+`README.md` 從 symlink 改成真正的檔案，讓 `omarchy plugin validate` 能通過（這個
+檢查工具不接受外掛資料夾裡有任何 symlink）。之後的修正疊在上面，每一個都在 fork
+上以 pull request 審過。
 
 ## fork 改了什麼
 
@@ -36,9 +36,9 @@ submodule 釘在 `omarchy-vendor` 上的 `4d6aa18`。這個 commit 比上游 `80
   「HMAC verification failed」失敗。`uploadMediaByE2EE` 接受 `durationMs`，所以
   E2EE 影片在對方那邊不會顯示 0:00。它也接受額外的 `contentMetadata`，但呼叫端不能
   覆寫 `DURATION`、`DOWNLOAD_URL` 或 `PREVIEW_URL`。媒體下載接受 `AbortSignal`。
-  解密也接受 LINE app 加在影片上的標籤：HMAC 算的是每 128 KiB 密文各自的
-  SHA-256，而不是整段密文。之前從 app 傳來的影片一律以「HMAC verification
-  failed」失敗。
+  解密任何媒體時也接受第二種標籤：HMAC 算的是每 128 KiB 密文各自的 SHA-256，
+  而不是整段密文。實際上只有從 LINE app 傳來的影片會用到；之前這些影片一律以
+  「HMAC verification failed」失敗。
 - **推播與輪詢。** push 連線失敗或 listen 迴圈失敗會回報給呼叫端，不會變成讓 process
   掛掉的 unhandled rejection。
 - **其他。** 新增 Album（`moa`）服務、調整通話功能、一個有連線逾時的 Node fetch
