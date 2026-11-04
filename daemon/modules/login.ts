@@ -55,6 +55,7 @@ import {
   setListenAbort,
 } from "./session.ts";
 import { liftRestriction } from "./restriction.ts";
+import { forgetNames, loadKeptNames } from "./names.ts";
 import {
   backoffDelay,
   markPushAlive,
@@ -264,6 +265,9 @@ async function onLoggedIn(c: Client): Promise<void> {
     nameCache.set(String(profile.mid), String(profile.displayName ?? "我"));
     capMap(nameCache, NAME_CACHE_MAX);
     noteAvatar(String(profile.mid), profile);
+    // Before the first round names the chat list: this account's names from
+    // earlier runs, so neither the list nor the first opens wait on lookups.
+    await loadKeptNames(String(profile.mid));
   } catch (e) {
     console.error("[profile]", errorLine(e));
   }
@@ -638,7 +642,7 @@ async function logoutClaimed(
   // A hand-off pointing at a chat this process can no longer open would have
   // the panel jump to an empty conversation the moment it starts.
   clearWanted();
-  nameCache.clear();
+  forgetNames();
   nameCacheEpoch.clear();
   // The tokens ride in on the name lookups, so they go out with them. The
   // files and the index stay: a picture is keyed by mid, and a mid means the

@@ -8,6 +8,7 @@
  * contract, so faking it would test nothing.
  */
 import { assert, assertEquals } from "@std/assert";
+import { Buffer } from "node:buffer";
 import { createMessageStore } from "./modules/store.ts";
 
 const ME = "u" + "0".repeat(31) + "1";
@@ -57,6 +58,55 @@ Deno.test("tail survives a cold reload from disk", async () => {
     const second = createMessageStore(`${dir}/messages`);
     const tail = await second.tail(ME, CHAT, 10);
     assertEquals(tail?.map((m) => m.text), ["a", "b"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("re-appending an unchanged page keeps the records and the file", async () => {
+  await withStore(async (store, dir) => {
+    store.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    await store.flush();
+    const before = await store.tail(ME, CHAT, 10);
+    const path = `${dir}/messages/${ME}/${CHAT}.jsonl`;
+    const size = (await Deno.stat(path)).size;
+    // What a head-page revalidation does on every open.
+    store.append(ME, CHAT, [msg(1, "a"), msg(2, "b")]);
+    await store.flush();
+    const after = await store.tail(ME, CHAT, 10);
+    assertEquals((await Deno.stat(path)).size, size);
+    assert(before && after && before[0] === after[0] && before[1] === after[1]);
+    // A changed copy still lands.
+    store.append(ME, CHAT, [msg(2, "b2")]);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.map((m) => m.text), [
+      "a",
+      "b2",
+    ]);
+  });
+});
+
+Deno.test("a record reloaded from disk still matches LINE's copy of it", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    // The wire shapes a sealed message really has: Buffer chunks, bigint time.
+    const wire = () => ({
+      ...msg(1, ""),
+      deliveredTime: 1700000000001n,
+      chunks: [Buffer.from([1, 2, 3]), Buffer.from([4])],
+    });
+    const first = createMessageStore(`${dir}/messages`);
+    first.append(ME, CHAT, [wire()]);
+    await first.flush();
+    const path = `${dir}/messages/${ME}/${CHAT}.jsonl`;
+    const size = (await Deno.stat(path)).size;
+    // A restart: the record now comes back through reviveJson.
+    const second = createMessageStore(`${dir}/messages`);
+    const before = await second.tail(ME, CHAT, 10);
+    second.append(ME, CHAT, [wire()]);
+    await second.flush();
+    assertEquals((await Deno.stat(path)).size, size);
+    assert(before && before[0] === (await second.tail(ME, CHAT, 10))?.[0]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -347,4 +397,150 @@ Deno.test("a chat id that is not one plain segment never reaches the disk", asyn
     }
     assertEquals(inside, []);
   });
+});
+
+// A sealed message the way the wire hands it: ciphertext chunks, no text.
+function sealedMsg(id: number): Record<string, unknown> {
+  return {
+    ...msg(id, ""),
+    contentMetadata: { e2eeVersion: "2" },
+    chunks: [Buffer.from([id, 1]), Buffer.from([id, 2])],
+  };
+}
+const PLAIN = {
+  text: "decrypted",
+  contentMetadata: { e2eeVersion: "2", x: "1" },
+};
+
+Deno.test("kept plaintext rides on the record, across a restart", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const first = createMessageStore(`${dir}/messages`);
+    first.append(ME, CHAT, [sealedMsg(1)]);
+    first.plain(ME, CHAT, sealedMsg(1), PLAIN);
+    await first.flush();
+    assertEquals((await first.tail(ME, CHAT, 10))?.[0]._plain, PLAIN);
+    const second = createMessageStore(`${dir}/messages`);
+    const rec = (await second.tail(ME, CHAT, 10))?.[0];
+    assertEquals(rec?._plain, PLAIN);
+    // The wire fields are untouched: the plaintext is an overlay.
+    assertEquals(rec?.text, "");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("LINE's identical copy keeps the record and its plaintext", async () => {
+  await withStore(async (store) => {
+    store.append(ME, CHAT, [sealedMsg(1)]);
+    store.plain(ME, CHAT, sealedMsg(1), PLAIN);
+    await store.flush();
+    const held = (await store.tail(ME, CHAT, 10))?.[0];
+    // What a revalidation does: the same ciphertext again.
+    const records = store.append(ME, CHAT, [sealedMsg(1)]);
+    assert(records[0] === held);
+    assertEquals((await store.tail(ME, CHAT, 10))?.[0]._plain, PLAIN);
+  });
+});
+
+Deno.test("an edit drops the plaintext of the version it replaces", async () => {
+  await withStore(async (store) => {
+    store.append(ME, CHAT, [sealedMsg(1)]);
+    store.plain(ME, CHAT, sealedMsg(1), PLAIN);
+    store.append(ME, CHAT, [{ ...sealedMsg(1), chunks: [Buffer.from([9])] }]);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.[0]._plain, undefined);
+  });
+});
+
+Deno.test("compaction writes the plaintext back as an overlay", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const store = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 4,
+      compactRatio: 2,
+    });
+    store.append(ME, CHAT, [sealedMsg(1), msg(2, "b")]);
+    store.plain(ME, CHAT, sealedMsg(1), PLAIN);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.length, 2);
+    for (let i = 0; i < 10; i++) {
+      store.reactions(ME, CHAT, "2", new Map([[`u-p${i}`, "NICE"]]));
+    }
+    await store.flush();
+    // 2 records + 1 plaintext overlay.
+    assertEquals(await diskLines(dir), 3);
+    const reopened = createMessageStore(`${dir}/messages`);
+    assertEquals((await reopened.tail(ME, CHAT, 10))?.[0]._plain, PLAIN);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a plaintext that raced an edit never attaches to the new version", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const store = createMessageStore(`${dir}/messages`);
+    const v1 = sealedMsg(1);
+    store.append(ME, CHAT, [v1]);
+    // The edit lands while v1's page is still being decrypted...
+    store.append(ME, CHAT, [{ ...sealedMsg(1), chunks: [Buffer.from([9])] }]);
+    // ...and v1's plaintext is written after it.
+    store.plain(ME, CHAT, v1, PLAIN);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.[0]._plain, undefined);
+    // Nor on a restart, replaying the same lines from disk.
+    const reopened = createMessageStore(`${dir}/messages`);
+    assertEquals((await reopened.tail(ME, CHAT, 10))?.[0]._plain, undefined);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("compaction drops plaintext the record no longer matches", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const store = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 4,
+      compactRatio: 2,
+    });
+    store.append(ME, CHAT, [sealedMsg(1)]);
+    store.plain(ME, CHAT, sealedMsg(1), PLAIN);
+    store.append(ME, CHAT, [{ ...sealedMsg(1), chunks: [Buffer.from([9])] }]);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.length, 1);
+    for (let i = 0; i < 6; i++) {
+      store.reactions(ME, CHAT, "1", new Map([[`u-p${i}`, "NICE"]]));
+    }
+    await store.flush();
+    const text = await Deno.readTextFile(`${dir}/messages/${ME}/${CHAT}.jsonl`);
+    assertEquals(text.includes("decrypted"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("kept plaintext does not make every update rewrite the file", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "enil-store-" });
+  try {
+    const store = createMessageStore(`${dir}/messages`, {
+      compactMinLines: 4,
+      compactRatio: 2,
+    });
+    const rows = [1, 2, 3, 4, 5, 6].map(sealedMsg);
+    store.append(ME, CHAT, rows);
+    for (const r of rows) store.plain(ME, CHAT, r, PLAIN);
+    await store.flush();
+    assertEquals((await store.tail(ME, CHAT, 10))?.length, 6);
+    const path = `${dir}/messages/${ME}/${CHAT}.jsonl`;
+    const ino = (await Deno.stat(path)).ino;
+    // 12 live lines; a few updates are nowhere near twice that.
+    for (let i = 0; i < 3; i++) {
+      store.reactions(ME, CHAT, "1", new Map([[`u-p${i}`, "NICE"]]));
+      await store.flush();
+    }
+    assertEquals((await Deno.stat(path)).ino, ino);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

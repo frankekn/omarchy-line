@@ -357,9 +357,13 @@ export async function runSuite(name, suite) {
             const n = await conn.read(bytes);
             if (n === null) throw new Error("stub closed before replying");
             text += decoder.decode(bytes.subarray(0, n), { stream: true });
-            const end = text.indexOf("\n");
-            if (end >= 0) {
+            let end;
+            while ((end = text.indexOf("\n")) >= 0) {
               const reply = JSON.parse(text.slice(0, end));
+              text = text.slice(end + 1);
+              // Like the daemon, the stub pushes event frames down a live
+              // socket; they carry no `ok` and are not this request's reply.
+              if (!("ok" in reply)) continue;
               assert.equal(reply.ok, true, JSON.stringify(reply));
               return reply.data;
             }

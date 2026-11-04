@@ -47,7 +47,7 @@ function pendingBoxes() {
 }
 const calls = {
   writes: 0, failures: 0, oks: 0, retries: 0, names: 0, halts: 0,
-  timings: [] as string[],
+  timings: [] as string[], fullRounds: [] as number[],
 };
 const recentCalls: string[] = [];
 const recentResults = new Map<string, unknown>();
@@ -126,7 +126,17 @@ async function resolveName(v: string, _owner: typeof clientA, _generation: numbe
   calls.names++;
   return v;
 }
-function avatarNow() { return undefined; }
+// A picture whose file read settles while the round runs: the call that
+// builds the row starts it (nothing yet), a later call finds it settled.
+const settlingAvatars = new Set<string>();
+const settledAvatars = new Map<string, string>();
+export function avatarSettlesDuringRound(mid: string) { settlingAvatars.add(mid); }
+function avatarNow(mid: string) {
+  const hit = settledAvatars.get(mid);
+  if (hit) return hit;
+  if (settlingAvatars.has(mid)) settledAvatars.set(mid, "/avatars/" + mid);
+  return undefined;
+}
 async function e2eeFilePayload(
   _raw: unknown,
   _owner: typeof clientA,
@@ -143,6 +153,10 @@ async function pooledMap(items: unknown[], _limit: number, fn: (item: unknown) =
 }
 function noteRefreshOk() { calls.oks++; }
 function noteRefreshFailed() { calls.failures++; }
+// socket.ts's warm-up hook; a published full round tells it which session.
+const fullRoundListener = (_c: unknown, generation: number) => {
+  calls.fullRounds.push(generation);
+};
 // The classifier answers per thrown error so one prelude covers a network
 // failure, a maintenance window and an account restriction.
 function classifyLoginError(e: unknown) {
@@ -326,6 +340,7 @@ Deno.test("a successful refresh that settles after logout cannot publish", async
     names: 0,
     halts: 0,
     timings: ["chats.decrypt", "chats.refresh"],
+    fullRounds: [],
   });
   assertEquals(m.state(), {
     chats: [{ mid: "old" }],
@@ -350,6 +365,7 @@ Deno.test("a failed refresh that settles after logout cannot restore health", as
     halts: 0,
     // The boxes fetch itself failed: no decrypt pool ever started.
     timings: ["chats.refresh"],
+    fullRounds: [],
   });
   assertEquals(m.state(), {
     chats: [{ mid: "old" }],
@@ -372,6 +388,7 @@ Deno.test("a current refresh publishes revision and incomplete-list health", asy
     names: 0,
     halts: 0,
     timings: ["chats.decrypt", "chats.refresh"],
+    fullRounds: [1],
   });
   assertEquals(m.state(), {
     chats: [],
@@ -394,6 +411,8 @@ Deno.test("a full round that changes nothing does not rewrite state.json", async
   assertEquals(await second, true);
   assertEquals(m.calls.writes, 1);
   assertEquals(m.calls.oks, 2);
+  // Every published full round tells the warm-up hook its session.
+  assertEquals(m.calls.fullRounds.length, 2);
   assertEquals(m.state().chatsRevision, 1);
   assertEquals(m.forceFullValue(), false);
 });
@@ -1278,4 +1297,18 @@ Deno.test("a maintenance window halts nothing: the next poll runs a round", asyn
   m.succeed();
   assertEquals(await next, true);
   assertEquals(m.boxesCalled(), 2);
+});
+
+Deno.test("a picture that settles while the round runs is published with it", async () => {
+  const m = await loadModule();
+  m.avatarSettlesDuringRound("other");
+  const round = m.start();
+  m.succeedWithUnread();
+  assertEquals(await round, true);
+  // settleAvatar patched the list this round replaced; the round must not
+  // drop it until the next full round, five minutes later.
+  assertEquals(
+    m.state().chats.find((c: { mid: string }) => c.mid === "other")?.avatarPath,
+    "/avatars/other",
+  );
 });

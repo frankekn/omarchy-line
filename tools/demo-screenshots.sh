@@ -151,7 +151,11 @@ import socket, sys
 s = socket.socket(socket.AF_UNIX)
 s.connect(sys.argv[1])
 s.sendall(sys.argv[2].encode() + b"\n")
-reply = s.makefile().readline()
+f = s.makefile()
+reply = f.readline()
+# Live events are pushed on every connection; the reply is the line without one.
+while reply.startswith('{"event"'):
+    reply = f.readline()
 if '"ok": true' not in reply:
     sys.exit("stub refused: " + reply)
 PY

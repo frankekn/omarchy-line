@@ -201,7 +201,20 @@ Deno.test("marking a chat read rechecks session ownership around both awaits", a
     after.indexOf("sessionIsCurrent(owner, generation)") <
       after.indexOf("ranges.set(myMid, id)"),
   );
-  for (const cmd of ['if (cmd === "history")', 'if (cmd === "markRead")']) {
+  // history marks behind its answer, after the read range it started, and
+  // still refuses a page that a logout raced.
+  const history = source.indexOf('if (cmd === "history")');
+  const historyEnd = source.indexOf("\n  if (cmd === ", history + 1);
+  const historyBody = source.slice(history, historyEnd);
+  const range = historyBody.indexOf(
+    "await readRangeLoad;\n        await markChatRead(",
+  );
+  const reply = historyBody.indexOf(
+    'if (!sessionIsCurrent(owner, generation)) {\n      return { ok: false, error: "尚未登入" };',
+    range,
+  );
+  assert(history >= 0 && range > 0 && reply > range, "history markRead");
+  for (const cmd of ['if (cmd === "markRead")']) {
     const at = source.indexOf(cmd);
     const call = source.indexOf("await markChatRead(owner, generation", at);
     const stale = source.indexOf(
