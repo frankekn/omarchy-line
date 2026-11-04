@@ -13160,6 +13160,24 @@ e.msgList.contentY = 1480;
 e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
 ok(e.msgList.contentY === 1480 && e.sent[1].chat === "C1",
   "a clipboard probe finishing in another chat does not scroll that chat");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.msgList.contentY = 1600;
+e.pasteClipboard();
+e.msgList.contentY = 1480;
+e.pasteClipboard();
+e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+ok(e.msgList.contentY === 1480 && e.sent.length === 2 &&
+  e.sent[1].cmd === "sendClipboardImage",
+  "scrolling up and repeating Ctrl+V during the probe keeps the reader's position");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.msgList.contentY = 1480;
+e.pasteClipboard();
+e.msgList.contentY = 1479;
+e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+ok(e.msgList.contentY === 1600,
+  "a one-pixel layout shift during the clipboard probe still follows the send");
 for (const twoPane of [false, true]) {
   e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: "list" });
   swapView(e);

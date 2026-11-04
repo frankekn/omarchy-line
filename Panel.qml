@@ -3146,7 +3146,8 @@ Panel {
       // destination captured when Ctrl+V was pressed.
       if (!root.request("sendClipboardImage", { chat: askedFor, stage: stage }))
         root.request("discardClipboardImage", { stage: stage })
-      else root.followOwnMedia(askedFor)
+      else if (Math.abs(msgList.contentY - root.clipboardProbeContentY) <= 2)
+        root.followOwnMedia(askedFor)
     } else if (cmd === "members") {
       // 慢一步回來的那份會被上面的 stale 擋掉；這裡再記一次是誰的，
       // 選單才不會在 members 還沒換掉的空檔列出上一間群組的人。
@@ -3478,6 +3479,7 @@ Panel {
   // 底下靠它分出「這一下只是普通的貼上」和其餘每一句真的拒絕（沒裝 wl-clipboard、
   // 連不上 Wayland、太大、格式送不出去…），那些都要留在橫幅上。
   readonly property string clipboardEmpty: "剪貼簿裡沒有圖片"
+  property real clipboardProbeContentY: 0
 
   // 上一次 Ctrl+V 還在等 daemon 回話嗎。答案直接從 pending 算，不另外記一面旗子：
   // onReply 一進來就把那一筆從 pending 刪掉，成功、拒絕、過期三條路都在那一行底下，
@@ -3507,7 +3509,10 @@ Panel {
     if (root.clipboardBusy()) return true
     // daemon 沒在跑就沒有圖片送得出去，這一下還是得是一次普通的貼上。
     // 理由 request() 已經放上橫幅了，不用再說一次。
+    var probeContentY = msgList.contentY
     if (!root.request("probeClipboardImage", { chat: root.activeChat.mid })) return false
+    // A scroll after Ctrl+V belongs to the reader, even if the probe is slow.
+    root.clipboardProbeContentY = probeContentY
     // 跟 📎 同一句：上傳幾秒鐘之內畫面上不能什麼都沒有。樂觀泡泡則不畫 ——
     // 按下去的這一刻還不知道剪貼簿裡是不是圖片，先畫一顆再為了一次貼字收回來，
     // 等於每貼一段文字都閃一顆泡泡。
