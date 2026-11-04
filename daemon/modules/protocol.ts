@@ -571,7 +571,6 @@ export {
   buildMentionMeta,
   chatMidOf,
   historyDelta,
-  historyShape,
   indexedEntries,
   lastReadOf,
   MENTION_MID,

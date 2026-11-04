@@ -17480,6 +17480,26 @@ group("(y3) err() translates daemon wire strings for display only");
   );
 }
 
+console.log("\n-- history deltas replayed from the ring keep later events");
+{
+  // The daemon now keeps each history delta as its own ring entry on its own
+  // seq. A panel catching up replays them in order with the events between.
+  const ring = [
+    { seq: 1, kind: "history", chat: "C", messages: [{ id: "X", time: 1, text: "x" }] },
+    { seq: 2, kind: "unsend", chat: "C", messageId: "X" },
+    { seq: 3, kind: "history", chat: "C", messages: [{ id: "Y", time: 2, text: "y" }] },
+  ];
+  const caught = EventLog.eventsSince(ring, "b", "b", 0);
+  let rows = [{ id: "X", time: 1, text: "old" }];
+  for (const ev of caught.list) {
+    if (ev.kind === "history") rows = EventLog.applyHistory(rows, ev.messages);
+    else if (ev.kind === "unsend") rows = EventLog.applyUnsend(rows, ev.messageId);
+  }
+  const x = rows.find((m) => m.id === "X");
+  ok(rows.length === 2 && x && x.unsent === true && rows[1].id === "Y",
+     "an unsend between two deltas survives the later delta: " + JSON.stringify(rows));
+}
+
 require("./supervisor.js");
 console.log("\n" + (failed === 0 ? "ALL PASS" : failed + " FAILED"));
 process.exit(failed === 0 ? 0 : 1);

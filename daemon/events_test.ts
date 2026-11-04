@@ -165,40 +165,25 @@ Deno.test("the sink sees each event with its seq before the write is asked", asy
   assertEquals(seen[1].kind, "read");
 });
 
-Deno.test("history deltas for one chat fold into one ring entry; the live push stays the delta", async () => {
+Deno.test("history deltas stay separate entries on their own seqs, so replay keeps later events", async () => {
   const m = await loadBlock<
     RingModule & { setEventSink(sink: ((e: TestEvent) => void) | null): void }
   >("eventring", RING_PRELUDE);
-  const live: TestEvent[] = [];
-  m.setEventSink((e) => live.push(e as TestEvent));
   m.pushEvent({
     kind: "history",
     chat: "A",
-    messages: [{ id: "1", text: "a" }, { id: "2", text: "b" }],
+    messages: [{ id: "X", text: "x" }],
   });
-  m.pushEvent({
-    kind: "history",
-    chat: "B",
-    messages: [{ id: "9", text: "z" }],
-  });
+  m.pushEvent({ kind: "unsend", chat: "A", messageId: "X" });
   m.pushEvent({
     kind: "history",
     chat: "A",
-    messages: [{ id: "2", text: "b2" }, { id: "3", text: "c" }],
+    messages: [{ id: "Y", text: "y" }],
   });
-  const histories = m.events.filter((e) => e.kind === "history");
-  assertEquals(histories.length, 2);
-  const a = histories.find((e) => e.chat === "A")!;
-  assertEquals(a.messages, [{ id: "1", text: "a" }, { id: "2", text: "b2" }, {
-    id: "3",
-    text: "c",
-  }]);
-  assertEquals(live.at(-1)?.messages, [{ id: "2", text: "b2" }, {
-    id: "3",
-    text: "c",
-  }]);
-  assertEquals(histories.find((e) => e.chat === "B")?.messages, [{
-    id: "9",
-    text: "z",
-  }]);
+  // Replayed in seq order, the unsend still lands after X's history row and
+  // nothing later carries X again to undo it.
+  assertEquals(
+    m.events.map((e) => [e.kind, e.messageId ?? e.messages?.map((r) => r.id)]),
+    [["history", ["X"]], ["unsend", "X"], ["history", ["Y"]]],
+  );
 });

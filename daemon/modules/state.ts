@@ -65,31 +65,11 @@ function setEventSink(sink: typeof eventSink): void {
 /** Appends one event, drops what falls off the ring, and publishes it. */
 function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   const full: PluginEvent = { seq: ++eventSeq, at: Date.now(), ...e };
-  // A history event carries only the rows that changed. One ring entry per
-  // chat folds its predecessors in (newest row wins by id), so a panel that
-  // catches up from the file still sees every change, without the ring
-  // piling up one entry per revalidation. The live push sends just `full`.
-  let stored = full;
-  if (full.kind === "history") {
-    const merged = new Map<string, unknown>();
-    for (const ev of events) {
-      if (ev.kind !== "history" || ev.chat !== full.chat) continue;
-      for (const m of ev.messages ?? []) {
-        merged.set(String((m as { id?: unknown }).id), m);
-      }
-    }
-    for (const m of full.messages ?? []) {
-      merged.set(String((m as { id?: unknown }).id), m);
-    }
-    events = events.filter((ev) =>
-      !(ev.kind === "history" && ev.chat === full.chat)
-    );
-    stored = {
-      ...full,
-      messages: [...merged.values()] as typeof full.messages,
-    };
-  }
-  events.push(stored);
+  // A history event carries only the rows that changed, so each one stays
+  // in the ring on its own seq like any other event. Folding them into one
+  // entry put old rows on a new seq -- replay would undo a later unsend or
+  // read -- and let a busy chat's entry grow without bound.
+  events.push(full);
   // Slice rather than shift-in-a-loop: the array is replaced wholesale on
   // every write anyway, and this keeps the trim O(1) in statements.
   if (events.length > EVENTS_MAX) events = events.slice(-EVENTS_MAX);

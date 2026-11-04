@@ -1213,11 +1213,6 @@ async function convertHistoryPage(
   return out;
 }
 
-/**
- * What `history` served against what LINE just said -- same ids in the same
- * order, each carrying the same visible content. readBy is compared too: a
- * read op is exactly the kind of thing that lands between two opens.
- */
 // The block between the enil:revalidate markers is sliced out verbatim by
 // historyopen_test.ts.
 // enil:revalidate-begin
@@ -1227,7 +1222,7 @@ const historyRevalidations = new Set<string>();
 /**
  * The background half of a store-served head page: fetch what LINE says the
  * head is now, fold it into the store, and only when it disagrees with what
- * the panel just got does a `history` event carry the real page over. The
+ * the panel just got does a `history` event carry the rows that changed. The
  * common case -- nothing changed while the panel was away -- sends nothing.
  */
 async function revalidateHistory(
