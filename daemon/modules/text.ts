@@ -94,8 +94,8 @@ function mediaStateOf(
 // an ObsError too (a 503 or 429 is LINE being busy), so the name alone proves
 // nothing and only the status counts. An empty body still decrypts to "too
 // short". A failed HMAC is not "gone": since the fork throws on non-2xx, the
-// bytes did arrive and do not match their key -- remembering that as expired
-// hid every app-sent video until the tag format was fixed (#20).
+// bytes did arrive and do not match their key. Until #20 fixed the tag
+// format, every app-sent video's download answered "expired" for this.
 const GONE_PATTERNS = [
   /HTTP (?:404|410)/,
   /encrypted data too short \(0 bytes\)/,
