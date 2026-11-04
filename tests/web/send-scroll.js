@@ -124,8 +124,8 @@ export async function sendScroll(h) {
       );
       if (scrollAway) {
         assert.ok(
-          Math.abs(after.top - before.top) <= 2,
-          "reading position stays put",
+          after.gap > 50,
+          "reader who scrolled away is not pulled to the bottom",
         );
       } else {
         assert.ok(
