@@ -181,12 +181,13 @@ const PUSH_QUIET_MS = 45_000;
  * likely dead; rebuild it at once instead of waiting out the 3-minute
  * staleness check, the minute-long watchdog tick and the backoff gate.
  */
-function reconnectAfterOutage(): void {
+function reconnectAfterOutage(lastFailureAt: number): void {
   if (!client || login.status !== "ok" || restriction) return;
   if (Date.now() - lastPushAt <= PUSH_QUIET_MS) return; // push stayed alive
   // The round that ended the outage may be the one a reconnect itself just
-  // started; its new link has not pinged yet, and is not quiet but young.
-  if (reconnecting || Date.now() - lastReconnectAt <= PUSH_QUIET_MS) return;
+  // started: a link rebuilt after the last failed round is young, not dead.
+  // One rebuilt before it was made while the network was down; redo it.
+  if (reconnecting || lastReconnectAt > lastFailureAt) return;
   void reconnectPush("outage");
 }
 // enil:watchdog-end

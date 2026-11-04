@@ -164,8 +164,8 @@ async function main() {
   setInterval(watchdogTick, WATCHDOG_MS);
   // A chat list that recovers from network failures proves the network is
   // back; push should not wait minutes for the watchdog to notice.
-  setOnRefreshRecovered((reason) => {
-    if (reason === "network") reconnectAfterOutage();
+  setOnRefreshRecovered((reason, lastFailureAt) => {
+    if (reason === "network") reconnectAfterOutage(lastFailureAt);
   });
   // refreshChats() returns immediately when there is no session, so this is
   // free while logged out.

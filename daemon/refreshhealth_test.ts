@@ -95,7 +95,8 @@ Deno.test("recovery reports the streak's reason once; plain successes do not", (
     writeState: () => {},
     log: () => {},
     error: () => {},
-    onRecovered: (reason) => recovered.push(reason),
+    onRecovered: (reason, lastFailureAt) =>
+      recovered.push([reason, lastFailureAt]),
   });
   health.succeed(1000);
   health.succeed(2000);
@@ -104,5 +105,5 @@ Deno.test("recovery reports the streak's reason once; plain successes do not", (
   health.fail("network", 4000);
   health.succeed(5000);
   health.succeed(6000);
-  assertEquals(recovered, ["network"]);
+  assertEquals(recovered, [["network", 4000]]);
 });
