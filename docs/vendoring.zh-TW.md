@@ -19,7 +19,7 @@ submodule 釘在 `omarchy-vendor` 上的某個 commit，實際是哪一個請看
 key registration and client message handling (#226)」開始。最前面兩個 commit 是對
 `packages/linejs` 與 `packages/types` 的 omarchy 修補，以及把 fork 根目錄的
 `README.md` 從 symlink 改成真正的檔案，讓 `omarchy plugin validate` 能通過（這個
-檢查工具不接受外掛資料夾裡有任何 symlink）。之後的修正疊在上面，每一個都在 fork
+檢查工具不接受外掛資料夾裡有任何 symlink）。之後的修正疊在上面，程式碼變動都在 fork
 上以 pull request 審過。
 
 ## fork 改了什麼

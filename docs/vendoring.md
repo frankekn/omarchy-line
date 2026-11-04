@@ -21,8 +21,8 @@ daemon/vendor/linejs` shows which. The branch starts at upstream `802f4c7`,
 commits hold the omarchy patches to `packages/linejs` and `packages/types`, and
 turn the fork's root `README.md` from a symlink into a real file, so
 `omarchy plugin validate` passes (the validator refuses any symlink inside a
-plugin folder). Later fixes sit on top, each reviewed as a pull request on the
-fork.
+plugin folder). Later fixes sit on top; code changes are reviewed as pull
+requests on the fork.
 
 ## What the fork changes
 
