@@ -24,9 +24,12 @@ interface WatchdogModule {
   markPushAlive(): void;
   pushIsStale(now?: number): boolean;
   reconnectAfterOutage(): void;
-  reconnectPush(reason: "stale" | "resume" | "error" | "manual"): Promise<void>;
+  reconnectPush(
+    reason: "stale" | "resume" | "error" | "manual" | "outage",
+  ): Promise<void>;
   setClient(client: WatchClient | null): void;
   setLastPushAt(at: number): void;
+  setLastReconnectAt(at: number): void;
   setLogin(login: { status: string; reason?: string }): void;
   state(): {
     lastPushAt: number;
@@ -54,6 +57,7 @@ export const RECONNECT_CAP_MS = 60_000;
 export const PUSH_REINIT_GRACE_MS = ${opts.grace ?? 20};
 export let lastPushAt = Date.now();
 export let reconnecting = false;
+let lastReconnectAt = 0;
 export let reconnectAttempts = 0;
 export let nextReconnectAt = 0;
 // reconnectPush forces the next round full; nothing here reads the flag.
@@ -80,6 +84,7 @@ export let client: FakeClient | null = null;
 export function setClient(c: FakeClient | null) { client = c; }
 export function setLogin(l: LoginState) { login = l; }
 export function setLastPushAt(t: number) { lastPushAt = t; }
+export function setLastReconnectAt(t: number) { lastReconnectAt = t; }
 export function state() {
   return { lastPushAt, reconnecting, reconnectAttempts, nextReconnectAt };
 }
@@ -259,16 +264,35 @@ Deno.test("islisten is cleared only when linejs did not rebuild the conn", async
 });
 
 Deno.test("a recovered network rebuilds a quiet push link at once, past the backoff gate", async () => {
-  const m = await loadModule({ grace: 5 });
+  const m = await loadModule({ staleMs: 1_000, grace: 5 });
   m.setClient(m.makeClient());
-  // Not stale yet (180s), but quiet past one 30s ping; and a backoff gate
-  // from earlier failures that watchdogTick would have to wait out.
-  m.setLastPushAt(Date.now() - 60_000);
+  // One stale reconnect during the outage arms the backoff gate.
+  m.setLastPushAt(Date.now() - 5_000);
   m.watchdogTick();
-  assertEquals(m.calls.listen, 0, "the watchdog alone does not act yet");
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 1);
+  assert(m.state().nextReconnectAt > Date.now(), "gate armed");
+  // Still dead: the watchdog is held back by the gate...
+  m.setLastPushAt(Date.now() - 200_000);
+  m.watchdogTick();
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 1, "watchdog waits out the gate");
+  // ...but the network coming back rebuilds now, once the last rebuild is
+  // older than one quiet window.
+  m.setLastReconnectAt(Date.now() - 60_000);
   m.reconnectAfterOutage();
   await new Promise((r) => setTimeout(r, 40));
-  assertEquals(m.calls.close, 1);
+  assertEquals(m.calls.listen, 2);
+});
+
+Deno.test("a recovery right after a reconnect leaves the fresh link alone", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  m.setLastPushAt(Date.now() - 200_000);
+  // The reconnect's own refresh is the round that ends the outage.
+  await m.reconnectPush("stale");
+  m.reconnectAfterOutage();
+  await new Promise((r) => setTimeout(r, 40));
   assertEquals(m.calls.listen, 1);
 });
 

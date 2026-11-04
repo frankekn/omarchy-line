@@ -14,7 +14,10 @@ export interface RefreshHealthOptions {
   writeState: () => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
-  /** After a failure streak ends; gets the streak's last reason. */
+  /**
+   * After a failure streak ends. Gets the streak's *last* reason: a network
+   * streak whose final round was classified otherwise does not report network.
+   */
   onRecovered?: (reason: RefreshFailureReason | undefined) => void;
 }
 

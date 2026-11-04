@@ -40,7 +40,9 @@ interface Module {
   liftRestriction(): void;
   makeClient(): FakeClient;
   markPushAlive(): void;
-  reconnectPush(reason: "stale" | "resume" | "error" | "manual"): Promise<void>;
+  reconnectPush(
+    reason: "stale" | "resume" | "error" | "manual" | "outage",
+  ): Promise<void>;
   setClient(client: FakeClient | null): void;
   setLastPushAt(at: number): void;
   startListen(): AbortController;
@@ -72,6 +74,7 @@ export const RECONNECT_CAP_MS = 60_000;
 export const PUSH_REINIT_GRACE_MS = 5;
 export let lastPushAt = Date.now();
 let reconnecting = false;
+let lastReconnectAt = 0;
 let reconnectAttempts = 0;
 let nextReconnectAt = 0;
 let forceFullRefresh = true;

@@ -57,6 +57,7 @@ export const RECONNECT_CAP_MS = 60_000;
 export const PUSH_REINIT_GRACE_MS = 5;
 export let lastPushAt = Date.now();
 export let reconnecting = false;
+let lastReconnectAt = 0;
 export let reconnectAttempts = 0;
 export let nextReconnectAt = 0;
 // reconnectPush forces the next round full; nothing here reads the flag.

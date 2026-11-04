@@ -31,6 +31,8 @@ import type { Json } from "./types.ts";
 /** Last moment any push traffic was seen; the watchdog below reads it. */
 let lastPushAt = Date.now();
 let reconnecting = false;
+/** When reconnectPush last began a rebuild; its first ping is still to come. */
+let lastReconnectAt = 0;
 let reconnectAttempts = 0;
 let nextReconnectAt = 0;
 let sleepMonitor: Deno.ChildProcess | null = null;
@@ -92,7 +94,7 @@ function pushIsStale(now: number = Date.now()): boolean {
  * fires again a minute later if it did not take.
  */
 async function reconnectPush(
-  reason: "stale" | "resume" | "error" | "manual",
+  reason: "stale" | "resume" | "error" | "manual" | "outage",
 ): Promise<void> {
   const c = client;
   if (!c || login.status !== "ok") return; // no session to repair
@@ -102,6 +104,7 @@ async function reconnectPush(
   // reason -- the resume path gets here before the watchdog ever sees a gap.
   setLinkState("down");
   reconnecting = true;
+  lastReconnectAt = Date.now();
   // The counter and the gate are the *watchdog's* pacing: they exist so an
   // automatic retry that keeps failing backs off instead of hammering LINE.
   // A manual sync is a person deciding to try right now, so it must not spend
@@ -181,7 +184,10 @@ const PUSH_QUIET_MS = 45_000;
 function reconnectAfterOutage(): void {
   if (!client || login.status !== "ok" || restriction) return;
   if (Date.now() - lastPushAt <= PUSH_QUIET_MS) return; // push stayed alive
-  void reconnectPush("resume");
+  // The round that ended the outage may be the one a reconnect itself just
+  // started; its new link has not pinged yet, and is not quiet but young.
+  if (reconnecting || Date.now() - lastReconnectAt <= PUSH_QUIET_MS) return;
+  void reconnectPush("outage");
 }
 // enil:watchdog-end
 
