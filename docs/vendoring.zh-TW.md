@@ -36,6 +36,9 @@ submodule 釘在 `omarchy-vendor` 上的 `4d6aa18`。這個 commit 比上游 `80
   「HMAC verification failed」失敗。`uploadMediaByE2EE` 接受 `durationMs`，所以
   E2EE 影片在對方那邊不會顯示 0:00。它也接受額外的 `contentMetadata`，但呼叫端不能
   覆寫 `DURATION`、`DOWNLOAD_URL` 或 `PREVIEW_URL`。媒體下載接受 `AbortSignal`。
+  解密也接受 LINE app 加在影片上的標籤：HMAC 算的是每 128 KiB 密文各自的
+  SHA-256，而不是整段密文。之前從 app 傳來的影片一律以「HMAC verification
+  failed」失敗。
 - **推播與輪詢。** push 連線失敗或 listen 迴圈失敗會回報給呼叫端，不會變成讓 process
   掛掉的 unhandled rejection。
 - **其他。** 新增 Album（`moa`）服務、調整通話功能、一個有連線逾時的 Node fetch

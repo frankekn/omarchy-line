@@ -43,7 +43,10 @@ handling (#226)", which is the base of `omarchy-vendor`.
   `uploadMediaByE2EE` takes a `durationMs`, so E2EE videos do not show 0:00
   on the other side. It also takes extra `contentMetadata`, but a caller
   cannot override `DURATION`, `DOWNLOAD_URL`, or `PREVIEW_URL`. Media
-  downloads take an `AbortSignal`.
+  downloads take an `AbortSignal`. Decryption also accepts the tag the LINE
+  app puts on videos: an HMAC over the SHA-256 of each 128 KiB ciphertext
+  chunk instead of over the ciphertext. Before, every video sent from the
+  app failed with "HMAC verification failed".
 - **Push and polling.** A failed push connection or a failed listen loop is
   reported to the caller instead of becoming an unhandled rejection that
   kills the process.
