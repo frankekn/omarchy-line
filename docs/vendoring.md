@@ -15,15 +15,14 @@ linejs is MIT-licensed. The vendored copy keeps its license at
 
 ## The pinned commit
 
-The submodule pins `4d6aa18` on `omarchy-vendor`. That commit sits two commits
-above upstream `802f4c7`, "fix: E2EE key registration and client message
-handling (#226)", which is the base of `omarchy-vendor`.
-
-- The first commit holds the omarchy patches to `packages/linejs` and
-  `packages/types`.
-- The second commit, `4d6aa18`, turns the fork's root `README.md` from a
-  symlink into a real file, so `omarchy plugin validate` passes. The
-  validator refuses any symlink inside a plugin folder.
+The submodule pins a commit on `omarchy-vendor`; `git submodule status
+daemon/vendor/linejs` shows which. The branch starts at upstream `802f4c7`,
+"fix: E2EE key registration and client message handling (#226)". Its first two
+commits hold the omarchy patches to `packages/linejs` and `packages/types`, and
+turn the fork's root `README.md` from a symlink into a real file, so
+`omarchy plugin validate` passes (the validator refuses any symlink inside a
+plugin folder). Later fixes sit on top; code changes are reviewed as pull
+requests on the fork.
 
 ## What the fork changes
 
@@ -43,7 +42,10 @@ handling (#226)", which is the base of `omarchy-vendor`.
   `uploadMediaByE2EE` takes a `durationMs`, so E2EE videos do not show 0:00
   on the other side. It also takes extra `contentMetadata`, but a caller
   cannot override `DURATION`, `DOWNLOAD_URL`, or `PREVIEW_URL`. Media
-  downloads take an `AbortSignal`.
+  downloads take an `AbortSignal`. Decrypting any media accepts a second tag
+  as well: an HMAC over the SHA-256 of each 128 KiB ciphertext chunk instead
+  of over the ciphertext. In practice only videos sent from the LINE app use
+  it; before, every one of them failed with "HMAC verification failed".
 - **Push and polling.** A failed push connection or a failed listen loop is
   reported to the caller instead of becoming an unhandled rejection that
   kills the process.
