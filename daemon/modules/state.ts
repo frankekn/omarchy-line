@@ -662,10 +662,20 @@ let chats: PluginChat[] = [];
 let chatsRevision = 0;
 let chatListHealth: { complete: boolean; loaded: number } | null = null;
 
+// Set by daemon.ts: state.ts sits below the watchdog, so it cannot call it.
+let onRefreshRecovered: (reason: RefreshFailureReason | undefined) => void =
+  () => {};
+function setOnRefreshRecovered(
+  hook: (reason: RefreshFailureReason | undefined) => void,
+): void {
+  onRefreshRecovered = hook;
+}
+
 const refreshHealthState = new RefreshHealthState({
   writeState: () => void writeState(),
   log: (message) => console.log(message),
   error: (message) => console.error(message),
+  onRecovered: (reason) => onRefreshRecovered(reason),
 });
 
 function refreshHealthValue() {
@@ -813,6 +823,7 @@ export {
   setEventSink,
   setHidden,
   setLogin,
+  setOnRefreshRecovered,
   setStateSink,
   setWanted,
   stateWriteOwed,

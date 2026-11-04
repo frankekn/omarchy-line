@@ -36,6 +36,7 @@ import {
   pinnedChats,
   setLogin,
   setLoginState,
+  setOnRefreshRecovered,
   setStateSink,
   writeState,
 } from "./modules/state.ts";
@@ -44,6 +45,7 @@ import { refreshChats } from "./modules/refresh.ts";
 import { serve } from "./modules/socket.ts";
 import {
   installRejectionGuard,
+  reconnectAfterOutage,
   sleepMonitor,
   startSleepMonitor,
   watchdogTick,
@@ -160,6 +162,11 @@ async function main() {
   setInterval(sweep, MEDIA_SWEEP_MS);
 
   setInterval(watchdogTick, WATCHDOG_MS);
+  // A chat list that recovers from network failures proves the network is
+  // back; push should not wait minutes for the watchdog to notice.
+  setOnRefreshRecovered((reason) => {
+    if (reason === "network") reconnectAfterOutage();
+  });
   // refreshChats() returns immediately when there is no session, so this is
   // free while logged out.
   setInterval(() => void refreshChats(), POLL_MS);

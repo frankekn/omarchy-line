@@ -23,6 +23,7 @@ interface WatchdogModule {
   makeClient(): WatchClient;
   markPushAlive(): void;
   pushIsStale(now?: number): boolean;
+  reconnectAfterOutage(): void;
   reconnectPush(reason: "stale" | "resume" | "error" | "manual"): Promise<void>;
   setClient(client: WatchClient | null): void;
   setLastPushAt(at: number): void;
@@ -95,7 +96,7 @@ export function makeClient(): FakeClient {
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
 function errorLine(e: unknown) { return String((e as { message?: unknown } | null)?.message ?? e); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
-export { reconnectPush, watchdogTick, backoffDelay, markPushAlive, pushIsStale };
+export { reconnectPush, watchdogTick, backoffDelay, markPushAlive, pushIsStale, reconnectAfterOutage };
 `;
   return await loadBlock<WatchdogModule>("watchdog", prelude);
 }
@@ -255,4 +256,30 @@ Deno.test("islisten is cleared only when linejs did not rebuild the conn", async
   clearTimeout(t);
   assertEquals(c.base.poll.islisten, true);
   assertEquals(alive.calls.listen, 1);
+});
+
+Deno.test("a recovered network rebuilds a quiet push link at once, past the backoff gate", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  // Not stale yet (180s), but quiet past one 30s ping; and a backoff gate
+  // from earlier failures that watchdogTick would have to wait out.
+  m.setLastPushAt(Date.now() - 60_000);
+  m.watchdogTick();
+  assertEquals(m.calls.listen, 0, "the watchdog alone does not act yet");
+  m.reconnectAfterOutage();
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.close, 1);
+  assertEquals(m.calls.listen, 1);
+});
+
+Deno.test("a recovered network leaves a push link that kept pinging alone", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  m.setLastPushAt(Date.now() - 10_000);
+  m.reconnectAfterOutage();
+  m.setLogin({ status: "starting" });
+  m.setLastPushAt(Date.now() - 60_000);
+  m.reconnectAfterOutage();
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 0);
 });

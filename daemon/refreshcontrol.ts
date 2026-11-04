@@ -14,6 +14,8 @@ export interface RefreshHealthOptions {
   writeState: () => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
+  /** After a failure streak ends; gets the streak's last reason. */
+  onRecovered?: (reason: RefreshFailureReason | undefined) => void;
 }
 
 /** Owns refresh health and writes state only on the first failed round. */
@@ -22,11 +24,13 @@ export class RefreshHealthState {
   readonly #writeState: () => void;
   readonly #log: (message: string) => void;
   readonly #error: (message: string) => void;
+  readonly #onRecovered: (reason: RefreshFailureReason | undefined) => void;
 
   constructor(options: RefreshHealthOptions) {
     this.#writeState = options.writeState;
     this.#log = options.log ?? console.log;
     this.#error = options.error ?? console.error;
+    this.#onRecovered = options.onRecovered ?? (() => {});
   }
 
   get value(): RefreshHealth | null {
@@ -35,9 +39,11 @@ export class RefreshHealthState {
 
   succeed(now: number = Date.now()): void {
     const failed = this.#value?.failures ?? 0;
+    const reason = this.#value?.reason;
     this.#value = { at: now, failures: 0 };
     if (failed > 0) {
       this.#log(`[chats] refresh recovered after ${failed} failures`);
+      this.#onRecovered(reason);
     }
   }
 

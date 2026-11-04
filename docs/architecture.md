@@ -222,7 +222,10 @@ sees ESTABLISHED, but the daemon stops receiving anything. So the daemon both
 listens for logind's `PrepareForSleep` (reconnects 3 s after wake) and checks
 once a minute whether the push has been quiet for over three minutes,
 rebuilding it on its own and retrying with a backoff that starts at 1 s and caps
-at 60 s. A full chat-list refetch also runs every five minutes as a floor.
+at 60 s. When the chat list recovers from network failures, the network is
+back, so a push link that has been quiet for over 45 s is rebuilt right away
+instead of waiting for that check. A full chat-list refetch also runs every
+five minutes as a floor.
 Errors the push connection throws with nobody listening are journaled as
 `[unhandled]`. Anything judged a network problem takes the reconnect path
 above and does not restart the daemon. Anything else is journaled the same way

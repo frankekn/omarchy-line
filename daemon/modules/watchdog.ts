@@ -168,6 +168,21 @@ function watchdogTick(): void {
   if (Date.now() < nextReconnectAt) return; // still inside the backoff window
   void reconnectPush("stale");
 }
+
+/** Longer than one 30s push ping: a quiet link this long missed one. */
+const PUSH_QUIET_MS = 45_000;
+
+/**
+ * A chat-list round just succeeded after network failures, so the network is
+ * back now. If push has been quiet through the outage its socket is most
+ * likely dead; rebuild it at once instead of waiting out the 3-minute
+ * staleness check, the minute-long watchdog tick and the backoff gate.
+ */
+function reconnectAfterOutage(): void {
+  if (!client || login.status !== "ok" || restriction) return;
+  if (Date.now() - lastPushAt <= PUSH_QUIET_MS) return; // push stayed alive
+  void reconnectPush("resume");
+}
 // enil:watchdog-end
 
 // The block between the enil:pushlog markers is sliced out verbatim by
@@ -364,6 +379,7 @@ export {
   installRejectionGuard,
   markPushAlive,
   onPushLog,
+  reconnectAfterOutage,
   reconnectPush,
   sleepMonitor,
   startSleepMonitor,
