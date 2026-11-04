@@ -114,6 +114,7 @@ import { client, sessionGeneration, sessionIsCurrent } from "./session.ts";
 import {
   asMessageId,
   buildMentionMeta,
+  historyDelta,
   panelRequestId,
   previewableMessage,
   REACTION_PICKABLE,
@@ -1220,18 +1221,6 @@ async function convertHistoryPage(
 // The block between the enil:revalidate markers is sliced out verbatim by
 // historyopen_test.ts.
 // enil:revalidate-begin
-function sameHistoryPage(a: PluginMessage[], b: PluginMessage[]): boolean {
-  if (a.length !== b.length) return false;
-  const shape = (m: PluginMessage) =>
-    `${m.id}|${m.text}|${m.unsent === true}|${m.edited === true}|${
-      m.reactions?.length ?? 0
-    }|${m.readBy?.count ?? -1}`;
-  for (let i = 0; i < a.length; i++) {
-    if (shape(a[i]) !== shape(b[i])) return false;
-  }
-  return true;
-}
-
 /** A head page being re-fetched; one in flight per chat at most. */
 const historyRevalidations = new Set<string>();
 
@@ -1357,16 +1346,18 @@ function publishHistoryPage(
   // A conversion that straddled a logout can still hand back a page; it must
   // not reach the next account's event stream.
   if (fresh === null || !sessionIsCurrent(owner, generation)) return;
-  if (sameHistoryPage(served, fresh)) return;
+  // Clients merge a history event by id, so it carries only what differs
+  // from the page they last got: a newer published page if there is one,
+  // else the one this request served.
   const prior = publishedHistory.get(chatMid);
-  if (prior && prior.after > servedAt && sameHistoryPage(prior.page, fresh)) {
-    return;
-  }
+  const base = prior && prior.after > servedAt ? prior.page : served;
+  const changed = historyDelta(base, fresh);
+  if (!changed.length) return;
   publishedHistory.set(chatMid, { page: fresh, after: ++historyServeSeq });
   if (publishedHistory.size > 64) {
     publishedHistory.delete(publishedHistory.keys().next().value!);
   }
-  pushEvent({ kind: "history", chat: chatMid, messages: fresh });
+  pushEvent({ kind: "history", chat: chatMid, messages: changed });
 }
 // enil:revalidate-end
 

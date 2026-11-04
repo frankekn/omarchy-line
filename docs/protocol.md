@@ -238,7 +238,7 @@ full-page history refetch.
 | `reaction` | `messageId`, `reactions` (**the whole new list**, not a delta) | someone adds, swaps or undoes a reaction |
 | `unsend` | `messageId` | someone unsends (you or them) |
 | `edit` | `message` (the full post-edit message) | a message is edited |
-| `history` | `messages` (a revalidated whole page) | the local store answered a stale page first and the reconcile produced a fresh one. One entry is a whole page, so a chat keeps only its newest in the ring; older ones are dropped |
+| `history` | `messages` (the rows of a revalidated page that are new or changed) | the local store answered a stale page first and the reconcile found differences. Merge by id and keep rows it does not mention. A chat keeps one entry in the ring: a newer one folds the older rows in, newest row winning |
 
 `reaction` carries the whole list rather than a delta because a LINE op only
 states one person's new choice at a time. The daemon keeps a per-message

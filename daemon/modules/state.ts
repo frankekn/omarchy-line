@@ -65,15 +65,31 @@ function setEventSink(sink: typeof eventSink): void {
 /** Appends one event, drops what falls off the ring, and publishes it. */
 function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   const full: PluginEvent = { seq: ++eventSeq, at: Date.now(), ...e };
-  // A history event carries a whole page; only the newest one per chat has
-  // any meaning, so its predecessors leave the ring instead of piling up
-  // sixty-message payloads in it.
+  // A history event carries only the rows that changed. One ring entry per
+  // chat folds its predecessors in (newest row wins by id), so a panel that
+  // catches up from the file still sees every change, without the ring
+  // piling up one entry per revalidation. The live push sends just `full`.
+  let stored = full;
   if (full.kind === "history") {
+    const merged = new Map<string, unknown>();
+    for (const ev of events) {
+      if (ev.kind !== "history" || ev.chat !== full.chat) continue;
+      for (const m of ev.messages ?? []) {
+        merged.set(String((m as { id?: unknown }).id), m);
+      }
+    }
+    for (const m of full.messages ?? []) {
+      merged.set(String((m as { id?: unknown }).id), m);
+    }
     events = events.filter((ev) =>
       !(ev.kind === "history" && ev.chat === full.chat)
     );
+    stored = {
+      ...full,
+      messages: [...merged.values()] as typeof full.messages,
+    };
   }
-  events.push(full);
+  events.push(stored);
   // Slice rather than shift-in-a-loop: the array is replaced wholesale on
   // every write anyway, and this keeps the trim O(1) in statements.
   if (events.length > EVENTS_MAX) events = events.slice(-EVENTS_MAX);

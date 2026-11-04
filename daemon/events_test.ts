@@ -24,9 +24,10 @@ const RING_PRELUDE = `
 interface PluginEvent {
   seq: number;
   at: number;
-  kind: "message" | "read" | "reaction" | "unsend";
+  kind: "message" | "read" | "reaction" | "unsend" | "history";
   chat: string;
   message?: Record<string, unknown>;
+  messages?: Record<string, unknown>[];
   by?: string;
   upTo?: string;
   messageId?: string;
@@ -50,6 +51,7 @@ interface TestEvent {
   kind: string;
   chat: string;
   message?: Record<string, unknown>;
+  messages?: Record<string, unknown>[];
   messageId?: string;
   by?: string;
   upTo?: string;
@@ -161,4 +163,42 @@ Deno.test("the sink sees each event with its seq before the write is asked", asy
   assertEquals(seen[0].seq, 1);
   assertEquals(seen[1].seq, 2);
   assertEquals(seen[1].kind, "read");
+});
+
+Deno.test("history deltas for one chat fold into one ring entry; the live push stays the delta", async () => {
+  const m = await loadBlock<
+    RingModule & { setEventSink(sink: ((e: TestEvent) => void) | null): void }
+  >("eventring", RING_PRELUDE);
+  const live: TestEvent[] = [];
+  m.setEventSink((e) => live.push(e as TestEvent));
+  m.pushEvent({
+    kind: "history",
+    chat: "A",
+    messages: [{ id: "1", text: "a" }, { id: "2", text: "b" }],
+  });
+  m.pushEvent({
+    kind: "history",
+    chat: "B",
+    messages: [{ id: "9", text: "z" }],
+  });
+  m.pushEvent({
+    kind: "history",
+    chat: "A",
+    messages: [{ id: "2", text: "b2" }, { id: "3", text: "c" }],
+  });
+  const histories = m.events.filter((e) => e.kind === "history");
+  assertEquals(histories.length, 2);
+  const a = histories.find((e) => e.chat === "A")!;
+  assertEquals(a.messages, [{ id: "1", text: "a" }, { id: "2", text: "b2" }, {
+    id: "3",
+    text: "c",
+  }]);
+  assertEquals(live.at(-1)?.messages, [{ id: "2", text: "b2" }, {
+    id: "3",
+    text: "c",
+  }]);
+  assertEquals(histories.find((e) => e.chat === "B")?.messages, [{
+    id: "9",
+    text: "z",
+  }]);
 });

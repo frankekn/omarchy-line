@@ -11,7 +11,12 @@
  * types are type-only imports from types.ts). Modules above it (messages,
  * push, socket) import its parsers; it never reaches back.
  */
-import type { Json, PluginReaction, PluginReadBy } from "./types.ts";
+import type {
+  Json,
+  PluginMessage,
+  PluginReaction,
+  PluginReadBy,
+} from "./types.ts";
 
 // enil:requestid-begin
 /** A correlation token written by this panel, if LINE preserved it. */
@@ -537,12 +542,36 @@ function readByAt(
 }
 // enil:readrange-end
 
+/** The fields a revalidated history row is compared on. */
+function historyShape(m: PluginMessage): string {
+  return `${m.id}|${m.text}|${m.unsent === true}|${m.edited === true}|${
+    m.reactions?.length ?? 0
+  }|${m.readBy?.count ?? -1}`;
+}
+
+/**
+ * The rows of a revalidated head page that a `history` event must carry: new
+ * ids and rows whose shape changed. Every client merges a history event by id
+ * and keeps what it does not cover, so sending only these is the same update
+ * as the whole page -- a 100-row page used to put ~50 KB in the event ring
+ * every time one read count moved.
+ */
+function historyDelta(
+  served: PluginMessage[],
+  fresh: PluginMessage[],
+): PluginMessage[] {
+  const before = new Map(served.map((m) => [String(m.id), historyShape(m)]));
+  return fresh.filter((m) => before.get(String(m.id)) !== historyShape(m));
+}
+
 export {
   applyQueuedReactions,
   applyReaction,
   asMessageId,
   buildMentionMeta,
   chatMidOf,
+  historyDelta,
+  historyShape,
   indexedEntries,
   lastReadOf,
   MENTION_MID,
