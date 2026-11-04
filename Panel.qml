@@ -2694,15 +2694,6 @@ Panel {
   // root.sockConnected —— 同一個條件寫在兩個地方，遲早會不一致，這次的 bug 就是這樣來的。
   function request(cmd, extra, msgId) {
     if (!root.sockConnected) { root.notice = tr("daemon.notRunning"); return false }
-    function followMediaSend() {
-      if ((cmd !== "sendFile" && cmd !== "sendClipboardImage") || !root.activeChat
-          || (root.view !== "chat" && !root.twoPane)
-          || String(extra && extra.chat || "") !== String(root.activeChat.mid || "")) return
-      // positionViewAtEnd can pass through the paging threshold on its way down.
-      root.keepContentY = Math.max(0, msgList.contentY - msgList.originY)
-      msgList.toBottom()
-      Qt.callLater(root.clearSwap)
-    }
     var spendsDraft = root.isSendCmd(cmd) || !!(extra && extra._spendsDraft)
     // A pre-load draft has no stable version yet. Sending it with version 0
     // lets an early acknowledgement miss the staged revision and resurrect it
@@ -2741,11 +2732,10 @@ Panel {
       })
       root.deferredDraftRequests = queued
       root.notice = tr("send.afterDraft")
-      followMediaSend()
       return true
     }
-    var reservedId = extra && Number(extra._requestId || 0)
-    var id = reservedId > 0 ? reservedId : root.nextId++
+    var id = extra && Number(extra._requestId || 0)
+    if (!(id > 0)) id = root.nextId++
     // older 在線上是 history，差別只在回來要怎麼處理：older 前置一頁。markRead 以前
     // 也借 history 的殼（count 1 + markRead），daemon 為了那一頁還得多讀一次已讀位置、
     // 再背景重驗一次歷史 —— 那一頁本來就不要。現在它是自己的指令，只送 sendChatChecked。
@@ -2821,11 +2811,7 @@ Panel {
               // 為了一個 cmd 在 request 裡多開一條路。
               gen: root.historyGen }
     root.pending = p
-    var sent = root.sockSend(req)
-    // A queued request already followed when accepted. Do not pull the reader
-    // back down if they scrolled up before the draft finished loading.
-    if (sent && !(reservedId > 0)) followMediaSend()
-    return sent
+    return root.sockSend(req)
   }
 
   function onReply(line) {
@@ -3160,6 +3146,7 @@ Panel {
       // destination captured when Ctrl+V was pressed.
       if (!root.request("sendClipboardImage", { chat: askedFor, stage: stage }))
         root.request("discardClipboardImage", { stage: stage })
+      else root.followOwnMedia(askedFor)
     } else if (cmd === "members") {
       // 慢一步回來的那份會被上面的 stale 擋掉；這裡再記一次是誰的，
       // 選單才不會在 members 還沒換掉的空檔列出上一間群組的人。
@@ -3394,6 +3381,7 @@ Panel {
               _draftVersion: picker.originDraftVersion,
               _draftGeneration: picker.originDraftGeneration
             })) {
+              root.followOwnMedia(picker.originChat)
               if (picker.originSpendsDraft && root.activeChat
                   && String(root.activeChat.mid || "") === picker.originChat
                   && root.pickerComposerStillOwned(
@@ -3798,6 +3786,15 @@ Panel {
   }
 
   // ------------------------------------------------------------ 訊息清單
+
+  function followOwnMedia(chat) {
+    if (!root.activeChat || (root.view !== "chat" && !root.twoPane)
+        || String(chat || "") !== String(root.activeChat.mid || "")) return
+    // positionViewAtEnd can pass through the paging threshold on its way down.
+    root.keepContentY = Math.max(0, msgList.contentY - msgList.originY)
+    msgList.toBottom()
+    Qt.callLater(root.clearSwap)
+  }
 
   // messages 一律從這裡換。ListView 每次 model reset 都會把 contentY 歸零
   // （Qt 6.11 量過），所以「換完視窗停在哪」只有換之前這一刻的幾何說得準 ——
@@ -6528,6 +6525,7 @@ Panel {
                   if (!root.request("sendFile", {
                     chat: root.activeChat.mid, path: path, _spendsDraft: true
                   })) return
+                  root.followOwnMedia(root.activeChat.mid)
                   root.notice = tr("send.sending")
                   root.resetComposerAfterSuccessfulSend()
                   return
