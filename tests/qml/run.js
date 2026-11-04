@@ -13178,6 +13178,24 @@ e.msgList.contentY = 1479;
 e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
 ok(e.msgList.contentY === 1600,
   "a one-pixel layout shift during the clipboard probe still follows the send");
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.messages = [{ id: "old", chat: "C1", from: "THEM", time: NOW48 }];
+const probeView = swapView(e);
+e.msgList.contentY = 1600;
+e.pasteClipboard();
+const probeId = e.sent[0].id;
+probeView.nextHeight = 2080;
+e.applyEvents([{ kind: "message", chat: "C1", message: {
+  id: "incoming", chat: "C1", from: "THEM", time: NOW48 + 1, text: "new",
+} }]);
+e.onReply(JSON.stringify({ id: probeId, ok: true, data: { stage: "image.png" } }));
+probeView.nextHeight = 2160;
+e.applyEvents([{ kind: "message", chat: "C1", message: {
+  id: "uploaded", chat: "C1", from: "ME", time: NOW48 + 2, contentType: "IMAGE",
+} }]);
+ok(e.root.messages.some((message) => message.id === "uploaded") &&
+  e.msgList.contentY === 1760,
+  "a layout shift at the bottom still follows the later clipboard image");
 for (const twoPane of [false, true]) {
   e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: "list" });
   swapView(e);

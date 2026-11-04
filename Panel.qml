@@ -3144,6 +3144,8 @@ Panel {
       if (!stale) root.notice = tr("send.sending")
       // Switching chats changes where the result is displayed, not the send
       // destination captured when Ctrl+V was pressed.
+      // Layout can also move contentY; conservatively keep the current view
+      // whenever the position changed while the probe was pending.
       if (!root.request("sendClipboardImage", { chat: askedFor, stage: stage }))
         root.request("discardClipboardImage", { stage: stage })
       else if (Math.abs(msgList.contentY - root.clipboardProbeContentY) <= 2)
