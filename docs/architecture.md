@@ -492,7 +492,7 @@ answers "Message already unsent" without touching the network. Chat files expire
 `mediaState: "expired"`, answering "File expired (LINE keeps files for 7 days)", again with no
 network. Failures after an actual fetch split three ways: the object being gone
 (HTTP 404/410 `ObsError`, or an empty body that decrypts as
-`encrypted data too short`) answers "File expired or deleted" and is
+`encrypted data too short (0 bytes)`) answers "File expired or deleted" and is
 remembered as expired. `HMAC verification failed` means the bytes arrived but
 do not match their key; it answers "Could not decrypt this file" and is not
 remembered. Everything else is "Download failed". The panel draws from

@@ -98,8 +98,17 @@ function mediaStateOf(
 // hid every app-sent video until the tag format was fixed (#20).
 const GONE_PATTERNS = [
   /HTTP (?:404|410)/,
-  /encrypted data too short/,
+  /encrypted data too short \(0 bytes\)/,
 ];
+
+// The bytes arrived and do not match their key. Not remembered: a retry
+// re-downloads and fails the same way, an accepted cost -- since #20 this is
+// rare, and app-sent E2EE videos never reach the preview path that retries.
+const DECRYPT_PATTERN = /HMAC verification failed/;
+
+function isDecryptError(e: Error): boolean {
+  return DECRYPT_PATTERN.test(`${e.name}: ${e.message}`);
+}
 
 /** Whether the failure says the bytes are gone for good, not just today. */
 function isGoneError(e: Error): boolean {
@@ -110,9 +119,7 @@ function isGoneError(e: Error): boolean {
 /** The sentence the panel shows when a download that was tried came back. */
 function downloadErrorText(e: Error): string {
   if (isGoneError(e)) return GONE_ERROR;
-  return /HMAC verification failed/.test(e.message)
-    ? DECRYPT_ERROR
-    : DOWNLOAD_ERROR;
+  return isDecryptError(e) ? DECRYPT_ERROR : DOWNLOAD_ERROR;
 }
 
 // A linejs error text quotes the message it choked on, mid included.
