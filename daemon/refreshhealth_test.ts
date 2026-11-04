@@ -88,3 +88,22 @@ Deno.test("a streak without an earlier success has at zero", () => {
   assertEquals(value.at, 0);
   assert(value.failures === 1 && value.reason === "unknown");
 });
+
+Deno.test("recovery reports the streak's reason once; plain successes do not", () => {
+  const recovered: unknown[] = [];
+  const health = new RefreshHealthState({
+    writeState: () => {},
+    log: () => {},
+    error: () => {},
+    onRecovered: (reason, lastFailureAt) =>
+      recovered.push([reason, lastFailureAt]),
+  });
+  health.succeed(1000);
+  health.succeed(2000);
+  assertEquals(recovered, []);
+  health.fail("token_expired", 3000);
+  health.fail("network", 4000);
+  health.succeed(5000);
+  health.succeed(6000);
+  assertEquals(recovered, [["network", 4000]]);
+});

@@ -14,6 +14,14 @@ export interface RefreshHealthOptions {
   writeState: () => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
+  /**
+   * After a failure streak ends. Gets the streak's *last* reason: a network
+   * streak whose final round was classified otherwise does not report network.
+   */
+  onRecovered?: (
+    reason: RefreshFailureReason | undefined,
+    lastFailureAt: number,
+  ) => void;
 }
 
 /** Owns refresh health and writes state only on the first failed round. */
@@ -22,11 +30,17 @@ export class RefreshHealthState {
   readonly #writeState: () => void;
   readonly #log: (message: string) => void;
   readonly #error: (message: string) => void;
+  readonly #onRecovered: (
+    reason: RefreshFailureReason | undefined,
+    lastFailureAt: number,
+  ) => void;
+  #lastFailureAt = 0;
 
   constructor(options: RefreshHealthOptions) {
     this.#writeState = options.writeState;
     this.#log = options.log ?? console.log;
     this.#error = options.error ?? console.error;
+    this.#onRecovered = options.onRecovered ?? (() => {});
   }
 
   get value(): RefreshHealth | null {
@@ -35,13 +49,16 @@ export class RefreshHealthState {
 
   succeed(now: number = Date.now()): void {
     const failed = this.#value?.failures ?? 0;
+    const reason = this.#value?.reason;
     this.#value = { at: now, failures: 0 };
     if (failed > 0) {
       this.#log(`[chats] refresh recovered after ${failed} failures`);
+      this.#onRecovered(reason, this.#lastFailureAt);
     }
   }
 
   fail(reason: RefreshFailureReason, now: number = Date.now()): void {
+    this.#lastFailureAt = now;
     const previous = this.#value ?? { at: 0, failures: 0 };
     this.#value = {
       at: previous.at,

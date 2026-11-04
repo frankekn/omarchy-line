@@ -23,9 +23,13 @@ interface WatchdogModule {
   makeClient(): WatchClient;
   markPushAlive(): void;
   pushIsStale(now?: number): boolean;
-  reconnectPush(reason: "stale" | "resume" | "error" | "manual"): Promise<void>;
+  reconnectAfterOutage(lastFailureAt: number): void;
+  reconnectPush(
+    reason: "stale" | "resume" | "error" | "manual" | "outage",
+  ): Promise<void>;
   setClient(client: WatchClient | null): void;
   setLastPushAt(at: number): void;
+  setLastReconnectAt(at: number): void;
   setLogin(login: { status: string; reason?: string }): void;
   state(): {
     lastPushAt: number;
@@ -53,6 +57,7 @@ export const RECONNECT_CAP_MS = 60_000;
 export const PUSH_REINIT_GRACE_MS = ${opts.grace ?? 20};
 export let lastPushAt = Date.now();
 export let reconnecting = false;
+let lastReconnectAt = 0;
 export let reconnectAttempts = 0;
 export let nextReconnectAt = 0;
 // reconnectPush forces the next round full; nothing here reads the flag.
@@ -79,6 +84,7 @@ export let client: FakeClient | null = null;
 export function setClient(c: FakeClient | null) { client = c; }
 export function setLogin(l: LoginState) { login = l; }
 export function setLastPushAt(t: number) { lastPushAt = t; }
+export function setLastReconnectAt(t: number) { lastReconnectAt = t; }
 export function state() {
   return { lastPushAt, reconnecting, reconnectAttempts, nextReconnectAt };
 }
@@ -95,7 +101,7 @@ export function makeClient(): FakeClient {
 function writeState(): Promise<void> { calls.write++; return Promise.resolve(); }
 function errorLine(e: unknown) { return String((e as { message?: unknown } | null)?.message ?? e); }
 function refreshChats(): Promise<void> { calls.refresh++; return Promise.resolve(); }
-export { reconnectPush, watchdogTick, backoffDelay, markPushAlive, pushIsStale };
+export { reconnectPush, watchdogTick, backoffDelay, markPushAlive, pushIsStale, reconnectAfterOutage };
 `;
   return await loadBlock<WatchdogModule>("watchdog", prelude);
 }
@@ -255,4 +261,62 @@ Deno.test("islisten is cleared only when linejs did not rebuild the conn", async
   clearTimeout(t);
   assertEquals(c.base.poll.islisten, true);
   assertEquals(alive.calls.listen, 1);
+});
+
+Deno.test("a recovered network rebuilds a quiet push link at once, past the backoff gate", async () => {
+  const m = await loadModule({ staleMs: 1_000, grace: 5 });
+  m.setClient(m.makeClient());
+  // One stale reconnect during the outage arms the backoff gate.
+  m.setLastPushAt(Date.now() - 5_000);
+  m.watchdogTick();
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 1);
+  assert(m.state().nextReconnectAt > Date.now(), "gate armed");
+  // Still dead: the watchdog is held back by the gate...
+  m.setLastPushAt(Date.now() - 200_000);
+  m.watchdogTick();
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 1, "watchdog waits out the gate");
+  // ...but the network coming back rebuilds now: the earlier rebuild came
+  // before a later failed round, so it was made while the network was down.
+  m.reconnectAfterOutage(Date.now());
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 2);
+});
+
+Deno.test("a recovery right after a reconnect leaves the fresh link alone", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  m.setLastPushAt(Date.now() - 200_000);
+  // The reconnect's own refresh is the round that ends the outage: the last
+  // failed round came before it.
+  const lastFailureAt = Date.now() - 1_000;
+  await m.reconnectPush("stale");
+  m.reconnectAfterOutage(lastFailureAt);
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 1);
+});
+
+Deno.test("a recovered network leaves a push link that kept pinging alone", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  m.setLastPushAt(Date.now() - 10_000);
+  m.reconnectAfterOutage(Date.now());
+  m.setLogin({ status: "starting" });
+  m.setLastPushAt(Date.now() - 60_000);
+  m.reconnectAfterOutage(Date.now());
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 0);
+});
+
+Deno.test("a link rebuilt mid-outage is rebuilt again when the network returns", async () => {
+  const m = await loadModule({ grace: 5 });
+  m.setClient(m.makeClient());
+  m.setLastPushAt(Date.now() - 200_000);
+  await m.reconnectPush("stale"); // rebuilt while the network is still down
+  await new Promise((r) => setTimeout(r, 5));
+  const lastFailureAt = Date.now(); // a later round still failed
+  m.reconnectAfterOutage(lastFailureAt);
+  await new Promise((r) => setTimeout(r, 40));
+  assertEquals(m.calls.listen, 2);
 });
