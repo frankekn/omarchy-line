@@ -1,6 +1,5 @@
 // History pagination, media viewing, paste and drop.
 import { assert, CHAT, tapSocket, until } from "./harness.js";
-import { sendScroll } from "./send-scroll.js";
 
 export async function media(h) {
   for (let i = 0; i < 65; i++) {
@@ -110,6 +109,4 @@ export async function media(h) {
   );
   assert.ok(tap.sent.filter((m) => m.cmd === "sendFile").length >= 2);
   h.step("paste-drop-upload");
-  await context.close();
-  await sendScroll(h);
 }

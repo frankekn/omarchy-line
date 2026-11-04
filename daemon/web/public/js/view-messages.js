@@ -1344,9 +1344,11 @@ export function createMessagesView(ctx) {
     // A gesture at the top may not produce a scroll event at all.
     if (up) loadNearTop();
   }
-  list.addEventListener("load", () => {
-    if (isFollowing(list)) followBottom(list);
-  }, true);
+  for (const type of ["load", "error"]) {
+    list.addEventListener(type, () => {
+      if (isFollowing(list)) followBottom(list);
+    }, true);
+  }
   list.addEventListener("scroll", () => {
     updateNavigation();
     // Settle after a reader reaches the bottom, including deferred layout.

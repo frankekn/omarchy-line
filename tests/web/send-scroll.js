@@ -15,7 +15,14 @@ export async function sendScroll(h) {
       new URL("../../docs/images/demo/sticker.png", import.meta.url),
     ),
   );
-  for (const scrollAway of [false, true]) {
+  for (
+    const { outcome, scrollAway } of [
+      { outcome: "load", scrollAway: false },
+      { outcome: "load", scrollAway: true },
+      { outcome: "error", scrollAway: false },
+      { outcome: "error", scrollAway: true },
+    ]
+  ) {
     const context = await h.context({
       locale: "en-US",
       viewport: { width: 390, height: 640 },
@@ -31,7 +38,7 @@ export async function sendScroll(h) {
       await route.fulfill({
         status: 200,
         contentType: "image/png",
-        body: image,
+        body: outcome === "load" ? image : Buffer.from("invalid image"),
       });
     });
     await tapSocket(page, {
@@ -69,6 +76,14 @@ export async function sendScroll(h) {
       await sticker.click();
       const sentImage = page.locator(".message-row.own .sticker-image").last();
       await sentImage.waitFor({ state: "attached" });
+      if (outcome === "error") {
+        // A broken image can change the fallback's layout after the event.
+        await sentImage.evaluate((img) => {
+          img.addEventListener("error", () => img.style.height = "120px", {
+            once: true,
+          });
+        });
+      }
       await page.waitForFunction(() => {
         const list = document.getElementById("messages");
         return list.scrollHeight - list.scrollTop - list.clientHeight <= 2;
@@ -104,7 +119,15 @@ export async function sendScroll(h) {
         assert.ok(before.gap > 50, "reader moved away from the bottom");
       }
       release();
-      await sentImage.evaluate((img) => img.decode());
+      if (outcome === "load") await sentImage.evaluate((img) => img.decode());
+      else {
+        await sentImage.evaluate((img) =>
+          new Promise((resolve) => {
+            if (img.complete && img.naturalWidth === 0) resolve();
+            else img.addEventListener("error", () => resolve(), { once: true });
+          })
+        );
+      }
       await page.evaluate(() =>
         new Promise((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(resolve))
@@ -117,20 +140,22 @@ export async function sendScroll(h) {
       }));
       assert.ok(
         after.height - before.height > 40,
-        `decoded sticker grows the list (${
+        `late ${outcome} grows the list (${
           scrollAway ? "scrolled away" : "following"
         }): ` +
           `${JSON.stringify(before)} -> ${JSON.stringify(after)}`,
       );
       if (scrollAway) {
         assert.ok(
-          after.gap > 50,
-          "reader who scrolled away is not pulled to the bottom",
+          after.gap >= before.gap - 2,
+          `reader who scrolled away keeps their place: ${
+            JSON.stringify(before)
+          } -> ${JSON.stringify(after)}`,
         );
       } else {
         assert.ok(
           after.gap <= 2,
-          `delayed sticker leaves ${after.gap}px below`,
+          `delayed sticker ${outcome} leaves ${after.gap}px below`,
         );
       }
     } finally {
@@ -138,5 +163,7 @@ export async function sendScroll(h) {
       await context.close();
     }
   }
-  h.step("late sticker load follows only while the reader stays at the bottom");
+  h.step(
+    "late sticker load or error follows only while the reader stays at the bottom",
+  );
 }

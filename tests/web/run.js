@@ -25,6 +25,7 @@ import { messageActions } from "./message-actions.js";
 import { search } from "./search.js";
 import { chrome } from "./chrome.js";
 import { chatEvents } from "./chat-events.js";
+import { sendScroll } from "./send-scroll.js";
 
 const suites = {
   main,
@@ -52,6 +53,7 @@ const suites = {
   search,
   chrome,
   "chat-events": chatEvents,
+  "send-scroll": sendScroll,
 };
 const selected = Deno.args.length ? Deno.args : Object.keys(suites);
 for (const name of selected) {

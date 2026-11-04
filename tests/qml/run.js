@@ -288,6 +288,8 @@ const B = {
   // model swap is decided by root functions the harness can drive, and the two
   // separators (date, unread) come from pure functions.
   setMessages: body("  function setMessages(list, follow) {"),
+  followOwnMedia: body("  function followOwnMedia(chat) {"),
+  pickerFinished: nested("      onStreamFinished: {", "      }"),
   clearSwap: body("  function clearSwap() {"),
   withDay: body("  function withDay(list) {"),
   firstUnreadIndex: body("  function firstUnreadIndex(messages, unread) {"),
@@ -729,6 +731,9 @@ function makeEnv(opts) {
     // touches the list goes through the real, sliced one.
     setMessages(list, follow) {
       api.setMessages(list, follow);
+    },
+    followOwnMedia(chat) {
+      api.followOwnMedia(chat);
     },
     clearSwap() {
       api.clearSwap();
@@ -1685,6 +1690,7 @@ function makeEnv(opts) {
   const fMarkupBody = mk("markupBody", ["text", "spans", "color"]);
   const fMentionRanges = mk("mentionRanges", ["mentions", "len"]);
   const fSetMessages = mk("setMessages", ["list", "follow"]);
+  const fFollowOwnMedia = mk("followOwnMedia", ["chat"]);
   const fClearSwap = mk("clearSwap");
   const fWithDay = mk("withDay", ["list"]);
   const fFirstUnread = mk("firstUnreadIndex", ["messages", "unread"]);
@@ -1784,6 +1790,7 @@ function makeEnv(opts) {
   // `text` inside submit() is the TextArea's own property; `with` makes the
   // sliced source read and write the stub's the way the real one does.
   const fSubmit = new Function(...ARGS, "with (replyField) {" + B.submit + "}");
+  const fPickerFinished = new Function(...ARGS, "picker", "text", B.pickerFinished);
   const fContentY = new Function(
     ...ARGS,
     "with (msgList) {" + B.onContentYChanged + "}",
@@ -1983,6 +1990,7 @@ function makeEnv(opts) {
     markupBody: (t, sp, c) => q((...a) => fMarkupBody(...a, t, sp, c)),
     mentionRanges: (ms, len) => q((...a) => fMentionRanges(...a, ms, len)),
     setMessages: (l, f) => q((...a) => fSetMessages(...a, l, f)),
+    followOwnMedia: (chat) => q((...a) => fFollowOwnMedia(...a, chat)),
     clearSwap: () => q(fClearSwap),
     withDay: (l) => q((...a) => fWithDay(...a, l)),
     firstUnreadIndex: (l, u) => q((...a) => fFirstUnread(...a, l, u)),
@@ -2065,6 +2073,7 @@ function makeEnv(opts) {
       return q(fSubmit);
     },
     submitDisplayed: () => q(fSubmit),
+    pickerFinished: (picker, text) => q((...a) => fPickerFinished(...a, picker, text)),
     contentYChanged: () => q(fContentY),
     modelChanged: () => q(fModelChanged),
     open: () => q(fOpened, true),
@@ -13096,6 +13105,10 @@ function swapView(e) {
     set: (list) => {
       shown = list;
       v.swaps++;
+      if (v.nextHeight !== undefined) {
+        e.msgList.contentHeight = v.nextHeight;
+        delete v.nextHeight;
+      }
       e.msgList.contentY = 0;
       e.modelChanged();
     },
@@ -13107,7 +13120,15 @@ function swapView(e) {
 }
 
 group("own sends follow the conversation after scrolling up");
-for (const kind of ["text", "sticker", "file", "clipboard image"]) {
+const pickerFor = (env, chat) => ({
+  originChat: chat,
+  originAccount: env.root.myMid,
+  originSession: env.root.sessionEpoch,
+  originSpendsDraft: false,
+  originDraftVersion: 0,
+  originDraftGeneration: 0,
+});
+for (const kind of ["text", "sticker", "file", "picker", "clipboard image"]) {
   e = makeEnv({ activeChat: { mid: "C1" } });
   e.root.messages = [{ id: "old", chat: "C1", from: "THEM", time: NOW48 }];
   swapView(e);
@@ -13115,52 +13136,126 @@ for (const kind of ["text", "sticker", "file", "clipboard image"]) {
   if (kind === "text") e.submit("A new message");
   else if (kind === "sticker") {
     e.sendSticker({ packageId: "1", stickerId: "4", url: "https://example.test/s.png" });
-  } else if (kind === "file") {
-    e.request("sendFile", { chat: "C1", path: "/tmp/a.txt" });
-  } else e.request("sendClipboardImage", { chat: "C1", stage: "image.png" });
-  ok(e.msgList.contentY === 1600 && e.sent.length === 1,
+  } else if (kind === "file") e.submit("/file /tmp/a.txt");
+  else if (kind === "picker") e.pickerFinished(pickerFor(e, "C1"), "/tmp/a.txt");
+  else {
+    e.pasteClipboard();
+    e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+  }
+  const frames = kind === "clipboard image" ? 2 : 1;
+  ok(e.msgList.contentY === 1600 && e.sent.length === frames,
     kind + " send reaches the bottom without requesting older messages");
 }
 e = makeEnv({ activeChat: { mid: "C2" } });
 swapView(e);
 e.msgList.contentY = 1480;
-e.request("sendFile", { chat: "C1", path: "/tmp/background.txt" });
+e.pickerFinished(pickerFor(e, "C1"), "/tmp/background.txt");
 ok(e.msgList.contentY === 1480,
   "a file sent to a different chat does not scroll the visible chat");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.pasteClipboard();
+e.root.activeChat = { mid: "C2" };
+e.msgList.contentY = 1480;
+e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+ok(e.msgList.contentY === 1480 && e.sent[1].chat === "C1",
+  "a clipboard probe finishing in another chat does not scroll that chat");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.msgList.contentY = 1600;
+e.pasteClipboard();
+e.msgList.contentY = 1480;
+e.pasteClipboard();
+e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+ok(e.msgList.contentY === 1480 && e.sent.length === 2 &&
+  e.sent[1].cmd === "sendClipboardImage",
+  "scrolling up and repeating Ctrl+V during the probe keeps the reader's position");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.msgList.contentY = 1480;
+e.pasteClipboard();
+e.msgList.contentY = 1479;
+e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+ok(e.msgList.contentY === 1600,
+  "a one-pixel layout shift during the clipboard probe still follows the send");
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.messages = [{ id: "old", chat: "C1", from: "THEM", time: NOW48 }];
+const probeView = swapView(e);
+e.msgList.contentY = 1600;
+e.pasteClipboard();
+const probeId = e.sent[0].id;
+probeView.nextHeight = 2080;
+e.applyEvents([{ kind: "message", chat: "C1", message: {
+  id: "incoming", chat: "C1", from: "THEM", time: NOW48 + 1, text: "new",
+} }]);
+e.onReply(JSON.stringify({ id: probeId, ok: true, data: { stage: "image.png" } }));
+probeView.nextHeight = 2160;
+e.applyEvents([{ kind: "message", chat: "C1", message: {
+  id: "uploaded", chat: "C1", from: "ME", time: NOW48 + 2, contentType: "IMAGE",
+} }]);
+ok(e.root.messages.some((message) => message.id === "uploaded") &&
+  e.msgList.contentY === 1760,
+  "a layout shift at the bottom still follows the later clipboard image");
 for (const twoPane of [false, true]) {
   e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: "list" });
   swapView(e);
   e.msgList.contentY = 1480;
-  e.request("sendFile", { chat: "C1", path: "/tmp/visible.txt" });
+  e.pickerFinished(pickerFor(e, "C1"), "/tmp/visible.txt");
   ok(e.msgList.contentY === (twoPane ? 1600 : 1480),
     "a file follows only when its chat is visible, twoPane=" + twoPane);
 }
 e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
 swapView(e);
 e.msgList.contentY = 1480;
-e.request("sendFile", { chat: "C1", path: "/tmp/offline.txt" });
+e.submit("/file /tmp/offline.txt");
 ok(e.msgList.contentY === 1480,
   "an offline file request does not scroll the chat");
 e = makeEnv({ activeChat: { mid: "C1" } });
 swapView(e);
 e.msgList.contentY = 1480;
 e.root.sockSend = () => false;
-e.request("sendFile", { chat: "C1", path: "/tmp/not-sent.txt" });
+e.submit("/file /tmp/not-sent.txt");
 ok(e.msgList.contentY === 1480,
   "a file rejected by the socket does not scroll the chat");
 e = makeEnv({ activeChat: { mid: "C1" } });
 e.root.draftStoreLoaded = false;
 swapView(e);
 e.msgList.contentY = 1480;
-e.request("sendFile", { chat: "C1", path: "/tmp/queued.txt", _spendsDraft: true });
+e.submit("/file /tmp/queued.txt");
 ok(e.msgList.contentY === 1600 && e.root.deferredDraftRequests.length === 1,
   "a queued file send follows while the draft is loading");
-const queuedFile = e.root.deferredDraftRequests[0];
 e.root.draftStoreLoaded = true;
 e.msgList.contentY = 1480;
-e.request(queuedFile.cmd, queuedFile.extra, queuedFile.msgId);
+e.flushDeferredDraftActions();
 ok(e.msgList.contentY === 1480,
   "sending the queued file does not undo a later scroll up");
+
+for (const { kind, scrollAway } of [
+  { kind: "file", scrollAway: false },
+  { kind: "file", scrollAway: true },
+  { kind: "clipboard", scrollAway: false },
+  { kind: "clipboard", scrollAway: true },
+]) {
+  e = makeEnv({ activeChat: { mid: "C1" } });
+  e.root.messages = [{ id: "old", chat: "C1", from: "THEM", time: NOW48 }];
+  const view = swapView(e);
+  e.msgList.contentY = 1480;
+  if (kind === "file") e.submit("/file /tmp/late.txt");
+  else {
+    e.pasteClipboard();
+    e.onReply(JSON.stringify({ id: e.sent[0].id, ok: true, data: { stage: "image.png" } }));
+  }
+  if (scrollAway) e.msgList.contentY = 1480;
+  view.nextHeight = 2080;
+  e.applyEvents([{ kind: "message", chat: "C1", message: {
+    id: "uploaded", chat: "C1", from: "ME", time: NOW48 + 1,
+    contentType: kind === "file" ? "FILE" : "IMAGE", fileName: "late.txt",
+  } }]);
+  ok(e.root.messages.some((message) => message.id === "uploaded") &&
+    e.msgList.contentY === (scrollAway ? 1480 : 1680),
+    "late " + kind + " event " +
+      (scrollAway ? "preserves reading position" : "follows the bottom"));
+}
 
 const pagedRows = (withPath) =>
   ["p1", "p2", "p3"].map((id) =>
