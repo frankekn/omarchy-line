@@ -35,6 +35,7 @@ const EXPIRED_ERROR = "檔案已過期（LINE 只保留 7 天）";
 const ENCODE_ERROR = "回覆無法編碼";
 const GONE_ERROR = "檔案已過期或已被刪除";
 const DOWNLOAD_ERROR = "下載失敗";
+const DECRYPT_ERROR = "無法解密這個檔案";
 
 function unsentOf(meta: Json): boolean {
   if (!meta) return false;
@@ -91,14 +92,13 @@ function mediaStateOf(
 // An OBS object that is gone answers 404/410; the fork patch turns that into
 // InternalError "ObsError" with `<what>: HTTP <status>`. Any other status is
 // an ObsError too (a 503 or 429 is LINE being busy), so the name alone proves
-// nothing and only the status counts. Upstream linejs
-// instead gets as far as decrypting an empty body and fails in the E2EE layer
-// with one of the other two texts (base/e2ee/mod.ts:1374 and :1385). All of
-// them mean the same thing to the user: the bytes are not there any more.
+// nothing and only the status counts. An empty body still decrypts to "too
+// short". A failed HMAC is not "gone": since the fork throws on non-2xx, the
+// bytes did arrive and do not match their key -- remembering that as expired
+// hid every app-sent video until the tag format was fixed (#20).
 const GONE_PATTERNS = [
   /HTTP (?:404|410)/,
   /encrypted data too short/,
-  /HMAC verification failed/,
 ];
 
 /** Whether the failure says the bytes are gone for good, not just today. */
@@ -109,7 +109,10 @@ function isGoneError(e: Error): boolean {
 
 /** The sentence the panel shows when a download that was tried came back. */
 function downloadErrorText(e: Error): string {
-  return isGoneError(e) ? GONE_ERROR : DOWNLOAD_ERROR;
+  if (isGoneError(e)) return GONE_ERROR;
+  return /HMAC verification failed/.test(e.message)
+    ? DECRYPT_ERROR
+    : DOWNLOAD_ERROR;
 }
 
 // A linejs error text quotes the message it choked on, mid included.

@@ -232,6 +232,7 @@ var WIRE_EN = {
   "找不到訊息": "Message not found",
   "檔案已過期（LINE 只保留 7 天）": "File expired (LINE keeps files for 7 days)",
   "檔案已過期或已被刪除": "File expired or deleted",
+  "無法解密這個檔案": "Could not decrypt this file",
   "沒有指定是哪一間聊天室": "No chat specified",
   "沒有指定要回覆哪一則訊息": "No message specified to reply to",
   "沒有這個聊天室的游標": "No cursor for this chat",

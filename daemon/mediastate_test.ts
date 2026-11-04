@@ -13,6 +13,7 @@ export {
   downloadErrorText,
   errorLine,
   expiresAtOf,
+  isGoneError,
   mediaStateFrom,
   mediaStateOf,
   redactMids,
@@ -38,6 +39,7 @@ interface MediaStateModule {
     now: number,
   ): MediaState;
   downloadErrorText(error: Error): string;
+  isGoneError(error: Error): boolean;
   redactMids(text: string): string;
   refusal(error: string, logText: string): Record<string, unknown>;
   errorLine(error: unknown): string;
@@ -171,21 +173,27 @@ Deno.test("every way an object can be gone reads as gone", async () => {
       override name = "ObsError";
     })("download: HTTP 404"),
     Object.assign(new Error("fetch failed: HTTP 410"), { name: "HttpError" }),
-    // Upstream linejs instead decrypts the empty body and fails there.
+    // An empty body still fails to decrypt as too short.
     Object.assign(
       new Error("encrypted data too short (0 bytes) to contain HMAC"),
-      { name: "E2EEMediaError" },
-    ),
-    Object.assign(
-      new Error(
-        "HMAC verification failed: ciphertext was tampered with or keyMaterial is wrong",
-      ),
       { name: "E2EEMediaError" },
     ),
   ];
   for (const e of gone) {
     assertEquals(m.downloadErrorText(e), "檔案已過期或已被刪除", e.message);
   }
+});
+
+Deno.test("a failed HMAC is a decrypt failure, not a gone file", async () => {
+  const m = await mod();
+  const hmac = Object.assign(
+    new Error(
+      "HMAC verification failed: ciphertext was tampered with or keyMaterial is wrong",
+    ),
+    { name: "E2EEMediaError" },
+  );
+  assertEquals(m.downloadErrorText(hmac), "無法解密這個檔案");
+  assertEquals(m.isGoneError(hmac), false);
 });
 
 Deno.test("anything else keeps the plain download failure", async () => {
