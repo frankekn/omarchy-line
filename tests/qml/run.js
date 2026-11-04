@@ -1337,6 +1337,9 @@ function makeEnv(opts) {
     contentY: 0,
     originY: 0,
     height: 100,
+    toBottom() {
+      this.contentY = Math.max(this.originY, this.originY + this.contentHeight - this.height);
+    },
     positionViewAtIndex(i) {
       positioned.push(i);
     },
@@ -13102,6 +13105,63 @@ function swapView(e) {
   e.msgList.height = 400;
   return v;
 }
+
+group("own sends follow the conversation after scrolling up");
+for (const kind of ["text", "sticker", "file", "clipboard image"]) {
+  e = makeEnv({ activeChat: { mid: "C1" } });
+  e.root.messages = [{ id: "old", chat: "C1", from: "THEM", time: NOW48 }];
+  swapView(e);
+  e.msgList.contentY = 1480; // 120 px above the bottom, away from pagination.
+  if (kind === "text") e.submit("A new message");
+  else if (kind === "sticker") {
+    e.sendSticker({ packageId: "1", stickerId: "4", url: "https://example.test/s.png" });
+  } else if (kind === "file") {
+    e.request("sendFile", { chat: "C1", path: "/tmp/a.txt" });
+  } else e.request("sendClipboardImage", { chat: "C1", stage: "image.png" });
+  ok(e.msgList.contentY === 1600 && e.sent.length === 1,
+    kind + " send reaches the bottom without requesting older messages");
+}
+e = makeEnv({ activeChat: { mid: "C2" } });
+swapView(e);
+e.msgList.contentY = 1480;
+e.request("sendFile", { chat: "C1", path: "/tmp/background.txt" });
+ok(e.msgList.contentY === 1480,
+  "a file sent to a different chat does not scroll the visible chat");
+for (const twoPane of [false, true]) {
+  e = makeEnv({ activeChat: { mid: "C1" }, twoPane, view: "list" });
+  swapView(e);
+  e.msgList.contentY = 1480;
+  e.request("sendFile", { chat: "C1", path: "/tmp/visible.txt" });
+  ok(e.msgList.contentY === (twoPane ? 1600 : 1480),
+    "a file follows only when its chat is visible, twoPane=" + twoPane);
+}
+e = makeEnv({ activeChat: { mid: "C1" }, connected: false });
+swapView(e);
+e.msgList.contentY = 1480;
+e.request("sendFile", { chat: "C1", path: "/tmp/offline.txt" });
+ok(e.msgList.contentY === 1480,
+  "an offline file request does not scroll the chat");
+e = makeEnv({ activeChat: { mid: "C1" } });
+swapView(e);
+e.msgList.contentY = 1480;
+e.root.sockSend = () => false;
+e.request("sendFile", { chat: "C1", path: "/tmp/not-sent.txt" });
+ok(e.msgList.contentY === 1480,
+  "a file rejected by the socket does not scroll the chat");
+e = makeEnv({ activeChat: { mid: "C1" } });
+e.root.draftStoreLoaded = false;
+swapView(e);
+e.msgList.contentY = 1480;
+e.request("sendFile", { chat: "C1", path: "/tmp/queued.txt", _spendsDraft: true });
+ok(e.msgList.contentY === 1600 && e.root.deferredDraftRequests.length === 1,
+  "a queued file send follows while the draft is loading");
+const queuedFile = e.root.deferredDraftRequests[0];
+e.root.draftStoreLoaded = true;
+e.msgList.contentY = 1480;
+e.request(queuedFile.cmd, queuedFile.extra, queuedFile.msgId);
+ok(e.msgList.contentY === 1480,
+  "sending the queued file does not undo a later scroll up");
+
 const pagedRows = (withPath) =>
   ["p1", "p2", "p3"].map((id) =>
     Object.assign(
