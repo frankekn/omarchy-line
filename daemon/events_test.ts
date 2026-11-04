@@ -24,9 +24,10 @@ const RING_PRELUDE = `
 interface PluginEvent {
   seq: number;
   at: number;
-  kind: "message" | "read" | "reaction" | "unsend";
+  kind: "message" | "read" | "reaction" | "unsend" | "history";
   chat: string;
   message?: Record<string, unknown>;
+  messages?: Record<string, unknown>[];
   by?: string;
   upTo?: string;
   messageId?: string;
@@ -50,6 +51,7 @@ interface TestEvent {
   kind: string;
   chat: string;
   message?: Record<string, unknown>;
+  messages?: Record<string, unknown>[];
   messageId?: string;
   by?: string;
   upTo?: string;
@@ -161,4 +163,27 @@ Deno.test("the sink sees each event with its seq before the write is asked", asy
   assertEquals(seen[0].seq, 1);
   assertEquals(seen[1].seq, 2);
   assertEquals(seen[1].kind, "read");
+});
+
+Deno.test("history deltas stay separate entries on their own seqs, so replay keeps later events", async () => {
+  const m = await loadBlock<
+    RingModule & { setEventSink(sink: ((e: TestEvent) => void) | null): void }
+  >("eventring", RING_PRELUDE);
+  m.pushEvent({
+    kind: "history",
+    chat: "A",
+    messages: [{ id: "X", text: "x" }],
+  });
+  m.pushEvent({ kind: "unsend", chat: "A", messageId: "X" });
+  m.pushEvent({
+    kind: "history",
+    chat: "A",
+    messages: [{ id: "Y", text: "y" }],
+  });
+  // Replayed in seq order, the unsend still lands after X's history row and
+  // nothing later carries X again to undo it.
+  assertEquals(
+    m.events.map((e) => [e.kind, e.messageId ?? e.messages?.map((r) => r.id)]),
+    [["history", ["X"]], ["unsend", "X"], ["history", ["Y"]]],
+  );
 });

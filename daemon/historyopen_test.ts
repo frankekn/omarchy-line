@@ -52,7 +52,9 @@ interface Module {
   setEdit(id: string, text: string): void;
 }
 
+const PROTOCOL = new URL("./modules/protocol.ts", import.meta.url).href;
 const PRELUDE = `
+import { historyDelta } from "${PROTOCOL}";
 type Json = Record<string, unknown>;
 interface PluginReadBy { count: number; all: boolean; }
 interface PluginMessage { id: string; text: string; readBy?: PluginReadBy; unsent?: boolean; edited?: boolean; reactions?: unknown[] }

@@ -65,14 +65,10 @@ function setEventSink(sink: typeof eventSink): void {
 /** Appends one event, drops what falls off the ring, and publishes it. */
 function pushEvent(e: Omit<PluginEvent, "seq" | "at">): PluginEvent {
   const full: PluginEvent = { seq: ++eventSeq, at: Date.now(), ...e };
-  // A history event carries a whole page; only the newest one per chat has
-  // any meaning, so its predecessors leave the ring instead of piling up
-  // sixty-message payloads in it.
-  if (full.kind === "history") {
-    events = events.filter((ev) =>
-      !(ev.kind === "history" && ev.chat === full.chat)
-    );
-  }
+  // A history event carries only the rows that changed, so each one stays
+  // in the ring on its own seq like any other event. Folding them into one
+  // entry put old rows on a new seq -- replay would undo a later unsend or
+  // read -- and let a busy chat's entry grow without bound.
   events.push(full);
   // Slice rather than shift-in-a-loop: the array is replaced wholesale on
   // every write anyway, and this keeps the trim O(1) in statements.
