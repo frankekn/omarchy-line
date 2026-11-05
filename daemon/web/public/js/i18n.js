@@ -147,6 +147,10 @@ const strings = {
     "新增了 {count} 個項目到相簿「{album}」",
     "Added {count} items to the album “{album}”",
   ],
+  postAlbumAddOne: [
+    "新增了 1 個項目到相簿「{album}」",
+    "Added 1 item to the album “{album}”",
+  ],
   postAlbum: ["更新了相簿「{album}」", "Updated the album “{album}”"],
   postNote: ["記事本：{text}", "Note: {text}"],
   postNoteBare: ["發佈了記事本貼文", "Posted a note"],

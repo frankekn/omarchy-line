@@ -46,6 +46,14 @@ export async function chatEvents(h) {
             },
             {
               ...event,
+              id: "post-album-one",
+              contentType: "POSTNOTIFICATION",
+              chatEvent: undefined,
+              text: "新增了 1 個項目到相簿「家」",
+              postEvent: { kind: "album", album: "家", count: 1 },
+            },
+            {
+              ...event,
               id: "post-note",
               contentType: "POSTNOTIFICATION",
               chatEvent: undefined,
@@ -84,6 +92,13 @@ export async function chatEvents(h) {
       english
         ? "Added 12 items to the album “旅行$&”"
         : "新增了 12 個項目到相簿「旅行$&」",
+    );
+    assert.equal(
+      await page.locator('[data-message-id="post-album-one"] .message-text')
+        .innerText(),
+      english
+        ? "Added 1 item to the album “家”"
+        : "新增了 1 個項目到相簿「家」",
     );
     assert.equal(
       await page.locator('[data-message-id="post-note"] .message-text')

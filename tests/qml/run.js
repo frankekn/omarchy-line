@@ -17447,6 +17447,8 @@ group("post notifications localize the daemon's structured event");
     "English album line does not leak the Chinese fallback");
   ok(EventLog.systemEventText({ ...album, postEvent: { kind: "album", album: "旅行", count: 0 } }, Ten) ===
     "Updated the album “旅行”", "an album with no count says it was updated");
+  ok(EventLog.systemEventText({ ...album, postEvent: { kind: "album", album: "旅行", count: 1 } }, Ten) ===
+    "Added 1 item to the album “旅行”", "one item reads in the singular");
   const note = { contentType: "POSTNOTIFICATION", text: "記事本：明天集合",
     postEvent: { kind: "note", text: "明天集合" } };
   ok(EventLog.systemEventText(note, Ten) === "Note: 明天集合", "English note line");

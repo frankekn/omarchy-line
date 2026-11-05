@@ -177,6 +177,7 @@ var STRINGS = {
   "read.n":      { zh: "已讀 %1", en: "Read %1" },
   "sys.post":    { zh: "貼文通知", en: "Post notification" },
   "sys.postAlbumAdd": { zh: "新增了 %1 個項目到相簿「%2」", en: "Added %1 items to the album “%2”" },
+  "sys.postAlbumAddOne": { zh: "新增了 1 個項目到相簿「%1」", en: "Added 1 item to the album “%1”" },
   "sys.postAlbum": { zh: "更新了相簿「%1」", en: "Updated the album “%1”" },
   "sys.postNote": { zh: "記事本：%1", en: "Note: %1" },
   "sys.postNoteBare": { zh: "發佈了記事本貼文", en: "Posted a note" },

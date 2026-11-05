@@ -240,7 +240,8 @@ function systemEventText(m, tr) {
   var p = m.contentType === "POSTNOTIFICATION" && !m.unsent && !m.decryptFailed
     ? m.postEvent : null
   if (p && p.kind === "album")
-    return p.count > 0 ? tr("sys.postAlbumAdd", p.count, p.album) : tr("sys.postAlbum", p.album)
+    return p.count === 1 ? tr("sys.postAlbumAddOne", p.album)
+      : p.count > 0 ? tr("sys.postAlbumAdd", p.count, p.album) : tr("sys.postAlbum", p.album)
   if (p && p.kind === "note")
     return p.text ? tr("sys.postNote", p.text) : tr("sys.postNoteBare")
   var label = tr(m.contentType === "POSTNOTIFICATION" ? "sys.post" : "sys.event")

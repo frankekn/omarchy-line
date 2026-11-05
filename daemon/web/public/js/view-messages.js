@@ -174,6 +174,9 @@ export function createMessagesView(ctx) {
       : null;
     if (post?.kind === "album") {
       // Function replacers: a `$` in an album name is not a pattern.
+      if (post.count === 1) {
+        return t("postAlbumAddOne").replace("{album}", () => post.album);
+      }
       return post.count > 0
         ? t("postAlbumAdd").replace("{count}", () => String(post.count))
           .replace("{album}", () => post.album)
