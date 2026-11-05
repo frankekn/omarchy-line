@@ -60,7 +60,11 @@ const OID = "cj0tNDYzNGM3c25hNmc0NCZzPWpwOCZ0PWQmdT0xbWg2OTVvcXM0MmcxJmk9MjE";
 function post(medias: unknown, extra: Record<string, unknown> = {}) {
   return {
     contentType: "POSTNOTIFICATION",
-    contentMetadata: { previewMedias: JSON.stringify(medias), ...extra },
+    contentMetadata: {
+      serviceType: "GB",
+      previewMedias: JSON.stringify(medias),
+      ...extra,
+    },
   };
 }
 
@@ -81,6 +85,19 @@ Deno.test("a note post's first picture is previewable; an album's is not", async
     false,
   );
   assertEquals(m.previewableMessage(post([])), false);
+  // A picture on a post the clients do not draw is not fetched.
+  const note = [{
+    svc: "privnote",
+    sid: "post",
+    mediaOid: OID,
+    mediaType: "I",
+  }];
+  assertEquals(m.previewableMessage(post(note, { serviceType: "NT" })), true);
+  assertEquals(m.previewableMessage(post(note, { serviceType: "AB" })), false);
+  assertEquals(
+    m.previewableMessage(post(note, { serviceType: undefined })),
+    false,
+  );
   assertEquals(
     m.previewableMessage({ contentType: "POSTNOTIFICATION" }),
     false,

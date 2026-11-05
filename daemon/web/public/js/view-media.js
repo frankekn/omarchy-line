@@ -203,7 +203,10 @@ export function createMediaView(ctx) {
             });
           }
         }
-      } else if (row.contentType === "POSTNOTIFICATION" && row.previewable) {
+      } else if (
+        row.contentType === "POSTNOTIFICATION" && row.previewable &&
+        row.postEvent
+      ) {
         const path = model.previews.get(String(row.id)) || row.mediaPath;
         if (path) {
           list.push({

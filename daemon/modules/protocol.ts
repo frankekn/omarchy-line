@@ -80,7 +80,11 @@ function previewableMessage(raw: unknown): boolean {
         typeof message.contentMetadata === "object"
       ? message.contentMetadata as Record<string, unknown>
       : {};
-    return postPreviewSource(meta) !== null;
+    // Only the note posts the clients draw (messages.ts postNotificationEvent);
+    // fetching any other one's picture would be bytes nobody shows.
+    const service = String(meta.serviceType ?? "");
+    return (service === "GB" || service === "NT") &&
+      postPreviewSource(meta) !== null;
   }
   if (kind !== "VIDEO") return false;
   const meta = message.contentMetadata &&

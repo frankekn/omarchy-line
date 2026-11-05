@@ -340,11 +340,6 @@ function collectFlexImages(node: unknown, acc: string[] = []): string[] {
 }
 
 /**
- * The error travels with the miss rather than being swallowed: `download`
- * has to tell an expired file apart from a broken link, and only the thing
- * linejs threw knows which it was.
- */
-/**
  * A post notification's preview: the 480-wide rendition of its first note
  * picture, straight from OBS with the session's headers. getData has no
  * path for it -- the picture is not the message's own object.
@@ -363,6 +358,11 @@ async function postPreviewBlob(
   });
 }
 
+/**
+ * The error travels with the miss rather than being swallowed: `download`
+ * has to tell an expired file apart from a broken link, and only the thing
+ * linejs threw knows which it was.
+ */
 // enil:mediacache-begin
 function downloadMedia(
   tm: TalkMsg,

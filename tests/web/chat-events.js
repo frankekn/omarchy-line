@@ -84,6 +84,15 @@ export async function chatEvents(h) {
             },
             {
               ...event,
+              id: "post-orphan",
+              contentType: "POSTNOTIFICATION",
+              chatEvent: undefined,
+              text: "",
+              previewable: true,
+              mediaPath: `${h.stateDir}/media/stub-shot2.png`,
+            },
+            {
+              ...event,
               id: "post-evil",
               contentType: "POSTNOTIFICATION",
               chatEvent: undefined,
@@ -172,6 +181,8 @@ export async function chatEvents(h) {
         "stub-shot1.png",
       ),
     );
+    // A post the chat does not draw a picture for is not in the lightbox.
+    assert.match(await page.locator("#lightbox-name").innerText(), /1 \/ 1$/);
     await page.locator("#lightbox-close").click();
     // A previewable note post gets a picture slot; an album post does not.
     assert.equal(
