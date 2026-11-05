@@ -31,6 +31,11 @@ interface PluginChat {
   muted?: true;
 }
 
+/** What a post notification is about: an album update or a note post. */
+type PluginPostEvent =
+  | { kind: "album"; album: string; count: number }
+  | { kind: "note"; text: string };
+
 interface PluginMessage {
   id: string;
   chat: string;
@@ -53,6 +58,8 @@ interface PluginMessage {
   fileName?: string;
   fileSize?: number;
   mentions?: PluginMention[];
+  /** A decoded POSTNOTIFICATION; `text` holds the Chinese fallback. */
+  postEvent?: PluginPostEvent;
   chatEvent?: {
     kind: "announcement";
     /** Empty when the member name could not be resolved. */
@@ -163,6 +170,7 @@ export type {
   PluginMember,
   PluginMention,
   PluginMessage,
+  PluginPostEvent,
   PluginReaction,
   PluginReadBy,
   PluginReplyTo,

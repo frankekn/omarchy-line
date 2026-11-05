@@ -36,6 +36,30 @@ export async function chatEvents(h) {
               id: "event-member",
               chatEvent: { kind: "announcement", actor: "" },
             },
+            {
+              ...event,
+              id: "post-album",
+              contentType: "POSTNOTIFICATION",
+              chatEvent: undefined,
+              text: "新增了 12 個項目到相簿「旅行$&」",
+              postEvent: { kind: "album", album: "旅行$&", count: 12 },
+            },
+            {
+              ...event,
+              id: "post-album-one",
+              contentType: "POSTNOTIFICATION",
+              chatEvent: undefined,
+              text: "新增了 1 個項目到相簿「家」",
+              postEvent: { kind: "album", album: "家", count: 1 },
+            },
+            {
+              ...event,
+              id: "post-note",
+              contentType: "POSTNOTIFICATION",
+              chatEvent: undefined,
+              text: "發佈了記事本貼文",
+              postEvent: { kind: "note", text: "" },
+            },
             { ...event, id: "event-unsent", unsent: true },
             { ...event, id: "event-encrypted", decryptFailed: true },
           ];
@@ -61,6 +85,25 @@ export async function chatEvents(h) {
     assert.equal(
       await member.locator(".message-text").innerText(),
       english ? "A member set an announcement" : "成員設定了公告",
+    );
+    assert.equal(
+      await page.locator('[data-message-id="post-album"] .message-text')
+        .innerText(),
+      english
+        ? "Added 12 items to the album “旅行$&”"
+        : "新增了 12 個項目到相簿「旅行$&」",
+    );
+    assert.equal(
+      await page.locator('[data-message-id="post-album-one"] .message-text')
+        .innerText(),
+      english
+        ? "Added 1 item to the album “家”"
+        : "新增了 1 個項目到相簿「家」",
+    );
+    assert.equal(
+      await page.locator('[data-message-id="post-note"] .message-text')
+        .innerText(),
+      english ? "Posted a note" : "發佈了記事本貼文",
     );
     for (const id of ["event-unsent", "event-encrypted"]) {
       const masked = page.locator(`[data-message-id="${id}"]`);

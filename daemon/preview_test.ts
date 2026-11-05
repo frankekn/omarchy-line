@@ -13,13 +13,16 @@ interface FileClient {
 
 const PRELUDE = `
 type Json = Record<string, unknown>;
-export { fileNameOf, PREVIEW_LABEL, isSystemEventName, previewText, pushedPreviewText };
+type PluginPostEvent = { kind: "album"; album: string; count: number } | { kind: "note"; text: string };
+export { applyPostNotification, fileNameOf, PREVIEW_LABEL, isSystemEventName, postNotificationText, previewText, pushedPreviewText };
 `;
 
 interface PreviewModule {
   PREVIEW_LABEL: Record<string, string>;
   fileNameOf(meta: Json, decrypted?: Json | null): string;
   isSystemEventName(text: string, contentType: string): boolean;
+  postNotificationText(meta: Json): string;
+  applyPostNotification(out: Json, meta: Json): void;
   previewText(text: string, raw: Json, decrypted?: Json | null): string;
   pushedPreviewText(
     message: {
@@ -375,4 +378,113 @@ Deno.test("a long preview is cut to 200 code points", async () => {
     { contentType: "FLEX" },
   );
   assertEquals(alt, "b".repeat(200) + "…");
+});
+
+Deno.test("a post notification says what happened, from LINE's own metadata", async () => {
+  const m = await mod();
+  // Shapes seen on the production store (values replaced).
+  assertEquals(
+    m.postNotificationText({
+      serviceType: "AB",
+      albumName: "畢業旅行",
+      mediaCount: "12",
+    }),
+    "新增了 12 個項目到相簿「畢業旅行」",
+  );
+  assertEquals(
+    m.postNotificationText({
+      serviceType: "AB",
+      albumName: "畢業旅行",
+      mediaCount: "0",
+    }),
+    "更新了相簿「畢業旅行」",
+  );
+  assertEquals(
+    m.postNotificationText({ serviceType: "GB", text: "明天\n九點集合" }),
+    "記事本：明天 九點集合",
+  );
+  assertEquals(
+    m.postNotificationText({ serviceType: "GB" }),
+    "發佈了記事本貼文",
+  );
+  assertEquals(
+    m.postNotificationText({ serviceType: "NT", text: "  " }),
+    "發佈了記事本貼文",
+  );
+  assertEquals(m.postNotificationText({ serviceType: "AB" }), "");
+  assertEquals(m.postNotificationText({}), "");
+  assertEquals(
+    [...m.postNotificationText({ serviceType: "GB", text: "長".repeat(300) })]
+      .length,
+    "記事本：".length + 200 + 1,
+  );
+});
+
+Deno.test("the chat list previews a post notification the same way, from push or refresh", async () => {
+  const m = await mod();
+  const raw = {
+    contentType: "POSTNOTIFICATION",
+    contentMetadata: { serviceType: "AB", albumName: "家庭", mediaCount: "3" },
+  };
+  const said = "新增了 3 個項目到相簿「家庭」";
+  assertEquals(m.previewText("POSTNOTIFICATION", raw), said);
+  assertEquals(m.pushedPreviewText({ unsent: false, text: said }, raw), said);
+  // Nothing to say: the generic label, both ways.
+  const bare = { contentType: "POSTNOTIFICATION", contentMetadata: {} };
+  assertEquals(m.previewText("POSTNOTIFICATION", bare), "[貼文通知]");
+  assertEquals(
+    m.pushedPreviewText({ unsent: false, text: "" }, bare),
+    "[貼文通知]",
+  );
+});
+
+Deno.test("a sender cannot flip the post line with bidi override characters", async () => {
+  const m = await mod();
+  assertEquals(
+    m.postNotificationText({
+      serviceType: "AB",
+      albumName: "a\u202Eb\u2066c",
+      mediaCount: "1",
+    }),
+    "新增了 1 個項目到相簿「a b c」",
+  );
+  // An emoji ZWJ sequence is not a control character and stays whole.
+  assertEquals(
+    m.postNotificationText({ serviceType: "GB", text: "👨\u200D👩" }),
+    "記事本：👨\u200D👩",
+  );
+});
+
+Deno.test("only a bare post notification is decoded onto the message", async () => {
+  const m = await mod();
+  const meta = { serviceType: "AB", albumName: "家庭", mediaCount: "2" };
+  const bare: Json = {
+    contentType: "POSTNOTIFICATION",
+    text: "POSTNOTIFICATION",
+  };
+  m.applyPostNotification(bare, meta);
+  assertEquals(bare.text, "新增了 2 個項目到相簿「家庭」");
+  assertEquals(bare.postEvent, { kind: "album", album: "家庭", count: 2 });
+  for (
+    const kept of [
+      { contentType: "POSTNOTIFICATION", text: "已收回訊息", unsent: true },
+      { contentType: "POSTNOTIFICATION", text: "", decryptFailed: true },
+      { contentType: "POSTNOTIFICATION", text: "LINE 給的真人話" },
+      { contentType: "CHATEVENT", text: "CHATEVENT" },
+    ] as Json[]
+  ) {
+    const before = JSON.stringify(kept);
+    m.applyPostNotification(kept, meta);
+    assertEquals(JSON.stringify(kept), before);
+  }
+  // Nothing usable: the message keeps the event name and the clients' label.
+  const empty: Json = {
+    contentType: "POSTNOTIFICATION",
+    text: "POSTNOTIFICATION",
+  };
+  m.applyPostNotification(empty, {});
+  assertEquals(empty, {
+    contentType: "POSTNOTIFICATION",
+    text: "POSTNOTIFICATION",
+  });
 });

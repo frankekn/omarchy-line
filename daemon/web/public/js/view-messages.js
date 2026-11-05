@@ -169,6 +169,24 @@ export function createMessagesView(ctx) {
         () => message.chatEvent.actor || t("eventMember"),
       );
     }
+    const post = message.contentType === "POSTNOTIFICATION"
+      ? message.postEvent
+      : null;
+    if (post?.kind === "album") {
+      // Function replacers: a `$` in an album name is not a pattern.
+      if (post.count === 1) {
+        return t("postAlbumAddOne").replace("{album}", () => post.album);
+      }
+      return post.count > 0
+        ? t("postAlbumAdd").replace("{count}", () => String(post.count))
+          .replace("{album}", () => post.album)
+        : t("postAlbum").replace("{album}", () => post.album);
+    }
+    if (post?.kind === "note") {
+      return post.text
+        ? t("postNote").replace("{text}", () => post.text)
+        : t("postNoteBare");
+    }
     const body = message.contentType === "FLEX" && message.altText
       ? String(message.altText)
       : String(message.text || "");
