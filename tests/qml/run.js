@@ -17436,6 +17436,28 @@ group("announcement notices localize structured events in both languages");
     "A member set an announcement", "unknown actors use a localized fallback");
 }
 
+group("post notifications localize the daemon's structured event");
+{
+  const Ten = (key, ...args) => Strings.fmt(key, "en", ...args);
+  const album = { contentType: "POSTNOTIFICATION", text: "新增了 12 個項目到相簿「旅行」",
+    postEvent: { kind: "album", album: "旅行", count: 12 } };
+  ok(EventLog.systemEventText(album, Tzh) === "新增了 12 個項目到相簿「旅行」",
+    "Chinese album line");
+  ok(EventLog.systemEventText(album, Ten) === "Added 12 items to the album “旅行”",
+    "English album line does not leak the Chinese fallback");
+  ok(EventLog.systemEventText({ ...album, postEvent: { kind: "album", album: "旅行", count: 0 } }, Ten) ===
+    "Updated the album “旅行”", "an album with no count says it was updated");
+  const note = { contentType: "POSTNOTIFICATION", text: "記事本：明天集合",
+    postEvent: { kind: "note", text: "明天集合" } };
+  ok(EventLog.systemEventText(note, Ten) === "Note: 明天集合", "English note line");
+  ok(EventLog.systemEventText({ ...note, postEvent: { kind: "note", text: "" } }, Ten) ===
+    "Posted a note", "a note without text");
+  ok(EventLog.systemEventText({ contentType: "POSTNOTIFICATION", text: "POSTNOTIFICATION" }, Ten) ===
+    "Post notification", "no event keeps the label");
+  ok(EventLog.systemEventText({ ...album, unsent: true, text: "已收回訊息" }, Tzh) === "已收回訊息",
+    "a recalled post is not shown as the album line");
+}
+
 group("(y2) normalizeLang maps the setting enum to zh/en");
 {
   ok(

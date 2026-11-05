@@ -236,6 +236,13 @@ function systemEventText(m, tr) {
   if (m.contentType === "CHATEVENT" && !m.unsent && !m.decryptFailed &&
       m.chatEvent && m.chatEvent.kind === "announcement")
     return tr("sys.announcement", m.chatEvent.actor || tr("sys.member"))
+  // daemon 解出的貼文通知：結構化欄位在這裡翻譯，text 只是中文 fallback。
+  var p = m.contentType === "POSTNOTIFICATION" && !m.unsent && !m.decryptFailed
+    ? m.postEvent : null
+  if (p && p.kind === "album")
+    return p.count > 0 ? tr("sys.postAlbumAdd", p.count, p.album) : tr("sys.postAlbum", p.album)
+  if (p && p.kind === "note")
+    return p.text ? tr("sys.postNote", p.text) : tr("sys.postNoteBare")
   var label = tr(m.contentType === "POSTNOTIFICATION" ? "sys.post" : "sys.event")
   // LINE 常把事件名本身塞進 text（text === "POSTNOTIFICATION"），
   // 照印就變成聊天視窗裡的英文代碼，所以只有真的人話才用 text。

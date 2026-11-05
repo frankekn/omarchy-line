@@ -56,6 +56,7 @@ import type {
   PluginLocation,
   PluginMention,
   PluginMessage,
+  PluginPostEvent,
   TalkMsg,
 } from "./types.ts";
 
@@ -129,12 +130,7 @@ async function toPluginMessage(
     out.decryptFailed = true;
   }
 
-  if (
-    contentType === "POSTNOTIFICATION" && !out.unsent && !out.decryptFailed &&
-    isSystemEventName(out.text, contentType)
-  ) {
-    out.text = postNotificationText(meta);
-  }
+  applyPostNotification(out, meta);
   if (
     contentType === "CHATEVENT" && !out.unsent && !out.decryptFailed &&
     (!out.text || out.text.toUpperCase() === "CHATEVENT") &&
@@ -587,35 +583,77 @@ function isSystemEventName(text: string, contentType: string): boolean {
   return !text || text.toUpperCase() === contentType;
 }
 
-/** One line of sender-supplied text: no control characters, bounded. */
+/** One line of sender-supplied text: no control or bidi override characters. */
 function postField(value: unknown, max: number): string {
   if (typeof value !== "string") return "";
-  const line = value.replace(/\p{Cc}+/gu, " ").replace(/\s+/g, " ").trim();
+  const line = value.replace(/[\p{Cc}\u202A-\u202E\u2066-\u2069]+/gu, " ")
+    .replace(/\s+/g, " ").trim();
   const chars = [...line];
   return chars.length > max ? chars.slice(0, max).join("") + "…" : line;
 }
 
 /**
- * What a POSTNOTIFICATION says, from the metadata LINE sends with it: an
- * album update (serviceType AB: albumName, mediaCount) or a note / group-home
- * post (GB, NT: sometimes the opening `text`). "" when there is nothing to
- * say beyond the generic label.
+ * What a POSTNOTIFICATION is about, from the metadata LINE sends with it: an
+ * album update (serviceType AB: albumName, mediaCount -- photos and videos
+ * alike) or a note / group-home post (GB, NT: sometimes the opening `text`).
+ * null when there is nothing to say beyond the generic label.
  */
-function postNotificationText(meta: Json): string {
+function postNotificationEvent(meta: Json): PluginPostEvent | null {
   const service = String(meta.serviceType ?? "");
   if (service === "AB") {
     const album = postField(meta.albumName, 60);
-    if (!album) return "";
+    if (!album) return null;
     const count = Number(meta.mediaCount);
-    return Number.isSafeInteger(count) && count > 0
-      ? `新增了 ${count} 張照片到相簿「${album}」`
-      : `更新了相簿「${album}」`;
+    return {
+      kind: "album",
+      album,
+      count: Number.isSafeInteger(count) && count > 0 ? count : 0,
+    };
   }
   if (service === "GB" || service === "NT") {
-    const text = postField(meta.text, 200);
-    return text ? `記事本：${text}` : "發佈了記事本貼文";
+    return { kind: "note", text: postField(meta.text, 200) };
   }
-  return "";
+  return null;
+}
+
+/** The Chinese fallback line for a post event; clients translate the event. */
+function postEventText(event: PluginPostEvent): string {
+  if (event.kind === "album") {
+    return event.count > 0
+      ? `新增了 ${event.count} 個項目到相簿「${event.album}」`
+      : `更新了相簿「${event.album}」`;
+  }
+  return event.text ? `記事本：${event.text}` : "發佈了記事本貼文";
+}
+
+function postNotificationText(meta: Json): string {
+  const event = postNotificationEvent(meta);
+  return event ? postEventText(event) : "";
+}
+
+/**
+ * Decodes a POSTNOTIFICATION onto a converted message, but only one that
+ * still reads as the bare event name: a recall, a failed decrypt or real
+ * prose from LINE is left as it is.
+ */
+function applyPostNotification(
+  out: {
+    contentType: string;
+    text: string;
+    unsent?: boolean;
+    decryptFailed?: boolean;
+    postEvent?: PluginPostEvent;
+  },
+  meta: Json,
+): void {
+  if (
+    out.contentType !== "POSTNOTIFICATION" || out.unsent || out.decryptFailed
+  ) return;
+  if (!isSystemEventName(out.text, out.contentType)) return;
+  const event = postNotificationEvent(meta);
+  if (!event) return;
+  out.postEvent = event;
+  out.text = postEventText(event);
 }
 
 /**

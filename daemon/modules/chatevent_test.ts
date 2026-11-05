@@ -59,6 +59,7 @@ async function resolveName(mid, owner, generation) {
 const goneMedia = new Set();
 function rememberRaw() {}
 function messageRequestId() {}
+function applyPostNotification() {}
 function parseMentionMeta() { return []; }
 function fileNameOf() { return ""; }
 async function e2eeFilePayload() { return null; }

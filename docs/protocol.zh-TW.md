@@ -525,6 +525,7 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 | `flexImages` | string[] | 同上，只收絕對 `https://` 圖片 |
 | `stickerUrl` | string | `STICKER` 且 metadata 有 `STKID` |
 | `fileName` | string | metadata 有 `FILE_NAME` |
+| `postEvent` | object | 解得出來的 `POSTNOTIFICATION`：`{kind: "album", album, count}`（`count` 為 0 表示 LINE 沒給數量，只是更新了相簿）或 `{kind: "note", text}`（`text` 可能是空字串）。從 `contentMetadata` 的 `serviceType` AB／GB／NT 解出；`text` 是中文 fallback |
 | `fileSize` | number | metadata 有 `FILE_SIZE` |
 | `audioMs` | number | `AUDIO` 且 metadata 有正數的 `AUDLEN` 或 `DURATION`；ms |
 | `location` | object | `LOCATION` 且位置有效，含 E2EE；`{ title, address, latitude, longitude }`，沒有的欄位是空字串 |
