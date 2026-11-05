@@ -70,6 +70,14 @@ export async function lightboxDismiss(h) {
     true,
     "zoomed in, the dark space is not a dismiss",
   );
+  const margin = await page.locator("#lightbox").boundingBox();
+  await page.mouse.click(margin.x + 5, margin.y + margin.height - 5);
+  assert.equal(
+    await isOpen(page),
+    false,
+    "zoomed in, the margin still closes it",
+  );
+  await open(page);
   await page.keyboard.press("Escape");
   assert.equal(await isOpen(page), false, "Escape still closes it");
   await desktop.close();
@@ -82,6 +90,17 @@ export async function lightboxDismiss(h) {
   });
   const mobile = await phone.newPage();
   await h.signIn(mobile);
+  await open(mobile);
+  const phoneStage = await mobile.locator("#lightbox-stage").boundingBox();
+  await mobile.touchscreen.tap(
+    phoneStage.x + 10,
+    phoneStage.y + phoneStage.height - 10,
+  );
+  assert.equal(
+    await isOpen(mobile),
+    false,
+    "a tap on the dark space closes it",
+  );
   await open(mobile);
   await swipe(mobile, 30);
   assert.equal(await isOpen(mobile), true, "a short drag is not a dismiss");

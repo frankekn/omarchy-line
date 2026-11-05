@@ -354,7 +354,6 @@ export function createMediaView(ctx) {
     setScale(scale > 1 ? 1 : 2, point.x, point.y);
   });
   $("lightbox-stage").addEventListener("pointerdown", (event) => {
-    if (event.pointerType === "mouse") gestureMoved = false;
     if (event.pointerType !== "mouse" || event.button !== 0 || scale <= 1) {
       return;
     }
@@ -366,7 +365,6 @@ export function createMediaView(ctx) {
       event.pointerType !== "mouse" || !mouseDrag ||
       event.pointerId !== mouseDrag.id
     ) return;
-    gestureMoved = true;
     applyPan(
       panX + event.clientX - mouseDrag.x,
       panY + event.clientY - mouseDrag.y,
@@ -469,12 +467,14 @@ export function createMediaView(ctx) {
   $("lightbox-stage").addEventListener("touchcancel", endTouch);
   $("lightbox-close").addEventListener("click", () => $("lightbox").close());
   $("lightbox").addEventListener("click", (event) => {
-    // At normal size the dark space around the picture closes the viewer,
-    // like the margin; the picture itself and the toolbar do not, nor the end
-    // of a drag. Zoomed in, the space is where you double-click back to size.
-    const backdrop = event.target === $("lightbox") ||
-      event.target === $("lightbox-stage");
-    if (backdrop && !gestureMoved && scale <= 1) $("lightbox").close();
+    // The margin always closes the viewer. At normal size the dark space
+    // around the picture does too, unless a touch gesture just moved; zoomed
+    // in, it is where you double-click back to size. (A mouse drag only
+    // starts zoomed in, so it never reaches this.)
+    if (event.target === $("lightbox")) $("lightbox").close();
+    else if (
+      event.target === $("lightbox-stage") && !gestureMoved && scale <= 1
+    ) $("lightbox").close();
   });
   const previewObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {
