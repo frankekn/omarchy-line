@@ -33,8 +33,8 @@ interface PluginChat {
 
 /** What a post notification is about: an album update or a note post. */
 type PluginPostEvent =
-  | { kind: "album"; album: string; count: number }
-  | { kind: "note"; text: string };
+  | { kind: "album"; album: string; count: number; url?: string }
+  | { kind: "note"; text: string; url?: string };
 
 interface PluginMessage {
   id: string;

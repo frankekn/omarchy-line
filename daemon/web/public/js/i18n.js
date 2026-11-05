@@ -154,6 +154,7 @@ const strings = {
   postAlbum: ["更新了相簿「{album}」", "Updated the album “{album}”"],
   postNote: ["記事本：{text}", "Note: {text}"],
   postNoteBare: ["發佈了記事本貼文", "Posted a note"],
+  openInLine: ["在 LINE 開啟", "Open in LINE"],
   read: ["已讀", "Read"],
   sending: ["傳送中", "Sending"],
   sent: ["已送出", "Sent"],

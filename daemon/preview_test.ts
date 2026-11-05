@@ -13,8 +13,8 @@ interface FileClient {
 
 const PRELUDE = `
 type Json = Record<string, unknown>;
-type PluginPostEvent = { kind: "album"; album: string; count: number } | { kind: "note"; text: string };
-export { applyPostNotification, fileNameOf, PREVIEW_LABEL, isSystemEventName, postNotificationText, previewText, pushedPreviewText };
+type PluginPostEvent = { kind: "album"; album: string; count: number; url?: string } | { kind: "note"; text: string; url?: string };
+export { applyPostNotification, fileNameOf, PREVIEW_LABEL, isSystemEventName, postNotificationText, postOpenUrl, previewText, pushedPreviewText };
 `;
 
 interface PreviewModule {
@@ -23,6 +23,7 @@ interface PreviewModule {
   isSystemEventName(text: string, contentType: string): boolean;
   postNotificationText(meta: Json): string;
   applyPostNotification(out: Json, meta: Json): void;
+  postOpenUrl(value: unknown): string | undefined;
   previewText(text: string, raw: Json, decrypted?: Json | null): string;
   pushedPreviewText(
     message: {
@@ -487,4 +488,55 @@ Deno.test("only a bare post notification is decoded onto the message", async () 
     contentType: "POSTNOTIFICATION",
     text: "POSTNOTIFICATION",
   });
+});
+
+Deno.test("a post opens in LINE only through a line.me/R/ link", async () => {
+  const m = await mod();
+  const note =
+    "https://line.me/R/group/home/posts/post?homeId=c1&postId=2&noteEntryType=p";
+  assertEquals(m.postOpenUrl(note), note);
+  assertEquals(
+    m.postOpenUrl(
+      "line://group/home/albums/album?homeId=c1&albumId=3&albumIdV2=x",
+    ),
+    "https://line.me/R/group/home/albums/album?homeId=c1&albumId=3&albumIdV2=x",
+  );
+  for (
+    const bad of [
+      "https://evil.example/R/group",
+      "https://line.me/S/whatever",
+      "http://line.me/R/group/home",
+      "https://user:pw@line.me/R/group",
+      "javascript:alert(1)",
+      "line://../../etc",
+      "",
+      42,
+    ]
+  ) assertEquals(m.postOpenUrl(bad), undefined, String(bad));
+});
+
+Deno.test("the post event carries the link next to what it says", async () => {
+  const m = await mod();
+  const out: Json = {
+    contentType: "POSTNOTIFICATION",
+    text: "POSTNOTIFICATION",
+  };
+  m.applyPostNotification(out, {
+    serviceType: "GB",
+    postEndUrl: "https://line.me/R/group/home/posts/post?homeId=c1&postId=2",
+  });
+  assertEquals(out.postEvent, {
+    kind: "note",
+    text: "",
+    url: "https://line.me/R/group/home/posts/post?homeId=c1&postId=2",
+  });
+  const unsafe: Json = {
+    contentType: "POSTNOTIFICATION",
+    text: "POSTNOTIFICATION",
+  };
+  m.applyPostNotification(unsafe, {
+    serviceType: "GB",
+    postEndUrl: "https://evil.example/",
+  });
+  assertEquals(unsafe.postEvent, { kind: "note", text: "" });
 });

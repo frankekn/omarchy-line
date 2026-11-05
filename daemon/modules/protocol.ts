@@ -34,6 +34,37 @@ function panelRequestId(req: Json): string {
 // enil:requestid-end
 
 // enil:previewable-begin
+/**
+ * Where a POSTNOTIFICATION's first preview picture lives on OBS. Only the
+ * note services: their objects download with the session's own headers,
+ * while album objects answer 403. The oid becomes a URL path segment, so it
+ * must be plain base64url-ish text.
+ */
+function postPreviewSource(meta: Record<string, unknown>): {
+  svc: string;
+  sid: string;
+  oid: string;
+} | null {
+  let medias: unknown;
+  try {
+    medias = JSON.parse(String(meta.previewMedias ?? "[]"));
+  } catch {
+    return null;
+  }
+  const first = Array.isArray(medias) ? medias[0] : null;
+  if (!first || typeof first !== "object") return null;
+  const { svc, sid, mediaOid, mediaType } = first as Record<string, unknown>;
+  const allowed = (svc === "privnote" && sid === "post") ||
+    (svc === "scrap" && sid === "s");
+  if (!allowed || mediaType !== "I") return null;
+  if (
+    typeof mediaOid !== "string" || !/^[A-Za-z0-9_=-]{8,256}$/.test(mediaOid)
+  ) {
+    return null;
+  }
+  return { svc: svc as string, sid: sid as string, oid: mediaOid };
+}
+
 /** A thumbnail request that cannot turn into a full encrypted video download. */
 function previewableMessage(raw: unknown): boolean {
   if (!raw || typeof raw !== "object") return false;
@@ -44,6 +75,13 @@ function previewableMessage(raw: unknown): boolean {
   };
   const kind = String(message.contentType ?? "");
   if (kind === "IMAGE") return true;
+  if (kind === "POSTNOTIFICATION") {
+    const meta = message.contentMetadata &&
+        typeof message.contentMetadata === "object"
+      ? message.contentMetadata as Record<string, unknown>
+      : {};
+    return postPreviewSource(meta) !== null;
+  }
   if (kind !== "VIDEO") return false;
   const meta = message.contentMetadata &&
       typeof message.contentMetadata === "object"
@@ -578,6 +616,7 @@ export {
   normalizeMentions,
   panelRequestId,
   parseMentionMeta,
+  postPreviewSource,
   previewableMessage,
   RANGE_MAX_DEPTH,
   rangeEndId,
