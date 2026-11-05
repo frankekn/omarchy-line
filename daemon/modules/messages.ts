@@ -130,6 +130,12 @@ async function toPluginMessage(
   }
 
   if (
+    contentType === "POSTNOTIFICATION" && !out.unsent && !out.decryptFailed &&
+    isSystemEventName(out.text, contentType)
+  ) {
+    out.text = postNotificationText(meta);
+  }
+  if (
     contentType === "CHATEVENT" && !out.unsent && !out.decryptFailed &&
     (!out.text || out.text.toUpperCase() === "CHATEVENT") &&
     meta.LOC_KEY === "C_MA" && typeof meta.LOC_ARGS === "string" &&
@@ -581,6 +587,37 @@ function isSystemEventName(text: string, contentType: string): boolean {
   return !text || text.toUpperCase() === contentType;
 }
 
+/** One line of sender-supplied text: no control characters, bounded. */
+function postField(value: unknown, max: number): string {
+  if (typeof value !== "string") return "";
+  const line = value.replace(/\p{Cc}+/gu, " ").replace(/\s+/g, " ").trim();
+  const chars = [...line];
+  return chars.length > max ? chars.slice(0, max).join("") + "…" : line;
+}
+
+/**
+ * What a POSTNOTIFICATION says, from the metadata LINE sends with it: an
+ * album update (serviceType AB: albumName, mediaCount) or a note / group-home
+ * post (GB, NT: sometimes the opening `text`). "" when there is nothing to
+ * say beyond the generic label.
+ */
+function postNotificationText(meta: Json): string {
+  const service = String(meta.serviceType ?? "");
+  if (service === "AB") {
+    const album = postField(meta.albumName, 60);
+    if (!album) return "";
+    const count = Number(meta.mediaCount);
+    return Number.isSafeInteger(count) && count > 0
+      ? `新增了 ${count} 張照片到相簿「${album}」`
+      : `更新了相簿「${album}」`;
+  }
+  if (service === "GB" || service === "NT") {
+    const text = postField(meta.text, 200);
+    return text ? `記事本：${text}` : "發佈了記事本貼文";
+  }
+  return "";
+}
+
 /**
  * Where a FILE message keeps its name. Plain files carry it in
  * contentMetadata.FILE_NAME, but a Letter-Sealed one does not: the sender puts
@@ -643,7 +680,13 @@ function previewLine(
   // branch below would go on printing an attachment that is no longer there.
   if (unsentOf(raw.contentMetadata ?? {})) return UNSENT_TEXT;
   // System events take the label first; only real prose from LINE is printed.
-  if (isSystemEventName(text, contentType)) return PREVIEW_LABEL[contentType];
+  if (isSystemEventName(text, contentType)) {
+    if (contentType === "POSTNOTIFICATION") {
+      const post = postNotificationText(raw.contentMetadata ?? {});
+      if (post) return post;
+    }
+    return PREVIEW_LABEL[contentType];
+  }
   if (text) return text;
   const meta: Json = raw.contentMetadata ?? {};
   if (contentType === "FILE" || contentType === "PDF") {
