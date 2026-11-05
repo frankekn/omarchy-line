@@ -30,6 +30,10 @@ export function createMediaView(ctx) {
   const downloads = new Map(), originals = new Map();
   const audioUrls = new Map();
   let pinch = null, touchDrag = null, mouseDrag = null;
+  // A gesture that moved the picture must not also count as a dismissing tap;
+  // swipe tracks a one-finger drag at normal size, which closes when it is a
+  // clear downward flick.
+  let gestureMoved = false, swipe = null;
   function originalKey(account, chat, message) {
     return JSON.stringify([account, chat, String(message.id)]);
   }
@@ -350,6 +354,7 @@ export function createMediaView(ctx) {
     setScale(scale > 1 ? 1 : 2, point.x, point.y);
   });
   $("lightbox-stage").addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "mouse") gestureMoved = false;
     if (event.pointerType !== "mouse" || event.button !== 0 || scale <= 1) {
       return;
     }
@@ -361,6 +366,7 @@ export function createMediaView(ctx) {
       event.pointerType !== "mouse" || !mouseDrag ||
       event.pointerId !== mouseDrag.id
     ) return;
+    gestureMoved = true;
     applyPan(
       panX + event.clientX - mouseDrag.x,
       panY + event.clientY - mouseDrag.y,
@@ -384,6 +390,11 @@ export function createMediaView(ctx) {
     return Array.from(touches).find((touch) => touch.identifier === id);
   }
   $("lightbox-stage").addEventListener("touchstart", (event) => {
+    if (event.touches.length === 1) gestureMoved = false;
+    const only = event.touches.length === 1 ? event.touches[0] : null;
+    swipe = only && scale <= 1
+      ? { id: only.identifier, x: only.clientX, y: only.clientY }
+      : null;
     if (event.touches.length === 2) {
       const first = event.touches[0], second = event.touches[1];
       pinch = {
@@ -401,9 +412,18 @@ export function createMediaView(ctx) {
     const first = pinch && findTouch(event.touches, pinch.ids[0]);
     const second = pinch && findTouch(event.touches, pinch.ids[1]);
     const touch = touchDrag && findTouch(event.touches, touchDrag.id);
+    if (swipe) {
+      const moving = findTouch(event.touches, swipe.id);
+      if (
+        moving &&
+        Math.hypot(moving.clientX - swipe.x, moving.clientY - swipe.y) >
+          10
+      ) gestureMoved = true;
+    }
     if (
       pinch && first && second && event.touches.length === 2 && pinch.distance
     ) {
+      gestureMoved = true;
       event.preventDefault();
       const point = pointInStage(
         (first.clientX + second.clientX) / 2,
@@ -415,6 +435,7 @@ export function createMediaView(ctx) {
         point.y,
       );
     } else if (touchDrag && touch && event.touches.length === 1) {
+      gestureMoved = true;
       event.preventDefault();
       applyPan(
         panX + touch.clientX - touchDrag.x,
@@ -424,6 +445,16 @@ export function createMediaView(ctx) {
     }
   }, { passive: false });
   function endTouch(event) {
+    const lifted = swipe && findTouch(event.changedTouches, swipe.id);
+    if (lifted && !event.touches.length && scale <= 1) {
+      const dx = lifted.clientX - swipe.x, dy = lifted.clientY - swipe.y;
+      swipe = null;
+      if (dy > 80 && Math.abs(dx) < dy / 2) {
+        $("lightbox").close();
+        return;
+      }
+    }
+    if (event.touches.length !== 1) swipe = null;
     if (
       pinch && (!findTouch(event.touches, pinch.ids[0]) ||
         !findTouch(event.touches, pinch.ids[1]))
@@ -438,7 +469,12 @@ export function createMediaView(ctx) {
   $("lightbox-stage").addEventListener("touchcancel", endTouch);
   $("lightbox-close").addEventListener("click", () => $("lightbox").close());
   $("lightbox").addEventListener("click", (event) => {
-    if (event.target === $("lightbox")) $("lightbox").close();
+    // At normal size the dark space around the picture closes the viewer,
+    // like the margin; the picture itself and the toolbar do not, nor the end
+    // of a drag. Zoomed in, the space is where you double-click back to size.
+    const backdrop = event.target === $("lightbox") ||
+      event.target === $("lightbox-stage");
+    if (backdrop && !gestureMoved && scale <= 1) $("lightbox").close();
   });
   const previewObserver = new IntersectionObserver((entries) => {
     for (const entry of entries) {

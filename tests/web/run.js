@@ -27,9 +27,11 @@ import { chrome } from "./chrome.js";
 import { chatEvents } from "./chat-events.js";
 import { sendScroll } from "./send-scroll.js";
 import { lightboxFit } from "./lightbox-fit.js";
+import { lightboxDismiss } from "./lightbox-dismiss.js";
 
 const suites = {
   "lightbox-fit": lightboxFit,
+  "lightbox-dismiss": lightboxDismiss,
   main,
   edge,
   media,
