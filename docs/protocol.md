@@ -638,7 +638,7 @@ Messages returned by `history` (absent fields are omitted, never `null`):
 | `time` | number | always, ms |
 | `contentType` | string | always; `NONE`/`IMAGE`/`VIDEO`/`STICKER`/`FLEX`… |
 | `chatEvent` | object | optional decoded event: `{kind: "announcement", actor: string}`; `actor` is a display name, or empty when unavailable. Currently decodes `CHATEVENT` / `C_MA` with one valid member argument; `text` contains a Chinese fallback for clients without event localization. |
-| `postEvent` | object | optional decoded `POSTNOTIFICATION`: `{kind: "album", album: string, count: number}` (count 0 when LINE gave none: the album was updated) or `{kind: "note", text: string}` (`text` may be empty). Decoded from `contentMetadata` `serviceType` AB / GB / NT. `text` holds a Chinese fallback line. |
+| `postEvent` | object | optional decoded `POSTNOTIFICATION`: `{kind: "album", album: string, count: number}` (count 0 when LINE gave none: the album was updated) or `{kind: "note", text: string}` (`text` may be empty). Decoded from `contentMetadata` `serviceType` AB / GB / NT. `text` holds a Chinese fallback line. Optional `url`: a `https://line.me/R/…` link that opens the post in the LINE app (`line://` links are rewritten to that form; anything else is dropped). A note post whose first picture lives in `privnote/post` or `scrap/s` is `previewable`; its `preview` is the 480-wide rendition from OBS. Album pictures are not (OBS answers 403). |
 | `decryptFailed` | boolean | always; `true` when E2EE couldn't be decrypted |
 | `hasMedia` | boolean | always; unsent messages are always `false` |
 | `unsent` | boolean | always; `true` on messages the other side unsent, `text` is "已收回訊息" |

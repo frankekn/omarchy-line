@@ -7,8 +7,12 @@ interface CacheResult {
 }
 
 interface MediaCacheModule {
+  postCalls: unknown[];
   cacheMedia(
-    message: { getData(preview: boolean, signal?: AbortSignal): Promise<Blob> },
+    message: {
+      getData(preview: boolean, signal?: AbortSignal): Promise<Blob>;
+      raw?: { contentType?: string };
+    },
     id: string,
     preview: boolean,
     invalidate?: boolean,
@@ -20,7 +24,15 @@ async function moduleFor(dir: string): Promise<MediaCacheModule> {
   return await loadBlock<MediaCacheModule>(
     "mediacache",
     `
-type TalkMsg = { getData(preview: boolean, signal?: AbortSignal): Promise<Blob> };
+type TalkMsg = {
+  getData(preview: boolean, signal?: AbortSignal): Promise<Blob>;
+  raw?: { contentType?: string };
+};
+export const postCalls: unknown[] = [];
+async function postPreviewBlob(raw: unknown): Promise<Blob> {
+  postCalls.push(raw);
+  return new Blob([new Uint8Array([9, 9])]);
+}
 const MEDIA_DIR = ${JSON.stringify(dir)};
 const console = { error(_line: string) {} };
 function errorLine(error: unknown) { return String(error); }
@@ -379,6 +391,29 @@ Deno.test("a predecessor cancellation cannot reject a live invalidating retry", 
     await assertRejects(() => first, DOMException);
     assertEquals(await retry, { path: `${dir}/m6-preview` });
     assertEquals(calls, 1);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a post notification's preview comes from its note picture, not getData", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const m = await moduleFor(dir);
+    let getDataCalls = 0;
+    const message = {
+      raw: { contentType: "POSTNOTIFICATION" },
+      getData(): Promise<Blob> {
+        getDataCalls++;
+        return Promise.resolve(new Blob([new Uint8Array([1])]));
+      },
+    };
+    assertEquals(await m.cacheMedia(message, "p1", true), {
+      path: `${dir}/p1-preview`,
+    });
+    assertEquals(m.postCalls, [message.raw]);
+    assertEquals(getDataCalls, 0);
+    assertEquals([...await Deno.readFile(`${dir}/p1-preview`)], [9, 9]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -525,7 +525,7 @@ linejs 的 `getStickerURL()` 只有看到這個值才給 `sticker_animation.png`
 | `flexImages` | string[] | 同上，只收絕對 `https://` 圖片 |
 | `stickerUrl` | string | `STICKER` 且 metadata 有 `STKID` |
 | `fileName` | string | metadata 有 `FILE_NAME` |
-| `postEvent` | object | 解得出來的 `POSTNOTIFICATION`：`{kind: "album", album, count}`（`count` 為 0 表示 LINE 沒給數量，只是更新了相簿）或 `{kind: "note", text}`（`text` 可能是空字串）。從 `contentMetadata` 的 `serviceType` AB／GB／NT 解出；`text` 是中文 fallback |
+| `postEvent` | object | 解得出來的 `POSTNOTIFICATION`：`{kind: "album", album, count}`（`count` 為 0 表示 LINE 沒給數量，只是更新了相簿）或 `{kind: "note", text}`（`text` 可能是空字串）。從 `contentMetadata` 的 `serviceType` AB／GB／NT 解出；`text` 是中文 fallback。可能帶 `url`：在 LINE app 打開這篇貼文的 `https://line.me/R/…` 連結（`line://` 會改寫成這個形式，其他網址一律丟掉）。記事本貼文的第一張圖在 `privnote/post` 或 `scrap/s` 時會標 `previewable`，`preview` 拿到的是 OBS 的 480 寬縮圖；相簿的圖拿不到（OBS 回 403） |
 | `fileSize` | number | metadata 有 `FILE_SIZE` |
 | `audioMs` | number | `AUDIO` 且 metadata 有正數的 `AUDLEN` 或 `DURATION`；ms |
 | `location` | object | `LOCATION` 且位置有效，含 E2EE；`{ title, address, latitude, longitude }`，沒有的欄位是空字串 |

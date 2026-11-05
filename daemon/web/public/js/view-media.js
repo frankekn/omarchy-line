@@ -204,6 +204,20 @@ export function createMediaView(ctx) {
           }
         }
       } else if (
+        row.contentType === "POSTNOTIFICATION" && row.previewable &&
+        row.postEvent
+      ) {
+        const path = model.previews.get(String(row.id)) || row.mediaPath;
+        if (path) {
+          list.push({
+            key: JSON.stringify(["post", String(row.id)]),
+            id: String(row.id),
+            url: fileUrl(path),
+            name: t("image"),
+            download: null,
+          });
+        }
+      } else if (
         row.contentType === "IMAGE" && row.hasMedia &&
         (!row.mediaState || row.mediaState === "ok")
       ) {
@@ -467,6 +481,57 @@ export function createMediaView(ctx) {
   $("messages").addEventListener("scroll", retryDeferredPreviews);
   globalThis.addEventListener("resize", retryDeferredPreviews);
   globalThis.visualViewport?.addEventListener("resize", retryDeferredPreviews);
+  // A post notification: its note picture when the daemon can fetch one,
+  // and a link that hands the post to the LINE app (a browser cannot show it).
+  function addPost(bubble, message, chat) {
+    if (message.decryptFailed || !message.postEvent) return;
+    if (message.previewable) {
+      const id = String(message.id),
+        path = model.previews.get(id) || message.mediaPath;
+      if (path) {
+        const url = fileUrl(path),
+          image = safeImage(url, "media-image", t("image"));
+        clickableImage(
+          image,
+          chat,
+          message,
+          url,
+          JSON.stringify(["post", id]),
+        );
+        bubble.append(image);
+      } else {
+        const placeholder = el(
+          "div",
+          "media-placeholder",
+          model.previews.has(id) ? t("mediaFailed") : t("loading"),
+        );
+        placeholder.dataset.messageId = id;
+        placeholder.dataset.chat = chat;
+        bubble.append(placeholder);
+        if (!model.previews.has(id)) previewObserver.observe(placeholder);
+      }
+    }
+    const url = lineUrl(message.postEvent.url);
+    if (url) {
+      const link = el("a", "post-link", t("openInLine"));
+      link.href = url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      bubble.append(link);
+    }
+  }
+  // The daemon only sends line.me/R/ links; check again before rendering one.
+  function lineUrl(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return url.protocol === "https:" && url.host === "line.me" &&
+          url.pathname.startsWith("/R/")
+        ? url.href
+        : "";
+    } catch {
+      return "";
+    }
+  }
   function addMedia(bubble, message, chat) {
     const type = String(message.contentType || "");
     const state = message.mediaState || "ok";
@@ -496,6 +561,10 @@ export function createMediaView(ctx) {
       }
     }
     if (message.pending) return;
+    if (type === "POSTNOTIFICATION") {
+      addPost(bubble, message, chat);
+      return;
+    }
     if (!["IMAGE", "VIDEO", "FILE", "AUDIO"].includes(type)) return;
     if (state !== "ok") {
       bubble.append(el("div", "muted", t("mediaExpired")));

@@ -278,9 +278,9 @@ export function createMessagesView(ctx) {
     }
     if (
       !message.unsent &&
-      ["STICKER", "FLEX", "IMAGE", "VIDEO", "FILE", "AUDIO"].includes(
+      (["STICKER", "FLEX", "IMAGE", "VIDEO", "FILE", "AUDIO"].includes(
         message.contentType,
-      )
+      ) || (message.contentType === "POSTNOTIFICATION" && message.postEvent))
     ) {
       const media = el("div", "message-media");
       if (includeMedia) addMedia(media, message, chat);

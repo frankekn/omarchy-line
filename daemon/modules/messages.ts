@@ -44,6 +44,7 @@ import {
   applyQueuedReactions,
   messageRequestId,
   parseMentionMeta,
+  postPreviewSource,
   previewableMessage,
   reactionsFromRaw,
   readByAt,
@@ -339,6 +340,25 @@ function collectFlexImages(node: unknown, acc: string[] = []): string[] {
 }
 
 /**
+ * A post notification's preview: the 480-wide rendition of its first note
+ * picture, straight from OBS with the session's headers. getData has no
+ * path for it -- the picture is not the message's own object.
+ */
+async function postPreviewBlob(
+  raw: TalkMsg["raw"],
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const source = postPreviewSource((raw.contentMetadata ?? {}) as Json);
+  const c = client;
+  if (!source || !c) throw new Error("post preview unavailable");
+  return await c.base.obs.downloadObjectForService({
+    obsPath: `${source.svc}/${source.sid}`,
+    oid: `${source.oid}/w480`,
+    signal,
+  });
+}
+
+/**
  * The error travels with the miss rather than being swallowed: `download`
  * has to tell an expired file apart from a broken link, and only the thing
  * linejs threw knows which it was.
@@ -362,7 +382,10 @@ function downloadMedia(
         p: boolean,
         s?: AbortSignal,
       ) => Promise<Blob>;
-      const blob: Blob = await getData(preview, signal);
+      const blob: Blob =
+        preview && String(tm.raw?.contentType) === "POSTNOTIFICATION"
+          ? await postPreviewBlob(tm.raw, signal)
+          : await getData(preview, signal);
       const bytes = new Uint8Array(await blob.arrayBuffer());
       if (!bytes.byteLength) throw new Error("empty media response");
       await Deno.writeFile(temp, bytes);
@@ -600,6 +623,8 @@ function postField(value: unknown, max: number): string {
  */
 function postNotificationEvent(meta: Json): PluginPostEvent | null {
   const service = String(meta.serviceType ?? "");
+  const url = postOpenUrl(meta.postEndUrl);
+  const link = url ? { url } : {};
   if (service === "AB") {
     const album = postField(meta.albumName, 60);
     if (!album) return null;
@@ -608,12 +633,39 @@ function postNotificationEvent(meta: Json): PluginPostEvent | null {
       kind: "album",
       album,
       count: Number.isSafeInteger(count) && count > 0 ? count : 0,
+      ...link,
     };
   }
   if (service === "GB" || service === "NT") {
-    return { kind: "note", text: postField(meta.text, 200) };
+    return { kind: "note", text: postField(meta.text, 200), ...link };
   }
   return null;
+}
+
+/**
+ * The link that opens the post in LINE: a line.me/R/ URL as sent, or a
+ * line:// one rewritten to its line.me/R/ form (a browser tab cannot open
+ * line://). Anything else is dropped: the sender controls this string.
+ */
+function postOpenUrl(value: unknown): string | undefined {
+  if (typeof value !== "string" || value.length > 1024) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol === "line:") {
+    // line://group/home/... parses with host "group".
+    const rest = `${url.host}${url.pathname}`;
+    if (!/^[a-z]+\/[A-Za-z0-9/_-]*$/.test(rest)) return undefined;
+    return `https://line.me/R/${rest}${url.search}`;
+  }
+  if (
+    url.protocol === "https:" && url.host === "line.me" &&
+    url.pathname.startsWith("/R/") && !url.username && !url.password
+  ) return url.href;
+  return undefined;
 }
 
 /** The Chinese fallback line for a post event; clients translate the event. */
