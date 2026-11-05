@@ -1238,6 +1238,10 @@ textarea::placeholder {
   flex: 1;
   min-height: 0;
   display: grid;
+  /* One cell exactly the stage's size. An auto track grows to a large
+     picture, so max-width/height resolve against that and it overflows
+     off-centre instead of fitting. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
   touch-action: none;

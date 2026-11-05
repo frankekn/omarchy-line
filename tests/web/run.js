@@ -26,8 +26,10 @@ import { search } from "./search.js";
 import { chrome } from "./chrome.js";
 import { chatEvents } from "./chat-events.js";
 import { sendScroll } from "./send-scroll.js";
+import { lightboxFit } from "./lightbox-fit.js";
 
 const suites = {
+  "lightbox-fit": lightboxFit,
   main,
   edge,
   media,
