@@ -27,17 +27,14 @@ async function swipe(page, dy) {
     const stage = document.getElementById("lightbox-stage");
     const box = stage.getBoundingClientRect();
     const x = box.left + 20, y = box.top + 40;
-    const touch = (clientY) =>
-      new Touch({ identifier: 1, target: stage, clientX: x, clientY });
-    const send = (type, touches, changed) =>
-      stage.dispatchEvent(
-        new TouchEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          touches,
-          changedTouches: changed,
-        }),
-      );
+    // WebKit has no Touch constructor; the viewer only reads these fields.
+    const touch = (clientY) => ({ identifier: 1, clientX: x, clientY });
+    const send = (type, touches, changed) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", { value: touches });
+      Object.defineProperty(event, "changedTouches", { value: changed });
+      stage.dispatchEvent(event);
+    };
     send("touchstart", [touch(y)], [touch(y)]);
     send("touchmove", [touch(y + distance)], [touch(y + distance)]);
     send("touchend", [], [touch(y + distance)]);
