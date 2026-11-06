@@ -182,16 +182,29 @@ export async function sendScroll(h) {
       await page.locator("#chat-list").getByText("Scroll row 39").first()
         .click();
       await page.getByRole("log").getByText("Scroll row 39").waitFor();
-      if (scrollAway) {
-        await page.locator("#messages").evaluate((list) =>
-          list.scrollTop = list.scrollHeight / 3
-        );
-      }
       const gap = () =>
         page.locator("#messages").evaluate((list) =>
           Math.round(list.scrollHeight - list.scrollTop - list.clientHeight)
         );
-      await until(async () => scrollAway || await gap() <= 2, "at bottom");
+      // Opening the chat can run a short programmatic scroll that pauses
+      // following. Start only once the list has stayed at the bottom.
+      let last = Infinity;
+      await until(async () => {
+        const now = await gap();
+        const settled = now <= 2 && last <= 2;
+        last = now;
+        if (!settled) await page.waitForTimeout(250);
+        return settled;
+      }, "settled at bottom");
+      if (scrollAway) {
+        await page.locator("#messages").evaluate((list) => {
+          list.dispatchEvent(
+            new WheelEvent("wheel", { deltaY: -10, bubbles: true }),
+          );
+          list.scrollTop -= 200;
+          list.dispatchEvent(new Event("scroll"));
+        });
+      }
       const before = await gap();
       await page.getByLabel("Message", { exact: true }).focus();
       await page.setViewportSize({ width: 412, height: 500 });
