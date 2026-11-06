@@ -418,6 +418,23 @@ Deno.test("only the page's own files are served", async () => {
       "text/javascript; charset=utf-8",
     );
     await js.body?.cancel();
+    // Android installs from the manifest, fetched without the cookie.
+    const manifest = await web.handle(get("/manifest.webmanifest"));
+    assertEquals(manifest.status, 200);
+    assertEquals(
+      manifest.headers.get("content-type"),
+      "application/manifest+json",
+    );
+    const { icons } = await manifest.json();
+    for (const { src } of icons) {
+      const icon = await web.handle(
+        get(src, { headers: { "accept-encoding": "gzip" } }),
+      );
+      assertEquals(icon.status, 200, src);
+      assertEquals(icon.headers.get("content-type"), "image/png", src);
+      assertEquals(icon.headers.get("content-encoding"), null, src);
+      await icon.body?.cancel();
+    }
     for (const path of ["/server.ts", "/js/../server.ts", "/js/a/b.js"]) {
       const res = await web.handle(get(path));
       await res.body?.cancel();

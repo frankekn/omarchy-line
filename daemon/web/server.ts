@@ -40,7 +40,8 @@ const MAX_BRIDGES = 32;
 const MAX_SIGNIN_BODY = 8192;
 const MAX_SIGNIN_PENDING = 16;
 const SIGNIN_BODY_TIMEOUT_MS = 10_000;
-const ASSET_RE = /^\/(?:app\.css|js\/[a-z][a-z0-9-]*\.js)$/;
+const ASSET_RE =
+  /^\/(?:app\.css|manifest\.webmanifest|icon-(?:192|512|maskable)\.png|js\/[a-z][a-z0-9-]*\.js)$/;
 
 export interface WebOptions {
   addr: string;
@@ -170,7 +171,16 @@ function variant(asset: Asset, coding: Coding): Promise<Variant> {
 
 /** Snapshot public assets once. Compiled assets do not have reliable mtimes. */
 async function loadAssets(publicDir: URL): Promise<Map<string, Asset>> {
-  const paths = ["/index.html", "/app.css"];
+  // The manifest and icons stay public like the page: an install fetches
+  // the manifest without cookies.
+  const paths = [
+    "/index.html",
+    "/app.css",
+    "/manifest.webmanifest",
+    "/icon-192.png",
+    "/icon-512.png",
+    "/icon-maskable.png",
+  ];
   try {
     for await (const entry of Deno.readDir(new URL("js/", publicDir))) {
       const path = `/js/${entry.name}`;
@@ -189,6 +199,10 @@ async function loadAssets(publicDir: URL): Promise<Map<string, Asset>> {
         ? "text/html; charset=utf-8"
         : path.endsWith(".js")
         ? "text/javascript; charset=utf-8"
+        : path.endsWith(".webmanifest")
+        ? "application/manifest+json"
+        : path.endsWith(".png")
+        ? "image/png"
         : "text/css; charset=utf-8";
       assets.set(path, { body, etag, type, coded: new Map() });
     } catch { /* An unreadable asset keeps its existing 404 behavior. */ }
@@ -204,7 +218,9 @@ async function serveAsset(
 ): Promise<Response> {
   const asset = assets.get(path);
   if (!asset) return status(404);
-  const coding = pickCoding(req.headers.get("accept-encoding"));
+  const coding = asset.type === "image/png"
+    ? null
+    : pickCoding(req.headers.get("accept-encoding"));
   const sent: Variant = coding ? await variant(asset, coding) : asset;
   const headers = securityHeaders({
     "Content-Type": asset.type,

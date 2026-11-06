@@ -166,4 +166,50 @@ export async function sendScroll(h) {
   h.step(
     "late sticker load or error follows only while the reader stays at the bottom",
   );
+
+  // Android resizes the window for the keyboard. The shorter list must keep
+  // the newest message in view, but not pull back a reader who scrolled up.
+  for (const scrollAway of [false, true]) {
+    const context = await h.context({
+      locale: "en-US",
+      viewport: { width: 412, height: 860 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    try {
+      const page = await context.newPage();
+      await h.signIn(page);
+      await page.locator("#chat-list").getByText("Scroll row 39").first()
+        .click();
+      await page.getByRole("log").getByText("Scroll row 39").waitFor();
+      if (scrollAway) {
+        await page.locator("#messages").evaluate((list) =>
+          list.scrollTop = list.scrollHeight / 3
+        );
+      }
+      const gap = () =>
+        page.locator("#messages").evaluate((list) =>
+          Math.round(list.scrollHeight - list.scrollTop - list.clientHeight)
+        );
+      await until(async () => scrollAway || await gap() <= 2, "at bottom");
+      const before = await gap();
+      await page.getByLabel("Message", { exact: true }).focus();
+      await page.setViewportSize({ width: 412, height: 500 });
+      if (scrollAway) {
+        await page.waitForTimeout(300);
+        assert.ok(
+          await gap() >= before,
+          `keyboard pulled a scrolled-up reader down: ${before} -> ${await gap()}`,
+        );
+      } else {
+        await until(
+          async () => await gap() <= 2,
+          "newest message above keyboard",
+        );
+      }
+    } finally {
+      await context.close();
+    }
+  }
+  h.step("keyboard keeps the newest message in view only while following");
 }

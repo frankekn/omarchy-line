@@ -1367,6 +1367,11 @@ export function createMessagesView(ctx) {
       if (isFollowing(list)) followBottom(list);
     }, true);
   }
+  // A phone keyboard, a growing composer or a reply bar shortens the list
+  // without scrolling it. Keep the newest message in view when it was.
+  new ResizeObserver(() => {
+    if (isFollowing(list)) followBottom(list);
+  }).observe(list);
   list.addEventListener("scroll", () => {
     updateNavigation();
     // Settle after a reader reaches the bottom, including deferred layout.
