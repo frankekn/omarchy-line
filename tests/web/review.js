@@ -965,7 +965,7 @@ async function messageInteractionsDuringUpdates(h) {
     kind: "edit",
     message: { ...edited, mentions: [{ start: 6, end: 12, mid: "u-alice" }] },
   });
-  await text.locator("strong.mention").waitFor();
+  await text.locator("button.mention").waitFor();
   assert.equal(await originalText.evaluate((node) => node.isConnected), false);
   push({ kind: "edit", message: { ...edited, text: "Changed text" } });
   await messageRow.getByText("Changed text").waitFor();

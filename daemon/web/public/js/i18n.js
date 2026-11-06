@@ -181,6 +181,10 @@ const strings = {
     "Drafts could not be saved and may be lost on reload.",
   ],
   genericError: ["操作失敗。", "The action failed."],
+  mentionNoChat: [
+    "還沒有和這個人的聊天室。",
+    "There is no chat with this person yet.",
+  ],
   // Settings panel.
   settings: ["設定", "Settings"],
   textSize: ["介面字體", "Interface text"],
