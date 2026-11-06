@@ -28,6 +28,11 @@ export function createMessagesView(ctx) {
   let touchPaging = false;
   let trimAfterTouch = false, followAfterTouch = false;
   const command = (...args) => ctx.command(...args);
+  // Like LINE: a mention opens the 1:1 chat with that person when there is one.
+  function openMention(mid) {
+    if (model.chats.some((row) => String(row.mid) === mid)) ctx.openChat(mid);
+    else ctx.toast(t("mentionNoChat"));
+  }
   const displayError = (error) => ctx.displayError(error);
   const pendingFor = (...args) => ctx.pendingFor(...args);
   const addMedia = (...args) => ctx.addMedia(...args);
@@ -273,7 +278,9 @@ export function createMessagesView(ctx) {
       : null;
     if (body) {
       const content = el("div", "message-text");
-      content.append(richText(body, message.mentions));
+      content.append(
+        richText(body, message.mentions, openMention, [model.account, chat]),
+      );
       bubble.append(content);
     }
     if (

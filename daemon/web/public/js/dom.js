@@ -95,11 +95,24 @@ export function sizeText(size) {
   if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1048576).toFixed(1)} MB`;
 }
-export function richText(text, mentions) {
+/**
+ * `openMention(mid)` makes a person's mention a button, except for the mids in
+ * `plain` (the reader, or the 1:1 chat already open).
+ */
+export function richText(text, mentions, openMention, plain = []) {
   const fragment = document.createDocumentFragment();
   for (const segment of splitText(text, mentions)) {
     let part = document.createTextNode(segment.text);
-    if (segment.mention) {
+    if (
+      segment.mid && openMention && !segment.url &&
+      !plain.includes(segment.mid)
+    ) {
+      const button = el("button", "mention");
+      button.type = "button";
+      button.append(part);
+      button.addEventListener("click", () => openMention(segment.mid));
+      part = button;
+    } else if (segment.mention) {
       const strong = el("strong", "mention");
       strong.append(part);
       part = strong;

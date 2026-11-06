@@ -2129,8 +2129,11 @@ def handle(req):
             with lock:
                 if mid not in messages:
                     return {"ok": False, "error": "unknown chat"}
+                extra = {}
+                if isinstance(req.get("mentions"), list):
+                    extra["mentions"] = req["mentions"]
                 message = msg(mid, len(messages[mid]) + 1, "ustub-peer",
-                              "STUB Peer", req["text"], 0)
+                              "STUB Peer", req["text"], 0, **extra)
                 messages[mid].append(message)
                 for row in state["chats"]:
                     if row["mid"] == mid:

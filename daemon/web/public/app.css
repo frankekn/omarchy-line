@@ -706,6 +706,18 @@ textarea::placeholder {
   color: var(--accent);
   font-weight: 700;
 }
+button.mention {
+  display: inline;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 700;
+}
+button.mention:hover {
+  text-decoration: underline;
+}
 .quote {
   display: block;
   width: 100%;
@@ -1280,7 +1292,8 @@ textarea::placeholder {
   .composer textarea {
     min-height: 44px;
   }
-  .message-text a {
+  .message-text a,
+  .message-text button.mention {
     display: inline-block;
     min-width: 44px;
     min-height: 44px;

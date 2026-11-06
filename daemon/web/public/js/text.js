@@ -47,10 +47,14 @@ export function splitText(input, mentions) {
       value = text.slice(start, end);
     if (!value) continue;
     const link = links.find((item) => item.start <= start && item.end >= end);
+    const mention = spans.find((item) =>
+      item.start <= start && item.end >= end
+    );
     segments.push({
       text: value,
       url: link?.url || "",
-      mention: spans.some((item) => item.start <= start && item.end >= end),
+      mention: !!mention,
+      mid: !mention?.all && typeof mention?.mid === "string" ? mention.mid : "",
     });
   }
   return segments;
