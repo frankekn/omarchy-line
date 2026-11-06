@@ -225,4 +225,108 @@ export async function sendScroll(h) {
     }
   }
   h.step("keyboard keeps the newest message in view only while following");
+
+  // Thumbnails that arrive after the chat opened redraw their rows taller.
+  // A reader at the bottom stays there, including for the next message; a
+  // reader who scrolled up is not pulled down.
+  const shot = `${h.stateDir}/media/stub-shot1.png`;
+  for (const scrollAway of [false, true]) {
+    const context = await h.context({
+      locale: "en-US",
+      viewport: { width: 1280, height: 800 },
+    });
+    try {
+      const page = await context.newPage();
+      const histories = new Set();
+      const ids = Array.from({ length: 8 }, (_, i) => `late-preview-${i}`);
+      let release;
+      const held = new Promise((resolve) => release = resolve);
+      const requested = new Set();
+      await tapSocket(page, {
+        client(frame, connection) {
+          if (frame.cmd === "history" && frame.chat === CHAT) {
+            histories.add(frame.id);
+          }
+          if (frame.cmd === "preview" && ids.includes(frame.messageId)) {
+            requested.add(frame.messageId);
+            held.then(() =>
+              connection.socket.send(JSON.stringify({
+                id: frame.id,
+                ok: true,
+                data: { path: shot },
+              }))
+            );
+            return false;
+          }
+          return true;
+        },
+        server(frame) {
+          if (histories.delete(frame.id)) {
+            const now = Date.now();
+            ids.forEach((id, i) =>
+              frame.data.push({
+                id,
+                chat: CHAT,
+                from: "peer",
+                fromName: "Peer",
+                text: "",
+                time: now + i * 1000,
+                contentType: "IMAGE",
+                hasMedia: true,
+                previewable: true,
+                mediaState: "ok",
+              })
+            );
+          }
+          return true;
+        },
+      });
+      await h.signIn(page);
+      await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
+      await page.locator(`article[data-message-id="${ids[7]}"]`).waitFor();
+      const gap = () =>
+        page.locator("#messages").evaluate((list) =>
+          Math.round(list.scrollHeight - list.scrollTop - list.clientHeight)
+        );
+      await until(async () => await gap() <= 2, "opened at the bottom");
+      await until(() => requested.size > 0, "previews requested");
+      if (scrollAway) {
+        await page.locator("#messages").evaluate((list) => {
+          list.dispatchEvent(
+            new WheelEvent("wheel", { deltaY: -10, bubbles: true }),
+          );
+          list.scrollTop = 0;
+          list.dispatchEvent(new Event("scroll"));
+        });
+      }
+      release();
+      await until(
+        () =>
+          page.locator('article[data-message-id^="late-preview-"] img')
+            .count().then((count) => count >= requested.size),
+        "late previews drawn",
+      );
+      await page.waitForTimeout(300);
+      if (scrollAway) {
+        assert.ok(
+          await page.locator("#messages").evaluate((list) => list.scrollTop) <
+            100,
+          "late previews pulled a scrolled-up reader down",
+        );
+        continue;
+      }
+      assert.ok(await gap() <= 2, `late previews left ${await gap()}px below`);
+      await h.request({
+        id: 900,
+        cmd: "poke",
+        chat: CHAT,
+        text: "After late previews",
+      });
+      await page.getByRole("log").getByText("After late previews").waitFor();
+      await until(async () => await gap() <= 2, "next message followed");
+    } finally {
+      await context.close();
+    }
+  }
+  h.step("late previews keep a reader at the bottom only while following");
 }
