@@ -2130,6 +2130,9 @@ def handle(req):
                 if mid not in messages:
                     return {"ok": False, "error": "unknown chat"}
                 extra = {}
+                # Raw on purpose, unlike the send path's normalize_mentions:
+                # web tests mention stub chat mids such as "ustub-alice",
+                # which MENTION_MID would drop, to open a chat in the list.
                 if isinstance(req.get("mentions"), list):
                     extra["mentions"] = req["mentions"]
                 message = msg(mid, len(messages[mid]) + 1, "ustub-peer",

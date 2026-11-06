@@ -1021,6 +1021,16 @@ Deno.test("safe link splitting, trailing punctuation and UTF-16 mention", () => 
     false,
   );
 });
+Deno.test("mention segments keep a person's mid but not @All's", () => {
+  const segments = splitText("@All @Bob", [
+    { start: 0, end: 4, all: true },
+    { start: 5, end: 9, mid: "u0123" },
+  ]).filter((s: { mention: boolean }) => s.mention);
+  assertEquals(
+    segments.map((s: { text: string; mid: string }) => [s.text, s.mid]),
+    [["@All", ""], ["@Bob", "u0123"]],
+  );
+});
 Deno.test("avatar initials preserve graphemes or a complete code point", () => {
   assertEquals(avatarInitial("👩‍👩‍👧‍👦 Family"), "👩‍👩‍👧‍👦");
   assertEquals(avatarInitial("😀 Family", null), "😀");
