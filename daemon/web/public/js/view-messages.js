@@ -722,10 +722,14 @@ export function createMessagesView(ctx) {
     }
     return null;
   }
+  // The scroll listener clears followedTop when the reader moves away. Until
+  // that event, a moved offset comes from layout (a clamp after rows shrank,
+  // or Chrome's scroll anchoring), and a picture that loads before the event
+  // must still follow.
   function isFollowing(list) {
     if (actionMenu.row) return false;
     return list.scrollHeight - list.scrollTop - list.clientHeight <= 2 ||
-      (followedTop !== null && Math.abs(list.scrollTop - followedTop) <= 2);
+      followedTop !== null;
   }
   function followBottom(list) {
     if (actionMenu.row || programmaticScroll || touchPhase !== "idle") return;
@@ -1292,7 +1296,12 @@ export function createMessagesView(ctx) {
     } else placeKeyedNodes(list, keys, records, changes);
     order = keys;
     ctx.refreshLightbox();
-    if (mode === "bottom" || (mode === "follow" && following)) {
+    // A late preview redraws in "preserve" mode, often from cache with its
+    // size known at once. A reader at the bottom stays there.
+    if (
+      mode === "bottom" ||
+      ((mode === "follow" || mode === "preserve") && following)
+    ) {
       if (mode === "bottom" && (touchPhase !== "idle")) {
         followAfterTouch = true;
       }
@@ -1380,7 +1389,6 @@ export function createMessagesView(ctx) {
     if (isFollowing(list)) followBottom(list);
   }).observe(list);
   list.addEventListener("scroll", () => {
-    updateNavigation();
     // Settle after a reader reaches the bottom, including deferred layout.
     if (programmaticScroll) {
       if (Math.abs(list.scrollTop - programmaticTop) > 2) {
@@ -1396,6 +1404,7 @@ export function createMessagesView(ctx) {
       followedTop = null;
       followAfterTouch = false;
     }
+    updateNavigation();
     if (touchPhase === "settling") waitForTouchScroll();
     // Layout can dispatch scroll during a tap without a paging gesture.
     if (touchPhase !== "idle" && !touchPaging) return;
