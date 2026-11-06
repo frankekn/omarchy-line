@@ -166,4 +166,63 @@ export async function sendScroll(h) {
   h.step(
     "late sticker load or error follows only while the reader stays at the bottom",
   );
+
+  // Android resizes the window for the keyboard. The shorter list must keep
+  // the newest message in view, but not pull back a reader who scrolled up.
+  for (const scrollAway of [false, true]) {
+    const context = await h.context({
+      locale: "en-US",
+      viewport: { width: 412, height: 860 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    try {
+      const page = await context.newPage();
+      await h.signIn(page);
+      await page.locator("#chat-list").getByText("Scroll row 39").first()
+        .click();
+      await page.getByRole("log").getByText("Scroll row 39").waitFor();
+      const gap = () =>
+        page.locator("#messages").evaluate((list) =>
+          Math.round(list.scrollHeight - list.scrollTop - list.clientHeight)
+        );
+      // Opening the chat can run a short programmatic scroll that pauses
+      // following. Start only once the list has stayed at the bottom.
+      let last = Infinity;
+      await until(async () => {
+        const now = await gap();
+        const settled = now <= 2 && last <= 2;
+        last = now;
+        if (!settled) await page.waitForTimeout(250);
+        return settled;
+      }, "settled at bottom");
+      if (scrollAway) {
+        await page.locator("#messages").evaluate((list) => {
+          list.dispatchEvent(
+            new WheelEvent("wheel", { deltaY: -10, bubbles: true }),
+          );
+          list.scrollTop -= 200;
+          list.dispatchEvent(new Event("scroll"));
+        });
+      }
+      const before = await gap();
+      await page.getByLabel("Message", { exact: true }).focus();
+      await page.setViewportSize({ width: 412, height: 500 });
+      if (scrollAway) {
+        await page.waitForTimeout(300);
+        assert.ok(
+          await gap() >= before,
+          `keyboard pulled a scrolled-up reader down: ${before} -> ${await gap()}`,
+        );
+      } else {
+        await until(
+          async () => await gap() <= 2,
+          "newest message above keyboard",
+        );
+      }
+    } finally {
+      await context.close();
+    }
+  }
+  h.step("keyboard keeps the newest message in view only while following");
 }
