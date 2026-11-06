@@ -91,6 +91,22 @@ export async function mentions(h) {
   await page.locator("#active-name").getByText("STUB Alice", { exact: true })
     .waitFor();
   await log.getByText("明天的會議改十點").first().waitFor();
+  // Inside Alice's own chat, her mention would reopen the same chat.
+  const inAlice = "@STUB Alice 在嗎";
+  await h.request({
+    id: 91,
+    cmd: "poke",
+    chat: "ustub-alice",
+    text: inAlice,
+    mentions: [{ start: 0, end: 11, mid: "ustub-alice", name: "STUB Alice" }],
+  });
+  const own = log.locator("article.message-row").filter({ hasText: inAlice });
+  await own.waitFor();
+  assert.equal(await own.locator("button.mention").count(), 0);
+  assert.equal(
+    await own.locator("strong.mention").textContent(),
+    "@STUB Alice",
+  );
   await page.getByRole("button", { name: /STUB 家庭群組/ }).click();
   h.step("mention-opens-chat");
   await page.locator("#chat-options > summary").click();
