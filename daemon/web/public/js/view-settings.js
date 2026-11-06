@@ -159,5 +159,55 @@ export function createSettingsView(ctx) {
     "change",
     () => store.apply(settings),
   );
+  // Drag the sidebar's edge, or focus it and use the arrow keys. The width is
+  // a setting like the font sizes; a double-click returns to the default.
+  const resizer = $("sidebar-resizer"), sidebar = $("sidebar");
+  const DEFAULT_SIDEBAR = 350;
+  resizer.setAttribute(
+    "aria-valuenow",
+    String(settings.sidebarWidth ?? DEFAULT_SIDEBAR),
+  );
+  function setSidebarWidth(width, persist) {
+    const room = $("workspace").clientWidth - 360;
+    const next = Math.round(Math.max(240, Math.min(width, room)));
+    settings.sidebarWidth = next;
+    store.apply(settings);
+    resizer.setAttribute("aria-valuenow", String(next));
+    if (persist) save();
+  }
+  resizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    resizer.setPointerCapture(event.pointerId);
+    resizer.classList.add("dragging");
+  });
+  resizer.addEventListener("pointermove", (event) => {
+    if (!resizer.hasPointerCapture(event.pointerId)) return;
+    setSidebarWidth(event.clientX - sidebar.getBoundingClientRect().left);
+  });
+  for (const type of ["pointerup", "pointercancel"]) {
+    resizer.addEventListener(type, (event) => {
+      if (!resizer.hasPointerCapture(event.pointerId)) return;
+      resizer.releasePointerCapture(event.pointerId);
+      resizer.classList.remove("dragging");
+      save();
+    });
+  }
+  resizer.addEventListener("keydown", (event) => {
+    const step = { ArrowLeft: -16, ArrowRight: 16 }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    setSidebarWidth(sidebar.getBoundingClientRect().width + step, true);
+  });
+  resizer.addEventListener("dblclick", () => {
+    delete settings.sidebarWidth;
+    resizer.setAttribute("aria-valuenow", String(DEFAULT_SIDEBAR));
+    save();
+  });
+  resizer.addEventListener("focus", () => {
+    const width = Math.round(sidebar.getBoundingClientRect().width);
+    resizer.setAttribute("aria-valuenow", String(width));
+  });
+
   return { messageSound, closeSettings };
 }

@@ -319,12 +319,32 @@ a:focus-visible {
   flex: 1;
 }
 .sidebar {
-  width: 350px;
+  /* --sidebar-width comes from dragging #sidebar-resizer (js/boot.js). */
+  width: var(--sidebar-width, 350px);
+  min-width: 240px;
+  max-width: calc(100% - 360px);
   flex: none;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
   background: var(--panel);
+}
+/* Drag handle on the sidebar's right border; arrow keys move it too. */
+.sidebar-resizer {
+  flex: none;
+  width: 7px;
+  margin: 0 -4px 0 -3px;
+  position: relative;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sidebar-resizer:hover,
+.sidebar-resizer:focus-visible,
+.sidebar-resizer.dragging {
+  background: linear-gradient(var(--accent), var(--accent)) center / 2px 100%
+    no-repeat;
+  outline: 0;
 }
 .sidebar-top {
   padding: 12px 14px 8px;
@@ -1353,7 +1373,11 @@ button.mention:hover {
   }
   .sidebar {
     width: 100%;
+    max-width: none;
     border-right: 0;
+  }
+  .sidebar-resizer {
+    display: none;
   }
   .sidebar-top {
     padding: 12px 16px 8px;

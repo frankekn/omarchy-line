@@ -71,6 +71,7 @@ function instrument() {
 }
 
 export async function settings(h) {
+  await sidebarResize(h);
   await keyboardAndSound(h);
   await independentSizes(h);
   await contrast(h);
@@ -607,4 +608,62 @@ async function narrow(h) {
     "independent sizes at 320 px avoid overflow and keep the mobile input minimum",
   );
   await context.close();
+}
+
+// Dragging the sidebar edge or its arrow keys sets a saved width that survives
+// a reload and a later settings change; a double-click restores 350 px.
+async function sidebarResize(h) {
+  const context = await h.context({
+    locale: "en-US",
+    viewport: { width: 1280, height: 800 },
+  });
+  try {
+    const page = await context.newPage();
+    await h.signIn(page);
+    const width = () =>
+      page.locator("#sidebar").evaluate((node) =>
+        Math.round(node.getBoundingClientRect().width)
+      );
+    assert.equal(await width(), 350);
+    const handle = page.getByRole("separator", { name: "Resize chat list" });
+    const box = await handle.boundingBox();
+    assert.ok(box);
+    const y = box.y + box.height / 2;
+    await page.mouse.move(box.x + box.width / 2, y);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 150, y, { steps: 5 });
+    await page.mouse.up();
+    const dragged = await width();
+    assert.ok(Math.abs(dragged - 500) <= 4, `dragged to ${dragged}`);
+    // Never wider than leaves 360 px for the conversation.
+    await page.mouse.move(box.x + box.width / 2 + 150, y);
+    await page.mouse.down();
+    await page.mouse.move(1270, y, { steps: 5 });
+    await page.mouse.up();
+    assert.equal(await width(), 1280 - 360);
+    await handle.focus();
+    await page.keyboard.press("ArrowLeft");
+    assert.equal(await width(), 1280 - 360 - 16);
+    assert.equal(await handle.getAttribute("aria-valuenow"), "904");
+    // Another setting saved afterwards keeps the width.
+    await page.locator("#settings-open").click();
+    await page.getByRole("dialog", { name: "Settings" }).waitFor();
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await page.locator("#workspace").waitFor();
+    assert.equal(await width(), 904);
+    await handle.dblclick();
+    assert.equal(await width(), 350);
+    await page.reload();
+    await page.locator("#workspace").waitFor();
+    assert.equal(await width(), 350);
+    // Phones keep the full-width list and no handle.
+    await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await handle.isVisible(), false);
+    assert.equal(await width(), 390);
+    h.step("sidebar width drags, steps by keyboard, persists and resets");
+  } finally {
+    await context.close();
+  }
 }

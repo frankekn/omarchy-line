@@ -36,6 +36,12 @@
       // until the user chooses different interface and message sizes.
       messageTextSize: textSize(saved.messageTextSize, interfaceSize),
       sound: saved.sound === true,
+      // Pixels from dragging the sidebar edge; undefined keeps the CSS
+      // default and stays out of the saved JSON.
+      sidebarWidth: Number.isInteger(saved.sidebarWidth) &&
+          saved.sidebarWidth >= 200 && saved.sidebarWidth <= 1000
+        ? saved.sidebarWidth
+        : undefined,
     };
   }
   function apply(settings) {
@@ -49,6 +55,9 @@
     else root.dataset.textSize = String(interfaceSize);
     if (messageSize === 100) delete root.dataset.messageTextSize;
     else root.dataset.messageTextSize = String(messageSize);
+    if (settings.sidebarWidth) {
+      root.style.setProperty("--sidebar-width", `${settings.sidebarWidth}px`);
+    } else root.style.removeProperty("--sidebar-width");
     const scheme = document.querySelector('meta[name="color-scheme"]');
     if (scheme) scheme.content = theme ? theme[1] : "dark light";
     const color = document.querySelector('meta[name="theme-color"]');
