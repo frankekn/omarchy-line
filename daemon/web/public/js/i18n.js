@@ -200,6 +200,7 @@ const strings = {
   theme: ["主題配色", "Theme"],
   themeSystem: ["跟隨系統", "Match system"],
   messageSound: ["新訊息提示音", "New message sound"],
+  resizeSidebar: ["調整聊天列表寬度", "Resize chat list"],
   settingsSaveFailed: [
     "無法儲存設定；重新整理後會還原。",
     "Settings could not be saved and will reset on reload.",
